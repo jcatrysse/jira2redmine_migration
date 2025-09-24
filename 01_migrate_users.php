@@ -1,14 +1,15 @@
-<?php
+<?php /** @noinspection SpellCheckingInspection */
 
 declare(strict_types=1);
 
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 
-const MIGRATE_USERS_SCRIPT_VERSION = '0.0.1';
+const MIGRATE_USERS_SCRIPT_VERSION = '0.0.2';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract users from Jira and persist them into staging_jira_users.',
     'redmine' => 'Refresh the staging_redmine_users snapshot from the Redmine REST API.',
+    'transform' => 'Reconcile Jira and Redmine data to populate migration mappings.',
 ];
 
 if (PHP_SAPI !== 'cli') {
@@ -52,6 +53,7 @@ try {
 /**
  * @param array<string, mixed> $config
  * @param array{help: bool, version: bool, phases: ?string, skip: ?string} $cliOptions
+ * @throws Throwable
  */
 function main(array $config, array $cliOptions): void
 {
@@ -64,7 +66,7 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        (new DateTimeImmutable())->format(DateTimeImmutable::ATOM),
+        formatCurrentTimestamp(),
         implode(', ', $phaseSummary),
         PHP_EOL
     );
@@ -76,20 +78,20 @@ function main(array $config, array $cliOptions): void
         $jiraConfig = extractArrayConfig($config, 'jira');
         $jiraClient = createJiraClient($jiraConfig);
 
-        printf("[%s] Starting Jira user extraction...%s", (new DateTimeImmutable())->format(DateTimeImmutable::ATOM), PHP_EOL);
+        printf("[%s] Starting Jira user extraction...%s", formatCurrentTimestamp(), PHP_EOL);
 
         $totalJiraProcessed = fetchAndStoreJiraUsers($jiraClient, $pdo);
 
         printf(
             "[%s] Completed Jira extraction. %d user records processed.%s",
-            (new DateTimeImmutable())->format(DateTimeImmutable::ATOM),
+            formatCurrentTimestamp(),
             $totalJiraProcessed,
             PHP_EOL
         );
     } else {
         printf(
             "[%s] Skipping Jira user extraction (disabled via CLI option).%s",
-            (new DateTimeImmutable())->format(DateTimeImmutable::ATOM),
+            formatCurrentTimestamp(),
             PHP_EOL
         );
     }
@@ -98,20 +100,57 @@ function main(array $config, array $cliOptions): void
         $redmineConfig = extractArrayConfig($config, 'redmine');
         $redmineClient = createRedmineClient($redmineConfig);
 
-        printf("[%s] Starting Redmine user snapshot...%s", (new DateTimeImmutable())->format(DateTimeImmutable::ATOM), PHP_EOL);
+        printf("[%s] Starting Redmine user snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
 
         $totalRedmineProcessed = fetchAndStoreRedmineUsers($redmineClient, $pdo);
 
         printf(
             "[%s] Completed Redmine snapshot. %d user records processed.%s",
-            (new DateTimeImmutable())->format(DateTimeImmutable::ATOM),
+            formatCurrentTimestamp(),
             $totalRedmineProcessed,
             PHP_EOL
         );
     } else {
         printf(
             "[%s] Skipping Redmine user snapshot (disabled via CLI option).%s",
-            (new DateTimeImmutable())->format(DateTimeImmutable::ATOM),
+            formatCurrentTimestamp(),
+            PHP_EOL
+        );
+    }
+
+    if (in_array('transform', $phasesToRun, true)) {
+        printf(
+            "[%s] Starting user reconciliation & transform phase...%s",
+            formatCurrentTimestamp(),
+            PHP_EOL
+        );
+
+        $defaultRedmineUserStatus = determineDefaultRedmineUserStatus($config);
+
+        $transformSummary = runUserTransformationPhase($pdo, $defaultRedmineUserStatus);
+
+        printf(
+            "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
+            formatCurrentTimestamp(),
+            $transformSummary['matched'],
+            $transformSummary['ready_for_creation'],
+            $transformSummary['manual_review'],
+            $transformSummary['manual_overrides'],
+            $transformSummary['skipped'],
+            $transformSummary['unchanged'],
+            PHP_EOL
+        );
+
+        if ($transformSummary['status_counts'] !== []) {
+            printf("Current migration status breakdown:%s", PHP_EOL);
+            foreach ($transformSummary['status_counts'] as $status => $count) {
+                printf("  - %-28s %d%s", $status, $count, PHP_EOL);
+            }
+        }
+    } else {
+        printf(
+            "[%s] Skipping transform phase (disabled via CLI option).%s",
+            formatCurrentTimestamp(),
             PHP_EOL
         );
     }
@@ -193,11 +232,16 @@ function parseCommandLineOptions(array $argv): array
                 throw new RuntimeException('The --phases option requires a value.');
             }
 
-            $options['phases'] = trim((string)$argv[$index]);
+            $phaseValue = $argv[$index];
+            if (!is_string($phaseValue)) {
+                throw new RuntimeException('The --phases option expects string arguments.');
+            }
+
+            $options['phases'] = trim($phaseValue);
             continue;
         }
 
-        if (strpos($argument, '--phases=') === 0) {
+        if (str_starts_with($argument, '--phases=')) {
             $options['phases'] = trim(substr($argument, 9));
             continue;
         }
@@ -208,11 +252,16 @@ function parseCommandLineOptions(array $argv): array
                 throw new RuntimeException('The --skip option requires a value.');
             }
 
-            $options['skip'] = trim((string)$argv[$index]);
+            $skipValue = $argv[$index];
+            if (!is_string($skipValue)) {
+                throw new RuntimeException('The --skip option expects string arguments.');
+            }
+
+            $options['skip'] = trim($skipValue);
             continue;
         }
 
-        if (strpos($argument, '--skip=') === 0) {
+        if (str_starts_with($argument, '--skip=')) {
             $options['skip'] = trim(substr($argument, 7));
             continue;
         }
@@ -309,6 +358,33 @@ function extractArrayConfig(array $config, string $key): array
 }
 
 /**
+ * @param array<string, mixed> $config
+ */
+function determineDefaultRedmineUserStatus(array $config): string
+{
+    $defaultStatus = 'LOCKED';
+
+    if (!array_key_exists('migration', $config) || !is_array($config['migration'])) {
+        return $defaultStatus;
+    }
+
+    $migrationConfig = $config['migration'];
+    if (!array_key_exists('users', $migrationConfig) || !is_array($migrationConfig['users'])) {
+        return $defaultStatus;
+    }
+
+    $rawValue = $migrationConfig['users']['default_redmine_user_status'] ?? null;
+    if (is_string($rawValue)) {
+        $normalized = strtoupper(trim($rawValue));
+        if ($normalized === 'ACTIVE' || $normalized === 'LOCKED') {
+            return $normalized;
+        }
+    }
+
+    return $defaultStatus;
+}
+
+/**
  * @param array<string, mixed> $databaseConfig
  */
 function createDatabaseConnection(array $databaseConfig): PDO
@@ -384,6 +460,521 @@ function createRedmineClient(array $redmineConfig): Client
     ]);
 }
 
+function formatCurrentTimestamp(?string $format = null): string
+{
+    $format ??= DateTimeInterface::ATOM;
+
+    return date($format);
+}
+
+function formatCurrentUtcTimestamp(string $format): string
+{
+    return gmdate($format);
+}
+
+/**
+ * @param string $defaultRedmineUserStatus Proposed default status for new Redmine accounts.
+ * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int, status_counts: array<string, int>}
+ */
+function runUserTransformationPhase(PDO $pdo, string $defaultRedmineUserStatus): array
+{
+    synchronizeMigrationMappingUsers($pdo);
+
+    [, $redmineByLogin, $redmineByMail] = fetchRedmineUserLookups($pdo);
+    $mappings = fetchUserMappingsForTransform($pdo);
+
+    $updateStatement = $pdo->prepare(<<<SQL
+        UPDATE migration_mapping_users
+        SET
+            redmine_user_id = :redmine_user_id,
+            migration_status = :migration_status,
+            match_type = :match_type,
+            proposed_redmine_login = :proposed_redmine_login,
+            proposed_redmine_mail = :proposed_redmine_mail,
+            proposed_firstname = :proposed_firstname,
+            proposed_lastname = :proposed_lastname,
+            proposed_redmine_status = :proposed_redmine_status,
+            notes = :notes,
+            automation_hash = :automation_hash
+        WHERE mapping_id = :mapping_id
+    SQL);
+    if ($updateStatement === false) {
+        throw new RuntimeException('Failed to prepare update statement for migration_mapping_users.');
+    }
+
+    $allowedStatuses = ['PENDING_ANALYSIS', 'READY_FOR_CREATION', 'MATCH_FOUND'];
+
+    $summary = [
+        'matched' => 0,
+        'ready_for_creation' => 0,
+        'manual_review' => 0,
+        'manual_overrides' => 0,
+        'skipped' => 0,
+        'unchanged' => 0,
+    ];
+
+    foreach ($mappings as $row) {
+        $currentStatus = (string)$row['migration_status'];
+        if (!in_array($currentStatus, $allowedStatuses, true)) {
+            $summary['skipped']++;
+            continue;
+        }
+
+        $matchTypeValue = $row['match_type'] ?? null;
+        $currentMatchType = $matchTypeValue !== null
+            ? (string)$matchTypeValue
+            : 'NONE';
+        if ($currentMatchType === 'MANUAL') {
+            $summary['skipped']++;
+            continue;
+        }
+
+        $jiraAccountId = (string)$row['jira_account_id'];
+        $hasStagingData = $row['staging_account_id'] !== null;
+
+        $jiraDisplayNameRaw = $row['staging_display_name'] ?? $row['jira_display_name'] ?? null;
+        $jiraDisplayName = normalizeString($jiraDisplayNameRaw, 255);
+
+        $jiraEmailRaw = $row['staging_email_address'] ?? $row['jira_email_address'] ?? null;
+        $jiraEmail = normalizeString($jiraEmailRaw, 255);
+
+        $manualReason = null;
+        $matchedUser = null;
+        $newMatchType = 'NONE';
+
+        if (!$hasStagingData) {
+            $manualReason = 'No staging data available for this Jira account. Re-run the extraction phase.';
+        } elseif ($jiraEmail === null) {
+            $manualReason = 'Missing Jira email address; unable to auto-match or propose a Redmine login.';
+        } else {
+            $emailKey = lowercaseValue($jiraEmail);
+            if ($emailKey !== null) {
+                $loginMatches = $redmineByLogin[$emailKey] ?? [];
+                if (count($loginMatches) === 1) {
+                    $matchedUser = $loginMatches[0];
+                    $newMatchType = 'LOGIN';
+                } elseif (count($loginMatches) > 1) {
+                    $manualReason = sprintf('Multiple Redmine accounts share the login "%s".', $jiraEmail);
+                }
+
+                if ($matchedUser === null && $manualReason === null) {
+                    $mailMatches = $redmineByMail[$emailKey] ?? [];
+                    if (count($mailMatches) === 1) {
+                        $matchedUser = $mailMatches[0];
+                        $newMatchType = 'MAIL';
+                    } elseif (count($mailMatches) > 1) {
+                        $manualReason = sprintf('Multiple Redmine accounts share the email "%s".', $jiraEmail);
+                    }
+                }
+            }
+        }
+
+        $currentRedmineId = $row['redmine_user_id'] !== null ? (int)$row['redmine_user_id'] : null;
+        $proposedLogin = $row['proposed_redmine_login'] ?? null;
+        $proposedMail = $row['proposed_redmine_mail'] ?? null;
+        $proposedFirstname = $row['proposed_firstname'] ?? null;
+        $proposedLastname = $row['proposed_lastname'] ?? null;
+        $proposedStatus = normalizeProposedRedmineStatus($row['proposed_redmine_status'] ?? null, $defaultRedmineUserStatus);
+        $currentNotes = $row['notes'] ?? null;
+
+        $storedAutomationHash = normalizeStoredAutomationHash($row['automation_hash'] ?? null);
+        $currentAutomationHash = computeAutomationStateHash(
+            $currentRedmineId,
+            $currentStatus,
+            $currentMatchType,
+            $proposedLogin,
+            $proposedMail,
+            $proposedFirstname,
+            $proposedLastname,
+            $proposedStatus,
+            $currentNotes
+        );
+        if ($storedAutomationHash !== null && $storedAutomationHash !== $currentAutomationHash) {
+            $summary['manual_overrides']++;
+            printf(
+                "  [preserved] Jira account %s has manual overrides; skipping automated changes.%s",
+                $jiraAccountId,
+                PHP_EOL
+            );
+            continue;
+        }
+
+        if ($manualReason !== null) {
+            $newStatus = 'MANUAL_INTERVENTION_REQUIRED';
+            $newMatchType = 'NONE';
+            $newRedmineId = null;
+            $proposedLogin = $jiraEmail;
+            $proposedMail = $jiraEmail;
+            [$derivedFirst, $derivedLast] = deriveNamePartsFromDisplayName($jiraDisplayName);
+            $proposedFirstname = $derivedFirst;
+            $proposedLastname = $derivedLast;
+            $proposedStatus = $defaultRedmineUserStatus;
+            $notes = $manualReason;
+
+            printf("  [manual] Jira account %s: %s%s", $jiraAccountId, $manualReason, PHP_EOL);
+        } elseif ($matchedUser !== null) {
+            $newStatus = 'MATCH_FOUND';
+            $newRedmineId = (int)$matchedUser['id'];
+            $proposedLogin = normalizeString($matchedUser['login'], 255);
+            $proposedMail = normalizeString($matchedUser['mail'], 255);
+            $proposedFirstname = normalizeString($matchedUser['firstname'] ?? null, 255);
+            $proposedLastname = normalizeString($matchedUser['lastname'] ?? null, 255);
+            $proposedStatus = deriveRedmineStatusLabelFromSnapshot($matchedUser);
+            if ($proposedFirstname === null || $proposedLastname === null) {
+                [$derivedFirst, $derivedLast] = deriveNamePartsFromDisplayName($jiraDisplayName);
+                if ($proposedFirstname === null) {
+                    $proposedFirstname = $derivedFirst;
+                }
+                if ($proposedLastname === null) {
+                    $proposedLastname = $derivedLast;
+                }
+            }
+            $notes = null;
+        } else {
+            [$derivedFirst, $derivedLast] = deriveNamePartsFromDisplayName($jiraDisplayName);
+            $proposedFirstname = $derivedFirst;
+            $proposedLastname = $derivedLast;
+            $proposedLogin = $jiraEmail;
+            $proposedMail = $jiraEmail;
+            $newRedmineId = null;
+            $newMatchType = 'NONE';
+            $proposedStatus = $defaultRedmineUserStatus;
+
+            if ($jiraEmail === null) {
+                $newStatus = 'MANUAL_INTERVENTION_REQUIRED';
+                $notes = 'Missing Jira email address; unable to create a Redmine user automatically.';
+                printf("  [manual] Jira account %s: %s%s", $jiraAccountId, $notes, PHP_EOL);
+            } elseif ($derivedFirst === null || $derivedLast === null) {
+                $newStatus = 'MANUAL_INTERVENTION_REQUIRED';
+                $displayNameForNotes = $jiraDisplayName ?? '[unknown]';
+                $notes = sprintf('Unable to derive firstname/lastname from Jira display name "%s".', $displayNameForNotes);
+                printf("  [manual] Jira account %s: %s%s", $jiraAccountId, $notes, PHP_EOL);
+            } else {
+                $newStatus = 'READY_FOR_CREATION';
+                $notes = null;
+            }
+        }
+
+        if ($newStatus !== 'MANUAL_INTERVENTION_REQUIRED') {
+            $notes = null;
+        }
+
+        $newAutomationHash = computeAutomationStateHash(
+            $newRedmineId,
+            $newStatus,
+            $newMatchType,
+            $proposedLogin,
+            $proposedMail,
+            $proposedFirstname,
+            $proposedLastname,
+            $proposedStatus,
+            $notes
+        );
+
+        $needsUpdate = $currentRedmineId !== $newRedmineId
+            || $currentStatus !== $newStatus
+            || $currentMatchType !== $newMatchType
+            || (($row['proposed_redmine_login'] ?? null) !== $proposedLogin)
+            || (($row['proposed_redmine_mail'] ?? null) !== $proposedMail)
+            || (($row['proposed_firstname'] ?? null) !== $proposedFirstname)
+            || (($row['proposed_lastname'] ?? null) !== $proposedLastname)
+            || (normalizeProposedRedmineStatus($row['proposed_redmine_status'] ?? null, $defaultRedmineUserStatus) !== $proposedStatus)
+            || (($row['notes'] ?? null) !== $notes)
+            || (($row['automation_hash'] ?? null) !== $newAutomationHash);
+
+        if (!$needsUpdate) {
+            $summary['unchanged']++;
+            continue;
+        }
+
+        $updateStatement->execute([
+            'redmine_user_id' => $newRedmineId,
+            'migration_status' => $newStatus,
+            'match_type' => $newMatchType,
+            'proposed_redmine_login' => $proposedLogin,
+            'proposed_redmine_mail' => $proposedMail,
+            'proposed_firstname' => $proposedFirstname,
+            'proposed_lastname' => $proposedLastname,
+            'proposed_redmine_status' => $proposedStatus,
+            'notes' => $notes,
+            'automation_hash' => $newAutomationHash,
+            'mapping_id' => $row['mapping_id'],
+        ]);
+
+        if ($newStatus === 'MATCH_FOUND' && $newStatus !== $currentStatus) {
+            $summary['matched']++;
+        } elseif ($newStatus === 'READY_FOR_CREATION' && $newStatus !== $currentStatus) {
+            $summary['ready_for_creation']++;
+        } elseif ($newStatus === 'MANUAL_INTERVENTION_REQUIRED' && $newStatus !== $currentStatus) {
+            $summary['manual_review']++;
+        }
+    }
+
+    $summary['status_counts'] = fetchMigrationStatusCounts($pdo);
+
+    return $summary;
+}
+
+function synchronizeMigrationMappingUsers(PDO $pdo): void
+{
+    $sql = <<<'SQL'
+        INSERT INTO migration_mapping_users (jira_account_id, jira_display_name, jira_email_address)
+        SELECT account_id, display_name, email_address
+        FROM staging_jira_users
+        ON DUPLICATE KEY UPDATE
+            jira_display_name = VALUES(jira_display_name),
+            jira_email_address = VALUES(jira_email_address)
+    SQL;
+
+    $result = $pdo->exec($sql);
+    if ($result === false) {
+        throw new RuntimeException('Failed to synchronize Jira users into migration_mapping_users.');
+    }
+}
+
+/**
+ * @return array{0: array<int, array<string, mixed>>, 1: array<string, array<int, array<string, mixed>>>, 2: array<string, array<int, array<string, mixed>>>}
+ */
+function fetchRedmineUserLookups(PDO $pdo): array
+{
+    $statement = $pdo->query('SELECT id, login, mail, firstname, lastname, status FROM staging_redmine_users');
+    if ($statement === false) {
+        throw new RuntimeException('Failed to fetch Redmine user snapshot from the database.');
+    }
+
+    $byId = [];
+    $byLogin = [];
+    $byMail = [];
+
+    while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+        if (!isset($row['id'])) {
+            continue;
+        }
+
+        $id = (int)$row['id'];
+        $byId[$id] = $row;
+
+        if (isset($row['login'])) {
+            $loginKey = lowercaseValue($row['login']);
+            if ($loginKey !== null) {
+                $byLogin[$loginKey][] = $row;
+            }
+        }
+
+        if (isset($row['mail'])) {
+            $mailKey = lowercaseValue($row['mail']);
+            if ($mailKey !== null) {
+                $byMail[$mailKey][] = $row;
+            }
+        }
+    }
+
+    return [$byId, $byLogin, $byMail];
+}
+
+/**
+ * @return array<int, array<string, mixed>>
+ */
+function fetchUserMappingsForTransform(PDO $pdo): array
+{
+    $query = <<<'SQL'
+        SELECT
+            mm.mapping_id,
+            mm.jira_account_id,
+            mm.redmine_user_id,
+            mm.migration_status,
+            mm.match_type,
+            mm.automation_hash,
+            mm.proposed_redmine_login,
+            mm.proposed_redmine_mail,
+            mm.proposed_firstname,
+            mm.proposed_lastname,
+            mm.proposed_redmine_status,
+            mm.notes,
+            mm.jira_display_name,
+            mm.jira_email_address,
+            sj.account_id AS staging_account_id,
+            sj.display_name AS staging_display_name,
+            sj.email_address AS staging_email_address
+        FROM migration_mapping_users mm
+        LEFT JOIN staging_jira_users sj ON sj.account_id = mm.jira_account_id
+        ORDER BY mm.mapping_id
+    SQL;
+
+    $statement = $pdo->query($query);
+    if ($statement === false) {
+        throw new RuntimeException('Failed to fetch migration mapping records for transformation.');
+    }
+
+    return $statement->fetchAll(PDO::FETCH_ASSOC);
+}
+
+/**
+ * @return array<string, int>
+ */
+function fetchMigrationStatusCounts(PDO $pdo): array
+{
+    $statement = $pdo->query('SELECT migration_status, COUNT(*) AS total FROM migration_mapping_users GROUP BY migration_status ORDER BY migration_status');
+    if ($statement === false) {
+        throw new RuntimeException('Failed to count migration mapping statuses.');
+    }
+
+    $results = [];
+    while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+        if (!isset($row['migration_status'], $row['total'])) {
+            continue;
+        }
+
+        $status = (string)$row['migration_status'];
+        $results[$status] = (int)$row['total'];
+    }
+
+    return $results;
+}
+
+function computeAutomationStateHash(
+    ?int $redmineUserId,
+    string $migrationStatus,
+    string $matchType,
+    ?string $proposedLogin,
+    ?string $proposedMail,
+    ?string $proposedFirstname,
+    ?string $proposedLastname,
+    string $proposedStatus,
+    ?string $notes
+): string {
+    try {
+        $payload = json_encode(
+            [
+                'redmine_user_id' => $redmineUserId,
+                'migration_status' => $migrationStatus,
+                'match_type' => $matchType,
+                'proposed_redmine_login' => $proposedLogin,
+                'proposed_redmine_mail' => $proposedMail,
+                'proposed_firstname' => $proposedFirstname,
+                'proposed_lastname' => $proposedLastname,
+                'proposed_redmine_status' => $proposedStatus,
+                'notes' => $notes,
+            ],
+            JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        );
+    } catch (JsonException $exception) {
+        throw new RuntimeException('Failed to encode automation state hash payload: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    return hash('sha256', (string)$payload);
+}
+
+function normalizeStoredAutomationHash(mixed $value): ?string
+{
+    if ($value === null) {
+        return null;
+    }
+
+    $candidate = is_string($value) ? trim($value) : trim((string)$value);
+    if ($candidate === '') {
+        return null;
+    }
+
+    if (!preg_match('/^[0-9a-f]{64}$/i', $candidate)) {
+        return null;
+    }
+
+    return strtolower($candidate);
+}
+
+function normalizeProposedRedmineStatus(mixed $value, string $defaultStatus): string
+{
+    if (is_string($value)) {
+        $normalized = strtoupper(trim($value));
+        if ($normalized === 'ACTIVE' || $normalized === 'LOCKED') {
+            return $normalized;
+        }
+    }
+
+    return $defaultStatus;
+}
+
+/**
+ * @param array<string, mixed> $redmineUser
+ */
+function deriveRedmineStatusLabelFromSnapshot(array $redmineUser): string
+{
+    if (isset($redmineUser['status'])) {
+        $statusCode = (int)$redmineUser['status'];
+        if ($statusCode === 1) {
+            return 'ACTIVE';
+        }
+    }
+
+    return 'LOCKED';
+}
+
+/**
+ * @return array{0: ?string, 1: ?string}
+ */
+function deriveNamePartsFromDisplayName(?string $displayName): array
+{
+    if ($displayName === null) {
+        return [null, null];
+    }
+
+    $trimmed = trim($displayName);
+    if ($trimmed === '') {
+        return [null, null];
+    }
+
+    if (str_contains($trimmed, ',')) {
+        [$lastNamePart, $firstNamePart] = explode(',', $trimmed, 2);
+        $firstName = normalizeString($firstNamePart, 255);
+        $lastName = normalizeString($lastNamePart, 255);
+        if ($firstName !== null && $lastName !== null) {
+            return [$firstName, $lastName];
+        }
+    }
+
+    $parts = preg_split('/\s+/', $trimmed) ?: [];
+    if (count($parts) >= 2) {
+        $firstCandidate = array_shift($parts);
+        $lastCandidate = array_pop($parts);
+        if ($lastCandidate === null) {
+            $lastCandidate = '';
+        }
+        if ($parts !== []) {
+            $lastCandidate = implode(' ', array_merge($parts, [$lastCandidate]));
+        }
+
+        $firstName = normalizeString($firstCandidate, 255);
+        $lastName = normalizeString($lastCandidate, 255);
+        if ($firstName !== null && $lastName !== null) {
+            return [$firstName, $lastName];
+        }
+    }
+
+    return [null, null];
+}
+
+function lowercaseValue(mixed $value): ?string
+{
+    if (!is_string($value)) {
+        return null;
+    }
+
+    $trimmed = trim($value);
+    if ($trimmed === '') {
+        return null;
+    }
+
+    if (function_exists('mb_strtolower')) {
+        return mb_strtolower($trimmed);
+    }
+
+    return strtolower($trimmed);
+}
+
+/**
+ * @throws GuzzleException
+ */
 function fetchAndStoreJiraUsers(Client $client, PDO $pdo): int
 {
     $maxResults = 100;
@@ -436,7 +1027,7 @@ function fetchAndStoreJiraUsers(Client $client, PDO $pdo): int
         $pdo->beginTransaction();
 
         try {
-            $extractedAt = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+            $extractedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
 
             foreach ($decoded as $user) {
                 if (!is_array($user)) {
@@ -626,7 +1217,7 @@ function fetchAndStoreRedmineUsers(Client $client, PDO $pdo): int
                 'mail' => $mail,
                 'status' => $status,
                 'raw_payload' => $rawPayload,
-                'retrieved_at' => (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s'),
+                'retrieved_at' => formatCurrentUtcTimestamp('Y-m-d H:i:s'),
             ];
         }
 
@@ -678,11 +1269,7 @@ function fetchAndStoreRedmineUsers(Client $client, PDO $pdo): int
 function fetchRedmineUserDetail(Client $client, int $userId): array
 {
     try {
-        $response = $client->get(sprintf('users/%d.json', $userId), [
-            'query' => [
-                'include' => 'groups,memberships',
-            ],
-        ]);
+        $response = $client->get(sprintf('users/%d.json', $userId));
     } catch (GuzzleException $exception) {
         throw new RuntimeException(sprintf('Failed to fetch Redmine user %d: %s', $userId, $exception->getMessage()), 0, $exception);
     }
@@ -718,4 +1305,4 @@ function normalizeString(mixed $value, int $maxLength): ?string
     return substr($trimmed, 0, $maxLength);
 }
 
-// Further transformation and load steps will be implemented in subsequent iterations of this script.
+// Further transformation and load steps will be implemented in later iterations of this script.

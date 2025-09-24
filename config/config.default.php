@@ -30,4 +30,11 @@ return [
         // Defaults to ./tmp relative to the project root.
         'tmp' => dirname(__DIR__) . '/tmp',
     ],
+    'migration' => [
+        'users' => [
+            // Default Redmine status to propose for new accounts when no existing Redmine user is matched.
+            // Allowed values: LOCKED, ACTIVE.
+            'default_redmine_user_status' => 'LOCKED',
+        ],
+    ],
 ];

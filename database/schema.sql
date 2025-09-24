@@ -39,9 +39,18 @@ CREATE TABLE `staging_redmine_users` (
 CREATE TABLE `migration_mapping_users` (
                                            `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
                                            `jira_account_id` VARCHAR(255) NOT NULL,
+                                           `jira_display_name` VARCHAR(255) NULL,
+                                           `jira_email_address` VARCHAR(255) NULL,
                                            `redmine_user_id` INT NULL,
+                                           `match_type` ENUM('NONE', 'LOGIN', 'MAIL', 'MANUAL') NOT NULL DEFAULT 'NONE',
+                                           `proposed_redmine_login` VARCHAR(255) NULL,
+                                           `proposed_redmine_mail` VARCHAR(255) NULL,
+                                           `proposed_firstname` VARCHAR(255) NULL,
+                                           `proposed_lastname` VARCHAR(255) NULL,
+                                           `proposed_redmine_status` ENUM('ACTIVE', 'LOCKED') NOT NULL DEFAULT 'LOCKED',
                                            `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
                                            `notes` TEXT,
+                                           `automation_hash` CHAR(64) NULL,
                                            `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                            `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                                            UNIQUE KEY `uk_jira_account_id` (`jira_account_id`)
