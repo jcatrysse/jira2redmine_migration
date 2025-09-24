@@ -75,3 +75,40 @@ This is the core logic phase where no API calls are made to create data.
     *   **On Failure (e.g., HTTP 422 Unprocessable Entity)**: `UPDATE` the mapping record's status to `CREATION_FAILED` and store the error message from the API response in the `notes` column for later debugging.
 
 By following this structured, database-driven approach, you create a migration process that is reliable, easy to debug, and can be executed in manageable stages.
+
+---
+
+## 5. Running `01_migrate_users.php`
+
+The user migration entry point ships with a few quality-of-life CLI options that make it easier to iterate on specific phases without touching the rest of the workflow.
+
+```bash
+php 01_migrate_users.php --help
+```
+
+### Available options
+
+| Option | Description |
+| --- | --- |
+| `-h`, `--help` | Print usage information and exit. |
+| `-V`, `--version` | Display the script version (`0.0.1`). |
+| `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, or both). |
+| `--skip=<list>` | Comma-separated list of phases to skip. |
+
+**Default behaviour:** when no phase-related options are supplied, both phases (`jira` extraction and `redmine` snapshot) are executed in order.
+
+### Usage examples
+
+```bash
+# Run both phases (default)
+php 01_migrate_users.php
+
+# Only refresh the Redmine snapshot
+php 01_migrate_users.php --phases=redmine
+
+# Re-run the Jira extraction while skipping the Redmine snapshot
+php 01_migrate_users.php --skip=redmine
+
+# Check the script version
+php 01_migrate_users.php --version
+```
