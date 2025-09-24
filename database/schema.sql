@@ -14,9 +14,11 @@
 -- ================================================================
 CREATE TABLE `staging_jira_users` (
                                       `account_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                      `account_type` VARCHAR(100) NULL,
                                       `display_name` VARCHAR(255) NOT NULL,
                                       `email_address` VARCHAR(255) NULL,
                                       `is_active` BOOLEAN NOT NULL,
+                                      `group_memberships` JSON NULL,
                                       `raw_payload` JSON NOT NULL,
                                       `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) COMMENT='Raw extraction of Jira Users.';

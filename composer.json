@@ -1,14 +1,15 @@
 {
-    "name": "phpcronmgr/jira2redmine_migration",
-    "description": "Jira to Redmine migration script",
-    "type": "project",
-    "require": {
-        "guzzlehttp/guzzle": "^7.10"
-    },
-    "license": "GPL-3.0",
-    "authors": [
-        {
-            "name": "Jan Catrysse"
-        }
-    ]
+  "name": "phpcronmgr/jira2redmine_migration",
+  "description": "Jira to Redmine migration script",
+  "type": "project",
+  "require": {
+    "guzzlehttp/guzzle": "^7.10",
+    "ext-pdo": "*"
+  },
+  "license": "GPL-3.0",
+  "authors": [
+    {
+      "name": "Jan Catrysse"
+    }
+  ]
 }
