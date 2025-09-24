@@ -5,17 +5,17 @@ All notable changes to this project will be documented in this file.
 ## [0.0.1] - 2025-09-24
 
 - Initial commit
-- Add composer dependecies
+- Add composer dependencies
 - Add a first migration schema
 - Add a README.md
 - Add a configuration logic
 - Retrieve users from Jira
 - Retrieve users from Redmine
-- Add CLI controls, docs, and changelog for user migration script
+- Add CLI controls, docs, and changelog for the user migration script
 
 ## [0.0.2] - 2025-09-25
 
-- Implement the transform/reconciliation phase of `01_migrate_users.php`.
+- Implement the transform/reconciliation phase of `users.php`.
 - Extend the `migration_mapping_users` table with Jira metadata, proposed Redmine values, and a `match_type` column.
 - Match Jira accounts to Redmine users by login/e-mail and derive default first/last names from Jira `display_name`.
 - Document the new workflow, CLI options, and manual override process.
@@ -25,3 +25,4 @@ All notable changes to this project will be documented in this file.
 - Add a `proposed_redmine_status` column defaulting to `LOCKED` so operators can choose whether new Redmine accounts start active or locked, and document the rerun behaviour.
 - Respect the configurable `migration.users.default_redmine_user_status` toggle when preparing proposed Redmine accounts.
 - Stop expanding Redmine group and membership data during the user snapshot to keep the import leaner for now.
+- Implement the push phase for `users`

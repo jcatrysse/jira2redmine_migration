@@ -3,13 +3,16 @@
 declare(strict_types=1);
 
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
+use Psr\Http\Message\ResponseInterface;
 
 const MIGRATE_USERS_SCRIPT_VERSION = '0.0.2';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract users from Jira and persist them into staging_jira_users.',
     'redmine' => 'Refresh the staging_redmine_users snapshot from the Redmine REST API.',
     'transform' => 'Reconcile Jira and Redmine data to populate migration mappings.',
+    'push' => 'Create migration-ready users in Redmine via the REST API.',
 ];
 
 if (PHP_SAPI !== 'cli') {
@@ -52,7 +55,7 @@ try {
 
 /**
  * @param array<string, mixed> $config
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string} $cliOptions
+ * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool} $cliOptions
  * @throws Throwable
  */
 function main(array $config, array $cliOptions): void
@@ -154,10 +157,547 @@ function main(array $config, array $cliOptions): void
             PHP_EOL
         );
     }
+
+    if (in_array('push', $phasesToRun, true)) {
+        $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
+        $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
+
+        runPushPhase($pdo, $config, $confirmPush, $isDryRun);
+    } else {
+        printf(
+            "[%s] Skipping push phase (disabled via CLI option).%s",
+            formatCurrentTimestamp(),
+            PHP_EOL
+        );
+    }
 }
 
 /**
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string} $cliOptions
+ * @param PDO $pdo
+ * @param array<string, mixed> $config
+ * @param bool $confirmPush
+ * @param bool $isDryRun
+ */
+function runPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isDryRun): void
+{
+    printf("[%s] Starting push phase (load)...%s", formatCurrentTimestamp(), PHP_EOL);
+
+    $pendingOperations = fetchPendingPushOperations($pdo);
+    $pendingCount = count($pendingOperations);
+
+    if ($pendingCount === 0) {
+        printf("  No user accounts are marked as READY_FOR_CREATION in migration_mapping_users.%s", PHP_EOL);
+
+        if ($isDryRun) {
+            printf("  --dry-run flag enabled: Redmine will not be modified.%s", PHP_EOL);
+        }
+
+        if ($confirmPush) {
+            printf("  No pending operations: Redmine API was not contacted.%s", PHP_EOL);
+        } else {
+            printf("  --confirm-push flag missing: no Redmine API calls were attempted.%s", PHP_EOL);
+        }
+
+        printf("[%s] Push phase finished without contacting Redmine.%s", formatCurrentTimestamp(), PHP_EOL);
+
+        return;
+    }
+
+    printf("  %d user account(s) are marked as READY_FOR_CREATION in migration_mapping_users.%s", $pendingCount, PHP_EOL);
+
+    if ($isDryRun) {
+        printf("  Dry-run preview of queued Redmine creations:%s", PHP_EOL);
+        outputPushPreview($pendingOperations);
+        printf("  --dry-run flag enabled: Redmine will not be modified.%s", PHP_EOL);
+        printf("[%s] Push phase finished without contacting Redmine.%s", formatCurrentTimestamp(), PHP_EOL);
+
+        return;
+    }
+
+    if (!$confirmPush) {
+        printf("  Re-run with --dry-run to preview the exact payloads before enabling the push.%s", PHP_EOL);
+        printf("  --confirm-push flag missing: no Redmine API calls were attempted.%s", PHP_EOL);
+        printf("[%s] Push phase finished without contacting Redmine.%s", formatCurrentTimestamp(), PHP_EOL);
+
+        return;
+    }
+
+    printf("  Push confirmation supplied; creating Redmine users...%s", PHP_EOL);
+
+    $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
+    $defaultStatus = determineDefaultRedmineUserStatus($config);
+
+    [$successCount, $failureCount] = executeRedmineUserPush($pdo, $redmineClient, $pendingOperations, $defaultStatus);
+
+    printf("  Push summary: %d succeeded, %d failed.%s", $successCount, $failureCount, PHP_EOL);
+    printf("[%s] Push phase finished with Redmine API interactions.%s", formatCurrentTimestamp(), PHP_EOL);
+}
+
+/**
+ * @param PDO $pdo
+ * @return array<int, array{
+ *     mapping_id: int,
+ *     jira_account_id: string,
+ *     proposed_redmine_login: ?string,
+ *     proposed_redmine_mail: ?string,
+ *     proposed_firstname: ?string,
+ *     proposed_lastname: ?string,
+ *     proposed_redmine_status: ?string
+ * }>
+ */
+function fetchPendingPushOperations(PDO $pdo): array
+{
+    $sql = <<<SQL
+SELECT
+    mapping_id,
+    jira_account_id,
+    proposed_redmine_login,
+    proposed_redmine_mail,
+    proposed_firstname,
+    proposed_lastname,
+    proposed_redmine_status
+FROM migration_mapping_users
+WHERE migration_status = 'READY_FOR_CREATION'
+ORDER BY mapping_id
+SQL;
+
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to inspect pending push operations: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement === false) {
+        return [];
+    }
+
+    /** @var array<int, array<string, mixed>> $rows */
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+
+    $records = [];
+    foreach ($rows as $row) {
+        $records[] = [
+            'mapping_id' => (int)$row['mapping_id'],
+            'jira_account_id' => (string)$row['jira_account_id'],
+            'proposed_redmine_login' => $row['proposed_redmine_login'] !== null ? (string)$row['proposed_redmine_login'] : null,
+            'proposed_redmine_mail' => $row['proposed_redmine_mail'] !== null ? (string)$row['proposed_redmine_mail'] : null,
+            'proposed_firstname' => $row['proposed_firstname'] !== null ? (string)$row['proposed_firstname'] : null,
+            'proposed_lastname' => $row['proposed_lastname'] !== null ? (string)$row['proposed_lastname'] : null,
+            'proposed_redmine_status' => $row['proposed_redmine_status'] !== null ? (string)$row['proposed_redmine_status'] : null,
+        ];
+    }
+
+    return $records;
+}
+
+/**
+ * @param array<int, array{
+ *     mapping_id: int,
+ *     jira_account_id: string,
+ *     proposed_redmine_login: ?string,
+ *     proposed_redmine_mail: ?string,
+ *     proposed_firstname: ?string,
+ *     proposed_lastname: ?string,
+ *     proposed_redmine_status: ?string
+ * }> $pendingOperations
+ */
+function outputPushPreview(array $pendingOperations): void
+{
+    foreach ($pendingOperations as $operation) {
+        printf(
+            "    - [mapping #%d] Jira %s => login=%s, mail=%s, firstname=%s, lastname=%s, status=%s%s",
+            $operation['mapping_id'],
+            $operation['jira_account_id'],
+            formatPushPreviewField($operation['proposed_redmine_login']),
+            formatPushPreviewField($operation['proposed_redmine_mail']),
+            formatPushPreviewField($operation['proposed_firstname']),
+            formatPushPreviewField($operation['proposed_lastname']),
+            formatPushPreviewField($operation['proposed_redmine_status']),
+            PHP_EOL
+        );
+    }
+}
+
+function formatPushPreviewField(?string $value): string
+{
+    if ($value === null) {
+        return 'NULL';
+    }
+
+    $encoded = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($encoded === false) {
+        return '"' . addcslashes($value, "\"\\") . '"';
+    }
+
+    return $encoded;
+}
+
+/**
+ * @param PDO $pdo
+ * @param Client $redmineClient
+ * @param array<int, array{
+ *     mapping_id: int,
+ *     jira_account_id: string,
+ *     proposed_redmine_login: ?string,
+ *     proposed_redmine_mail: ?string,
+ *     proposed_firstname: ?string,
+ *     proposed_lastname: ?string,
+ *     proposed_redmine_status: ?string
+ * }> $pendingOperations
+ * @param string $defaultStatus
+ * @return array{0: int, 1: int}
+ */
+function executeRedmineUserPush(PDO $pdo, Client $redmineClient, array $pendingOperations, string $defaultStatus): array
+{
+    $updateStatement = $pdo->prepare(<<<SQL
+        UPDATE migration_mapping_users
+        SET
+            redmine_user_id = :redmine_user_id,
+            migration_status = :migration_status,
+            match_type = :match_type,
+            proposed_redmine_login = :proposed_redmine_login,
+            proposed_redmine_mail = :proposed_redmine_mail,
+            proposed_firstname = :proposed_firstname,
+            proposed_lastname = :proposed_lastname,
+            proposed_redmine_status = :proposed_redmine_status,
+            notes = :notes,
+            automation_hash = :automation_hash
+        WHERE mapping_id = :mapping_id
+    SQL);
+
+    if ($updateStatement === false) {
+        throw new RuntimeException('Failed to prepare update statement for migration_mapping_users during the push phase.');
+    }
+
+    $successCount = 0;
+    $failureCount = 0;
+
+    foreach ($pendingOperations as $operation) {
+        $preparedFields = null;
+
+        try {
+            $preparedFields = prepareRedmineUserCreationFields($operation, $defaultStatus);
+            $newUserId = sendRedmineUserCreationRequest($redmineClient, $preparedFields);
+        } catch (Throwable $exception) {
+            $errorMessage = $exception->getMessage();
+            $updateValues = buildPushUpdateValues(
+                $operation,
+                $preparedFields,
+                $defaultStatus,
+                'CREATION_FAILED',
+                null,
+                $errorMessage
+            );
+
+            try {
+                $updateStatement->execute($updateValues);
+            } catch (Throwable $updateException) {
+                throw new RuntimeException(
+                    sprintf(
+                        'Failed to record push failure for mapping %d: %s',
+                        $operation['mapping_id'],
+                        $updateException->getMessage()
+                    ),
+                    0,
+                    $updateException
+                );
+            }
+
+            printf(
+                "    [failed] Jira %s (mapping #%d): %s%s",
+                $operation['jira_account_id'],
+                $operation['mapping_id'],
+                $errorMessage,
+                PHP_EOL
+            );
+
+            $failureCount++;
+            continue;
+        }
+
+        $updateValues = buildPushUpdateValues(
+            $operation,
+            $preparedFields,
+            $defaultStatus,
+            'CREATION_SUCCESS',
+            $newUserId,
+            null
+        );
+
+        $updateStatement->execute($updateValues);
+
+        printf(
+            "    [created] Jira %s -> Redmine #%d (mapping #%d)%s",
+            $operation['jira_account_id'],
+            $newUserId,
+            $operation['mapping_id'],
+            PHP_EOL
+        );
+
+        $successCount++;
+    }
+
+    return [$successCount, $failureCount];
+}
+
+/**
+ * @param array{
+ *     mapping_id: int,
+ *     jira_account_id: string,
+ *     proposed_redmine_login: ?string,
+ *     proposed_redmine_mail: ?string,
+ *     proposed_firstname: ?string,
+ *     proposed_lastname: ?string,
+ *     proposed_redmine_status: ?string
+ * } $operation
+ * @return array{login: string, mail: string, firstname: string, lastname: string, status_label: string, status_code: int}
+ */
+function prepareRedmineUserCreationFields(array $operation, string $defaultStatus): array
+{
+    $login = requireNonEmptyPushField($operation, $operation['proposed_redmine_login'] ?? null, 'Proposed Redmine login', 255);
+    $mail = requireNonEmptyPushField($operation, $operation['proposed_redmine_mail'] ?? null, 'Proposed Redmine email', 255);
+    $firstname = requireNonEmptyPushField($operation, $operation['proposed_firstname'] ?? null, 'Proposed Redmine firstname', 255);
+    $lastname = requireNonEmptyPushField($operation, $operation['proposed_lastname'] ?? null, 'Proposed Redmine lastname', 255);
+
+    $statusLabel = normalizeProposedRedmineStatus($operation['proposed_redmine_status'] ?? null, $defaultStatus);
+    $statusCode = mapRedmineStatusLabelToCode($statusLabel);
+
+    return [
+        'login' => $login,
+        'mail' => $mail,
+        'firstname' => $firstname,
+        'lastname' => $lastname,
+        'status_label' => $statusLabel,
+        'status_code' => $statusCode,
+    ];
+}
+
+/**
+ * @param array{
+ *     mapping_id: int,
+ *     jira_account_id: string
+ * } $operation
+ */
+function requireNonEmptyPushField(array $operation, ?string $value, string $fieldLabel, int $maxLength): string
+{
+    $normalized = normalizeString($value, $maxLength);
+    if ($normalized === null) {
+        throw new RuntimeException(sprintf(
+            '%s is missing for Jira account %s (mapping #%d).',
+            $fieldLabel,
+            $operation['jira_account_id'],
+            $operation['mapping_id']
+        ));
+    }
+
+    return $normalized;
+}
+
+/**
+ * @param array{login: string, mail: string, firstname: string, lastname: string, status_label: string, status_code: int} $fields
+ */
+function sendRedmineUserCreationRequest(Client $client, array $fields): int
+{
+    $payload = [
+        'user' => [
+            'login' => $fields['login'],
+            'firstname' => $fields['firstname'],
+            'lastname' => $fields['lastname'],
+            'mail' => $fields['mail'],
+            'generate_password' => true,
+            'must_change_passwd' => true,
+            'status' => $fields['status_code'],
+        ],
+    ];
+
+    try {
+        $response = $client->post('users.json', ['json' => $payload]);
+    } catch (BadResponseException $exception) {
+        $message = extractRedmineErrorMessage($exception->getResponse(), $exception->getMessage());
+        throw new RuntimeException($message, 0, $exception);
+    } catch (GuzzleException $exception) {
+        throw new RuntimeException('Redmine user creation request failed: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    $statusCode = $response->getStatusCode();
+    if ($statusCode !== 201 && $statusCode !== 200) {
+        $message = extractRedmineErrorMessage(
+            $response,
+            sprintf('Unexpected HTTP status %d when creating a Redmine user.', $statusCode)
+        );
+
+        throw new RuntimeException($message);
+    }
+
+    try {
+        $decoded = json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException $exception) {
+        throw new RuntimeException('Unable to decode Redmine user creation response: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if (!is_array($decoded) || !isset($decoded['user']) || !is_array($decoded['user'])) {
+        throw new RuntimeException('Unexpected structure in Redmine user creation response.');
+    }
+
+    $user = $decoded['user'];
+    if (!isset($user['id']) || !is_numeric($user['id'])) {
+        throw new RuntimeException('Redmine user creation response did not include a user ID.');
+    }
+
+    return (int)$user['id'];
+}
+function mapRedmineStatusLabelToCode(string $statusLabel): int
+{
+    if ($statusLabel === 'ACTIVE') {
+        return 1;
+    }
+
+    return 3;
+}
+
+/**
+ * @param array{
+ *     mapping_id: int,
+ *     jira_account_id: string,
+ *     proposed_redmine_login: ?string,
+ *     proposed_redmine_mail: ?string,
+ *     proposed_firstname: ?string,
+ *     proposed_lastname: ?string,
+ *     proposed_redmine_status: ?string
+ * } $operation
+ * @param array{login: string, mail: string, firstname: string, lastname: string, status_label: string, status_code: int}|null $preparedFields
+ * @return array{
+ *     mapping_id: int,
+ *     redmine_user_id: ?int,
+ *     migration_status: string,
+ *     match_type: string,
+ *     proposed_redmine_login: ?string,
+ *     proposed_redmine_mail: ?string,
+ *     proposed_firstname: ?string,
+ *     proposed_lastname: ?string,
+ *     proposed_redmine_status: string,
+ *     notes: ?string,
+ *     automation_hash: string
+ * }
+ */
+function buildPushUpdateValues(
+    array $operation,
+    ?array $preparedFields,
+    string $defaultStatus,
+    string $migrationStatus,
+    ?int $redmineUserId,
+    ?string $notes
+): array {
+    $login = $preparedFields['login'] ?? ($operation['proposed_redmine_login'] ?? null);
+    $mail = $preparedFields['mail'] ?? ($operation['proposed_redmine_mail'] ?? null);
+    $firstname = $preparedFields['firstname'] ?? ($operation['proposed_firstname'] ?? null);
+    $lastname = $preparedFields['lastname'] ?? ($operation['proposed_lastname'] ?? null);
+    $statusLabel = $preparedFields['status_label'] ?? normalizeProposedRedmineStatus(
+        $operation['proposed_redmine_status'] ?? null,
+        $defaultStatus
+    );
+
+    $matchType = 'NONE';
+
+    $automationHash = computeAutomationStateHash(
+        $redmineUserId,
+        $migrationStatus,
+        $matchType,
+        $login,
+        $mail,
+        $firstname,
+        $lastname,
+        $statusLabel,
+        $notes
+    );
+
+    return [
+        'mapping_id' => $operation['mapping_id'],
+        'redmine_user_id' => $redmineUserId,
+        'migration_status' => $migrationStatus,
+        'match_type' => $matchType,
+        'proposed_redmine_login' => $login,
+        'proposed_redmine_mail' => $mail,
+        'proposed_firstname' => $firstname,
+        'proposed_lastname' => $lastname,
+        'proposed_redmine_status' => $statusLabel,
+        'notes' => $notes,
+        'automation_hash' => $automationHash,
+    ];
+}
+
+function extractRedmineErrorMessage(?ResponseInterface $response, string $fallback): string
+{
+    $fallback = trim($fallback);
+    if ($response === null) {
+        return $fallback !== '' ? $fallback : 'Unknown error when contacting Redmine.';
+    }
+
+    $statusCode = $response->getStatusCode();
+    $message = null;
+    $body = (string)$response->getBody();
+
+    if ($body !== '') {
+        try {
+            $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
+            $decoded = null;
+        }
+
+        if (is_array($decoded)) {
+            if (isset($decoded['errors']) && is_array($decoded['errors'])) {
+                $parts = [];
+                foreach ($decoded['errors'] as $error) {
+                    if (!is_string($error)) {
+                        continue;
+                    }
+
+                    $trimmed = trim($error);
+                    if ($trimmed !== '') {
+                        $parts[] = $trimmed;
+                    }
+                }
+
+                if ($parts !== []) {
+                    $message = implode('; ', $parts);
+                }
+            } elseif (isset($decoded['error']) && is_string($decoded['error'])) {
+                $candidate = trim($decoded['error']);
+                if ($candidate !== '') {
+                    $message = $candidate;
+                }
+            }
+        }
+
+        if ($message === null) {
+            $stripped = trim(strip_tags($body));
+            if ($stripped !== '') {
+                if (function_exists('mb_substr')) {
+                    $message = mb_substr($stripped, 0, 500);
+                } else {
+                    $message = substr($stripped, 0, 500);
+                }
+            }
+        }
+    }
+
+    if ($message === null || $message === '') {
+        $message = $fallback !== '' ? $fallback : 'Unknown error response received from Redmine.';
+    }
+
+    if (function_exists('mb_strlen')) {
+        if (mb_strlen($message) > 500) {
+            $message = mb_substr($message, 0, 500) . '…';
+        }
+    } elseif (strlen($message) > 500) {
+        $message = substr($message, 0, 500) . '…';
+    }
+
+    return sprintf('HTTP %d: %s', $statusCode, $message);
+}
+
+/**
+ * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool} $cliOptions
  * @return array<int, string>
  */
 function determinePhasesToRun(array $cliOptions): array
@@ -191,7 +731,7 @@ function determinePhasesToRun(array $cliOptions): array
 
 /**
  * @param array<int, string> $argv
- * @return array{0: array{help: bool, version: bool, phases: ?string, skip: ?string}, 1: array<int, string>}
+ * @return array{0: array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool}, 1: array<int, string>}
  */
 function parseCommandLineOptions(array $argv): array
 {
@@ -200,6 +740,8 @@ function parseCommandLineOptions(array $argv): array
         'version' => false,
         'phases' => null,
         'skip' => null,
+        'confirm_push' => false,
+        'dry_run' => false,
     ];
 
     $positionalArguments = [];
@@ -223,6 +765,16 @@ function parseCommandLineOptions(array $argv): array
 
         if ($argument === '-V' || $argument === '--version') {
             $options['version'] = true;
+            continue;
+        }
+
+        if ($argument === '--confirm-push') {
+            $options['confirm_push'] = true;
+            continue;
+        }
+
+        if ($argument === '--dry-run') {
+            $options['dry_run'] = true;
             continue;
         }
 
@@ -326,6 +878,8 @@ function printUsage(): void
     echo "  -V, --version        Print the script version and exit." . PHP_EOL;
     echo "      --phases=LIST    Comma-separated list of phases to execute." . PHP_EOL;
     echo "      --skip=LIST      Comma-separated list of phases to skip." . PHP_EOL;
+    echo "      --confirm-push   Allow the push phase to contact Redmine (required for future writes)." . PHP_EOL;
+    echo "      --dry-run        Preview push-phase actions without contacting Redmine." . PHP_EOL;
     echo PHP_EOL;
     echo "Available phases:" . PHP_EOL;
     foreach (AVAILABLE_PHASES as $phase => $description) {
@@ -336,6 +890,7 @@ function printUsage(): void
     echo sprintf('  php %s --help%s', $scriptName, PHP_EOL);
     echo sprintf('  php %s --phases=redmine%s', $scriptName, PHP_EOL);
     echo sprintf('  php %s --skip=jira%s', $scriptName, PHP_EOL);
+    echo sprintf('  php %s --phases=push --dry-run%s', $scriptName, PHP_EOL);
     echo PHP_EOL;
 }
 
