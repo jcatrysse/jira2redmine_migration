@@ -1,4 +1,6 @@
-<?php /** @noinspection SpellCheckingInspection */
+<?php
+/** @noinspection DuplicatedCode */
+/** @noinspection SpellCheckingInspection */
 
 declare(strict_types=1);
 
@@ -7,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_USERS_SCRIPT_VERSION = '0.0.2';
+const MIGRATE_USERS_SCRIPT_VERSION = '0.0.3';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract users from Jira and persist them into staging_jira_users.',
     'redmine' => 'Refresh the staging_redmine_users snapshot from the Redmine REST API.',

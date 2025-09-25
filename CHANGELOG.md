@@ -26,3 +26,20 @@ All notable changes to this project will be documented in this file.
 - Respect the configurable `migration.users.default_redmine_user_status` toggle when preparing proposed Redmine accounts.
 - Stop expanding Redmine group and membership data during the user snapshot to keep the import leaner for now.
 - Implement the push phase for `users`
+
+## [0.0.3] - 2025-09-26
+
+- Extend `02_migrate_groups.php` to ingest Jira and Redmine group memberships, persisting them in the new `staging_*_group_members`
+  tables and the `migration_mapping_group_members` state machine.
+- Rework the transform phase so it reconciles both group metadata and memberships, introducing `AWAITING_GROUP`, `AWAITING_USER`,
+  and `READY_FOR_ASSIGNMENT` statuses while continuing to respect automation hashes.
+- Teach the push phase to assign missing Redmine users to existing or newly created groups (with dry-run previews) before
+  updating the mapping tables.
+- Streamline the membership staging tables to store only identifiers and raw payloads, deriving names from the user/group
+  snapshots while keeping the Jira group name in the membership mapping for operator context.
+- Update the staging schema, README, and CLI documentation to reflect the membership workflow and the new recommended
+  migration order where project synchronisation (`00_sync_projects.php`) leads the pipeline.
+- Ensure the membership transform re-evaluates groups once a Redmine identifier is present so rows no longer stall in
+  `AWAITING_GROUP` after successful creations.
+- Reset membership automation hashes when group identifiers are backfilled from the mapping table so subsequent transforms
+  treat them as automation-managed rows instead of reporting spurious manual overrides.

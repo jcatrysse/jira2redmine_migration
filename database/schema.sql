@@ -66,6 +66,15 @@ CREATE TABLE `staging_jira_groups` (
                                        `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) COMMENT='Raw extraction of Jira Groups.';
 
+CREATE TABLE `staging_jira_group_members` (
+                                             `group_id` VARCHAR(255) NOT NULL,
+                                             `account_id` VARCHAR(255) NOT NULL,
+                                             `raw_payload` JSON NOT NULL,
+                                             `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                             PRIMARY KEY (`group_id`, `account_id`),
+                                             KEY `idx_jira_group_members_account` (`account_id`)
+) COMMENT='Raw extraction of Jira group memberships.';
+
 CREATE TABLE `staging_redmine_groups` (
                                           `id` INT NOT NULL PRIMARY KEY,
                                           `name` VARCHAR(255) NOT NULL,
@@ -74,16 +83,43 @@ CREATE TABLE `staging_redmine_groups` (
                                           UNIQUE KEY `uk_redmine_group_name` (`name`)
 ) COMMENT='Snapshot of existing Redmine Groups.';
 
+CREATE TABLE `staging_redmine_group_members` (
+                                                `group_id` INT NOT NULL,
+                                                `user_id` INT NOT NULL,
+                                                `raw_payload` JSON NOT NULL,
+                                                `retrieved_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                PRIMARY KEY (`group_id`, `user_id`),
+                                                KEY `idx_redmine_group_members_user` (`user_id`)
+) COMMENT='Snapshot of Redmine group memberships.';
+
 CREATE TABLE `migration_mapping_groups` (
-                                            `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
-                                            `jira_group_id` VARCHAR(255) NOT NULL,
-                                            `redmine_group_id` INT NULL,
-                                            `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
-                                            `notes` TEXT,
-                                            `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                            `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                                            UNIQUE KEY `uk_jira_group_id` (`jira_group_id`)
+        `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
+        `jira_group_id` VARCHAR(255) NOT NULL,
+        `jira_group_name` VARCHAR(255) NULL,
+        `redmine_group_id` INT NULL,
+        `proposed_redmine_name` VARCHAR(255) NULL,
+        `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
+        `notes` TEXT,
+        `automation_hash` CHAR(64) NULL,
+        `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY `uk_jira_group_id` (`jira_group_id`)
 ) COMMENT='Mapping and status for Group migration.';
+
+CREATE TABLE `migration_mapping_group_members` (
+                                                  `member_mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
+                                                  `jira_group_id` VARCHAR(255) NOT NULL,
+                                                  `jira_group_name` VARCHAR(255) NULL,
+                                                  `jira_account_id` VARCHAR(255) NOT NULL,
+                                                  `redmine_group_id` INT NULL,
+                                                  `redmine_user_id` INT NULL,
+                                                  `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_ASSIGNMENT', 'AWAITING_GROUP', 'AWAITING_USER', 'ASSIGNMENT_SUCCESS', 'ASSIGNMENT_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
+                                                  `notes` TEXT,
+                                                  `automation_hash` CHAR(64) NULL,
+                                                  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                  `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                  UNIQUE KEY `uk_jira_group_member` (`jira_group_id`, `jira_account_id`)
+) COMMENT='Mapping and status for synchronising group memberships.';
 
 -- ================================================================
 -- Table Set 3: Roles
