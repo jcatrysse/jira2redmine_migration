@@ -43,3 +43,5 @@ All notable changes to this project will be documented in this file.
   `AWAITING_GROUP` after successful creations.
 - Reset membership automation hashes when group identifiers are backfilled from the mapping table so subsequent transforms
   treat them as automation-managed rows instead of reporting spurious manual overrides.
+- Allow `01_migrate_users.php` to read `migration.users.auth_source_id` so newly created Redmine accounts can be bound to the correct authentication mode (e.g. LDAP).
+- Include the optional `auth_source_id` in push requests when configured and document the new toggle with refreshed sample configuration.

@@ -228,8 +228,15 @@ function runPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isDryRun
 
     $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
     $defaultStatus = determineDefaultRedmineUserStatus($config);
+    $authSourceId = determineRedmineUserAuthSourceId($config);
 
-    [$successCount, $failureCount] = executeRedmineUserPush($pdo, $redmineClient, $pendingOperations, $defaultStatus);
+    [$successCount, $failureCount] = executeRedmineUserPush(
+        $pdo,
+        $redmineClient,
+        $pendingOperations,
+        $defaultStatus,
+        $authSourceId
+    );
 
     printf("  Push summary: %d succeeded, %d failed.%s", $successCount, $failureCount, PHP_EOL);
     printf("[%s] Push phase finished with Redmine API interactions.%s", formatCurrentTimestamp(), PHP_EOL);
@@ -347,9 +354,16 @@ function formatPushPreviewField(?string $value): string
  *     proposed_redmine_status: ?string
  * }> $pendingOperations
  * @param string $defaultStatus
+ * @param int|null $authSourceId
  * @return array{0: int, 1: int}
  */
-function executeRedmineUserPush(PDO $pdo, Client $redmineClient, array $pendingOperations, string $defaultStatus): array
+function executeRedmineUserPush(
+    PDO $pdo,
+    Client $redmineClient,
+    array $pendingOperations,
+    string $defaultStatus,
+    ?int $authSourceId
+): array
 {
     $updateStatement = $pdo->prepare(<<<SQL
         UPDATE migration_mapping_users
@@ -379,7 +393,7 @@ function executeRedmineUserPush(PDO $pdo, Client $redmineClient, array $pendingO
 
         try {
             $preparedFields = prepareRedmineUserCreationFields($operation, $defaultStatus);
-            $newUserId = sendRedmineUserCreationRequest($redmineClient, $preparedFields);
+            $newUserId = sendRedmineUserCreationRequest($redmineClient, $preparedFields, $authSourceId);
         } catch (Throwable $exception) {
             $errorMessage = $exception->getMessage();
             $updateValues = buildPushUpdateValues(
@@ -496,9 +510,12 @@ function requireNonEmptyPushField(array $operation, ?string $value, string $fiel
 }
 
 /**
+ * @param Client $client
  * @param array{login: string, mail: string, firstname: string, lastname: string, status_label: string, status_code: int} $fields
+ * @param int|null $authSourceId
+ * @return int
  */
-function sendRedmineUserCreationRequest(Client $client, array $fields): int
+function sendRedmineUserCreationRequest(Client $client, array $fields, ?int $authSourceId): int
 {
     $payload = [
         'user' => [
@@ -511,6 +528,10 @@ function sendRedmineUserCreationRequest(Client $client, array $fields): int
             'status' => $fields['status_code'],
         ],
     ];
+
+    if ($authSourceId !== null) {
+        $payload['user']['auth_source_id'] = $authSourceId;
+    }
 
     try {
         $response = $client->post('users.json', ['json' => $payload]);
@@ -939,6 +960,46 @@ function determineDefaultRedmineUserStatus(array $config): string
     }
 
     return $defaultStatus;
+}
+
+/**
+ * @param array<string, mixed> $config
+ */
+function determineRedmineUserAuthSourceId(array $config): ?int
+{
+    if (!array_key_exists('migration', $config) || !is_array($config['migration'])) {
+        return null;
+    }
+
+    $migrationConfig = $config['migration'];
+    if (!array_key_exists('users', $migrationConfig) || !is_array($migrationConfig['users'])) {
+        return null;
+    }
+
+    $rawValue = $migrationConfig['users']['auth_source_id'] ?? null;
+
+    if ($rawValue === null) {
+        return null;
+    }
+
+    if (is_int($rawValue)) {
+        return $rawValue > 0 ? $rawValue : null;
+    }
+
+    if (is_string($rawValue)) {
+        $normalized = trim($rawValue);
+        if ($normalized === '') {
+            return null;
+        }
+
+        if (ctype_digit($normalized)) {
+            $value = (int)$normalized;
+
+            return $value > 0 ? $value : null;
+        }
+    }
+
+    throw new RuntimeException('Invalid configuration for migration.users.auth_source_id; expected a positive integer or null.');
 }
 
 /**

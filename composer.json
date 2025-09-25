@@ -5,7 +5,8 @@
   "require": {
     "guzzlehttp/guzzle": "^7.10",
     "ext-pdo": "*",
-    "ext-mbstring": "*"
+    "ext-mbstring": "*",
+    "ext-ctype": "*"
   },
   "license": "GPL-3.0",
   "authors": [

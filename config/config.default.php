@@ -12,7 +12,7 @@ return [
     'redmine' => [
         // Base URL of the Redmine instance, e.g. https://redmine.example.com
         'base_url' => 'https://your-redmine-instance.example.com',
-        // Redmine REST API key with sufficient permissions for the migration.
+        // The Redmine REST API key with sufficient permissions for the migration.
         'api_key' => 'your-redmine-api-key',
     ],
     'database' => [
@@ -20,7 +20,7 @@ return [
         'dsn' => 'mysql:host=127.0.0.1;port=3306;dbname=jira2redmine;charset=utf8mb4',
         // Database user that has permissions to read/write the staging tables.
         'username' => 'jira2redmine',
-        // Password for the database user above.
+        // The password for the database user above.
         'password' => 'change-me',
         // Optional PDO constructor options.
         'options' => [],
@@ -35,6 +35,9 @@ return [
             // Default Redmine status to propose for new accounts when no existing Redmine user is matched.
             // Allowed values: LOCKED, ACTIVE.
             'default_redmine_user_status' => 'LOCKED',
+            // Optional Redmine authentication mode identifier (e.g. LDAP) to assign to newly created users.
+            // Leave as null to keep Redmine's default (password-based) authentication mode.
+            'auth_source_id' => null,
         ],
     ],
 ];

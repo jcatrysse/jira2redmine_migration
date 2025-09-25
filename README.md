@@ -141,6 +141,13 @@ The transform phase honours the `migration.users.default_redmine_user_status` se
 sample configuration ships with `LOCKED` so newly proposed accounts remain inactive until they are reviewed; switch it to
 `ACTIVE` if your migration should provision users ready-to-go as soon as they are created.
 
+### Assigning Redmine authentication sources
+
+If your Redmine instance uses LDAP (or another authentication mode) for the accounts created by the migration, provide the
+corresponding authentication mode identifier via `migration.users.auth_source_id` in `config/config.local.php`. Leave it unset or
+`null` to fall back to Redmine's built-in password authentication. When present, the push phase adds the `auth_source_id` field to
+the `POST /users.json` payload so the new accounts immediately reference the correct source.
+
 ---
 
 ## 6. Running `02_migrate_groups.php`
@@ -186,7 +193,7 @@ are only attempted when you supply `--confirm-push`. Combine it with `--dry-run`
 
    * `MATCH_FOUND` – the Redmine group already contains the user.
    * `READY_FOR_ASSIGNMENT` – the Redmine user exists but is not yet in the target group.
-   * `AWAITING_GROUP` / `AWAITING_USER` – dependencies are still missing (e.g., the group must be created or the user
+   * `AWAITING_GROUP` / `AWAITING_USER` – dependencies are still missing (e.g. the group must be created or the user
      has not been provisioned in Redmine yet).
    * `MANUAL_INTERVENTION_REQUIRED` – conflicting or incomplete data prevented an automatic decision.
 
