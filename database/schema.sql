@@ -310,8 +310,13 @@ CREATE TABLE `migration_mapping_projects` (
                                               `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
                                               `jira_project_id` VARCHAR(255) NOT NULL,
                                               `redmine_project_id` INT NULL,
+                                              `proposed_identifier` VARCHAR(255) NULL,
+                                              `proposed_name` VARCHAR(255) NULL,
+                                              `proposed_description` TEXT NULL,
+                                              `proposed_is_public` BOOLEAN NULL,
                                               `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
                                               `notes` TEXT,
+                                              `automation_hash` CHAR(64) NULL,
                                               `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                               `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                                               UNIQUE KEY `uk_jira_project_id` (`jira_project_id`)

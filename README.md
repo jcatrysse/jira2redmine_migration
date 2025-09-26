@@ -28,21 +28,21 @@ The core strategy is a phased **ETL (Extract, Transform, Load)** process, broken
 
 The migration must be executed in the following order to respect data dependencies. Each step should be a separate script.
 
-| Order | Script Name (Example)          | Object              | Purpose & Dependencies                                                                                                                            |
-|-------|--------------------------------|---------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1     | `00_sync_projects.php`         | Projects            | Extracts Jira projects, snapshots existing Redmine projects, and primes the mapping tables. Establishes project IDs before dependent scripts run. |
-| 2     | `01_migrate_users.php`         | Users               | Creates users in Redmine that exist in Jira. Matched by email address. **Must run before groups or project memberships.**                         |
-| 3     | `02_migrate_groups.php`        | Groups & Members    | Creates user groups **and** synchronises group memberships. Depends on the user and project snapshots so memberships resolve correctly.           |
-| 4     | `03_migrate_roles.php`         | Roles               | Maps Jira's "Project Roles" to Redmine's "Roles".                                                                                                 |
-| 5     | `04_migrate_statuses.php`      | Issue Statuses      | Ensures all necessary issue statuses exist in Redmine.                                                                                            |
-| 6     | `05_migrate_priorities.php`    | Issue Priorities    | Ensures all necessary issue priorities exist in Redmine.                                                                                          |
-| 7     | `06_migrate_trackers.php`      | Trackers            | Migrates Jira "Issue Types" to Redmine "Trackers".                                                                                                |
-| 8     | `07_migrate_custom_fields.php` | Custom Fields       | Migrates custom fields. This can be complex and may require manual mapping decisions.                                                             |
-| 9     | `08_assign_members.php`        | Project Memberships | Assigns migrated users and groups to migrated projects with the appropriate roles. **Depends on Users, Groups, Roles, Projects.**                 |
-| 10    | `09_migrate_tags.php`          | Tags (Labels)       | Extracts all unique labels from Jira issues and creates them as tags in Redmine. **Depends on Issues (Extract phase).**                           |
-| 11    | `10_migrate_issues.php`        | **Issues**          | The main event. Migrates all issues, using the mapping tables to link to the correct Redmine project, tracker, user, status, etc.                 |
-| 12    | `11_migrate_journals.php`      | Comments & History  | Migrates issue comments and changelogs. **Depends on Issues.**                                                                                    |
-| 13    | `12_migrate_attachments.php`   | Attachments         | Downloads attachments from Jira and uploads them to the corresponding Redmine issues. **Depends on Issues.**                                      |
+| Order | Script Name (Example)          | Object              | Purpose & Dependencies                                                                                                                                    |
+|-------|--------------------------------|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1     | `01_migrate_projects.php`      | Projects            | Extracts Jira projects, snapshots existing Redmine projects, and manages the mapping table. Establishes project identifiers before dependent scripts run. |
+| 2     | `02_migrate_users.php`         | Users               | Creates users in Redmine that exist in Jira. Matched by email address. **Must run before groups or project memberships.**                                 |
+| 3     | `03_migrate_groups.php`        | Groups & Members    | Creates user groups **and** synchronises group memberships. Depends on the user and project snapshots so memberships resolve correctly.                   |
+| 4     | `03_migrate_roles.php`         | Project Roles       | Maps Jira's "Project Roles" to Redmine's "Groups".                                                                                                        |
+| 5     | `04_migrate_statuses.php`      | Issue Statuses      | Ensures all necessary issue statuses exist in Redmine.                                                                                                    |
+| 6     | `05_migrate_priorities.php`    | Issue Priorities    | Ensures all necessary issue priorities exist in Redmine.                                                                                                  |
+| 7     | `06_migrate_trackers.php`      | Trackers            | Migrates Jira "Issue Types" to Redmine "Trackers".                                                                                                        |
+| 8     | `07_migrate_custom_fields.php` | Custom Fields       | Migrates custom fields. This can be complex and may require manual mapping decisions.                                                                     |
+| 9     | `08_assign_members.php`        | Project Memberships | Assigns migrated users and groups to migrated projects with the appropriate roles. **Depends on Users, Groups, Roles, Projects.**                         |
+| 10    | `09_migrate_tags.php`          | Tags (Labels)       | Extracts all unique labels from Jira issues and creates them as tags in Redmine. **Depends on Issues (Extract phase).**                                   |
+| 11    | `10_migrate_issues.php`        | **Issues**          | The main event. Migrates all issues, using the mapping tables to link to the correct Redmine project, tracker, user, status, etc.                         |
+| 12    | `11_migrate_journals.php`      | Comments & History  | Migrates issue comments and changelogs. **Depends on Issues.**                                                                                            |
+| 13    | `12_migrate_attachments.php`   | Attachments         | Downloads attachments from Jira and uploads them to the corresponding Redmine issues. **Depends on Issues.**                                              |
 
 ---
 
@@ -65,7 +65,7 @@ This is the core logic phase where no API calls are made to create data.
 3.  **Identify New Items**: For all remaining records in `PENDING_ANALYSIS` status, `UPDATE` their status to `READY_FOR_CREATION`.
 4.  **Handle Transformations**: This is where you apply any business logic. For example, you might need to transform Jira's ADF (Atlassian Document Format) for descriptions into Markdown for Redmine or decide on a default password policy for new users.
 
-#### User-specific reconciliation logic (implemented in `01_migrate_users.php`)
+#### User-specific reconciliation logic (implemented in `02_migrate_users.php`)
 
 The second phase of the user migration script now drives the `migration_mapping_users` table. The workflow is fully database-driven, so you can review and amend data before the load phase:
 
@@ -88,16 +88,16 @@ This structure is intended to be reused by later migration scripts so that manua
     *   **On Success (e.g. HTTP 201 Created)**: Parse the response to get the new Redmine ID. `UPDATE` the mapping record with the new ID and set the status to `CREATION_SUCCESS`.
     *   **On Failure (e.g. HTTP 422 Unprocessable Entity)**: `UPDATE` the mapping record's status to `CREATION_FAILED` and store the error message from the API response in the `notes` column for later debugging.
 
-> **Current status:** `01_migrate_users.php` now implements the push phase end-to-end. Use `--dry-run` to review the queued creations and add `--confirm-push` once you are ready to create the accounts in Redmine.
+> **Current status:** `02_migrate_users.php` now implements the push phase end-to-end. Use `--dry-run` to review the queued creations and add `--confirm-push` once you are ready to create the accounts in Redmine.
 
 ---
 
-## 5. Running `01_migrate_users.php`
+## 5. Running `01_migrate_projects.php`
 
-The user migration entry point ships with a few quality-of-life CLI options that make it easier to iterate on specific phases without touching the rest of the workflow.
+Version `0.0.4` introduces the dedicated entry point for synchronising projects. It follows the same CLI ergonomics as the other migration scripts so you can iterate on the extract, transform, and push phases independently.
 
 ```bash
-php 01_migrate_users.php --help
+php 01_migrate_projects.php --help
 ```
 
 ### Available options
@@ -105,7 +105,51 @@ php 01_migrate_users.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.3`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.4`).                                                 |
+| `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
+| `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
+| `--confirm-push`  | Required toggle to allow the push phase to create projects in Redmine.                |
+| `--dry-run`       | Print a detailed preview of the push phase without performing any API calls.          |
+
+**Default behaviour:** when no phase-related options are supplied, all four phases (`jira`, `redmine`, `transform`, and `push`) are considered. The push phase only contacts Redmine when you provide `--confirm-push`; add `--dry-run` to inspect the queued creations without making any changes.
+
+### Workflow highlights
+
+1. **Jira extraction (`jira`)** – paginates through `/rest/api/3/project/search`, stores raw payloads, and refreshes the `staging_jira_projects` table with upserts so reruns remain idempotent.
+2. **Redmine snapshot (`redmine`)** – truncates and rebuilds `staging_redmine_projects` from `GET /projects.json`, capturing identifiers, visibility, and parent relationships.
+3. **Transform (`transform`)** – synchronises `migration_mapping_projects`, matching Jira project keys to Redmine identifiers (case-insensitive). Rows without matches are flagged `READY_FOR_CREATION`; missing keys or invalid identifiers are routed to `MANUAL_INTERVENTION_REQUIRED` with diagnostic notes.
+4. **Push (`push`)** – previews queued project creations during dry runs and, once `--confirm-push` is supplied, posts to `POST /projects.json`. Successful creations are recorded as `CREATION_SUCCESS`, failures capture the Redmine error message in the mapping table for follow-up.
+
+```bash
+# Refresh both staging tables without pushing
+php 01_migrate_projects.php --phases=jira,redmine
+
+# Re-run the transform phase only
+php 01_migrate_projects.php --phases=transform
+
+# Preview the Redmine payloads without making changes
+php 01_migrate_projects.php --phases=push --dry-run
+
+# Perform the push after reviewing the dry-run output
+php 01_migrate_projects.php --phases=push --confirm-push
+```
+
+---
+
+## 6. Running `02_migrate_users.php`
+
+The user migration entry point ships with a few quality-of-life CLI options that make it easier to iterate on specific phases without touching the rest of the workflow.
+
+```bash
+php 02_migrate_users.php --help
+```
+
+### Available options
+
+| Option            | Description                                                                           |
+|-------------------|---------------------------------------------------------------------------------------|
+| `-h`, `--help`    | Print usage information and exit.                                                     |
+| `-V`, `--version` | Display the script version (`0.0.4`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Required toggle to allow the push phase to create users in Redmine.                   |
@@ -117,22 +161,22 @@ php 01_migrate_users.php --help
 
 ```bash
 # Run all phases (default)
-php 01_migrate_users.php
+php 02_migrate_users.php
 
 # Only refresh the Redmine snapshot
-php 01_migrate_users.php --phases=redmine
+php 02_migrate_users.php --phases=redmine
 
 # Re-run the Jira extraction while skipping the Redmine snapshot
-php 01_migrate_users.php --skip=redmine
+php 02_migrate_users.php --skip=redmine
 
 # Recalculate the mapping and proposed values without hitting any APIs
-php 01_migrate_users.php --phases=transform
+php 02_migrate_users.php --phases=transform
 
 # Inspect the pending Redmine creations without making any changes
-php 01_migrate_users.php --phases=push --dry-run
+php 02_migrate_users.php --phases=push --dry-run
 
 # Check the script version
-php 01_migrate_users.php --version
+php 02_migrate_users.php --version
 ```
 
 ### Configuring default Redmine user status
@@ -150,13 +194,12 @@ the `POST /users.json` payload so the new accounts immediately reference the cor
 
 ---
 
-## 6. Running `02_migrate_groups.php`
+## 7. Running `03_migrate_groups.php`
 
-Version `0.0.3` introduces a companion entry point for synchronising Jira groups with Redmine. The script reuses the same CLI
-surface as the user migration, so your muscle memory continues to work:
+Version `0.0.4` keeps the companion entry point for synchronising Jira groups with Redmine aligned with the user and project scripts. The CLI surface remains identical so your muscle memory continues to work:
 
 ```bash
-php 02_migrate_groups.php --help
+php 03_migrate_groups.php --help
 ```
 
 ### Available options
@@ -164,7 +207,7 @@ php 02_migrate_groups.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.3`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.4`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Required toggle to allow the push phase to create groups in Redmine.                  |
