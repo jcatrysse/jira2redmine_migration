@@ -45,3 +45,9 @@ All notable changes to this project will be documented in this file.
   treat them as automation-managed rows instead of reporting spurious manual overrides.
 - Allow `01_migrate_users.php` to read `migration.users.auth_source_id` so newly created Redmine accounts can be bound to the correct authentication mode (e.g. LDAP).
 - Include the optional `auth_source_id` in push requests when configured and document the new toggle with refreshed sample configuration.
+
+## [0.0.4] - 2025-09-27
+
+- Add `01_migrate_projects.php`, covering the full extract/transform/push workflow for Redmine projects (with dry-run previews and creation support).
+- Promote project synchronisation to the first migration step and renumber the user and group scripts to `02_migrate_users.php` and `03_migrate_groups.php` respectively.
+- Bump the CLI script versions to `0.0.4` and refresh the README to document the new entry point, updated command names, and workflow ordering.
