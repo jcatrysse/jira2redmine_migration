@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_GROUPS_SCRIPT_VERSION = '0.0.4';
+const MIGRATE_GROUPS_SCRIPT_VERSION = '0.0.5';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract groups and memberships from Jira and persist them into staging tables.',
     'redmine' => 'Refresh the Redmine groups and memberships snapshot from the REST API.',
@@ -2047,6 +2047,12 @@ function fetchAndStoreRedmineGroups(Client $client, PDO $pdo): int
         throw new RuntimeException('Unable to truncate staging_redmine_group_members: ' . $exception->getMessage(), 0, $exception);
     }
 
+    try {
+        $pdo->exec('TRUNCATE TABLE staging_redmine_group_project_roles');
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Unable to truncate staging_redmine_group_project_roles: ' . $exception->getMessage(), 0, $exception);
+    }
+
     $limit = 100;
     $offset = 0;
     $totalInserted = 0;
@@ -2159,8 +2165,13 @@ function fetchAndStoreRedmineGroups(Client $client, PDO $pdo): int
     }
 
     $uniqueRedmineGroupIds = array_keys($groupIds);
-    $membershipCount = refreshRedmineGroupMemberships($client, $pdo, $uniqueRedmineGroupIds);
-    printf("  Captured %d Redmine group membership row(s).%s", $membershipCount, PHP_EOL);
+    $membershipCounts = refreshRedmineGroupMemberships($client, $pdo, $uniqueRedmineGroupIds);
+    printf(
+        "  Captured %d Redmine group membership row(s) and %d project role membership row(s).%s",
+        $membershipCounts['user_memberships'],
+        $membershipCounts['project_role_memberships'],
+        PHP_EOL
+    );
 
     return $totalInserted;
 }
@@ -2279,16 +2290,19 @@ function refreshJiraGroupMemberships(Client $client, PDO $pdo, array $groupIds):
  * @param Client $client
  * @param PDO $pdo
  * @param array<int, int> $groupIds
- * @return int
+ * @return array{user_memberships: int, project_role_memberships: int}
  * @throws GuzzleException
  */
-function refreshRedmineGroupMemberships(Client $client, PDO $pdo, array $groupIds): int
+function refreshRedmineGroupMemberships(Client $client, PDO $pdo, array $groupIds): array
 {
     if ($groupIds === []) {
-        return 0;
+        return [
+            'user_memberships' => 0,
+            'project_role_memberships' => 0,
+        ];
     }
 
-    $insertStatement = $pdo->prepare(<<<SQL
+    $memberInsertStatement = $pdo->prepare(<<<SQL
         INSERT INTO staging_redmine_group_members (group_id, user_id, raw_payload, retrieved_at)
         VALUES (:group_id, :user_id, :raw_payload, :retrieved_at)
         ON DUPLICATE KEY UPDATE
@@ -2296,16 +2310,48 @@ function refreshRedmineGroupMemberships(Client $client, PDO $pdo, array $groupId
             retrieved_at = VALUES(retrieved_at)
     SQL);
 
-    if ($insertStatement === false) {
+    if ($memberInsertStatement === false) {
         throw new RuntimeException('Failed to prepare insert statement for staging_redmine_group_members.');
     }
 
-    $totalInserted = 0;
+    $projectRoleInsertStatement = $pdo->prepare(<<<SQL
+        INSERT INTO staging_redmine_group_project_roles (
+            group_id,
+            membership_id,
+            project_id,
+            project_name,
+            role_id,
+            role_name,
+            raw_payload,
+            retrieved_at
+        ) VALUES (
+            :group_id,
+            :membership_id,
+            :project_id,
+            :project_name,
+            :role_id,
+            :role_name,
+            :raw_payload,
+            :retrieved_at
+        )
+        ON DUPLICATE KEY UPDATE
+            project_name = VALUES(project_name),
+            role_name = VALUES(role_name),
+            raw_payload = VALUES(raw_payload),
+            retrieved_at = VALUES(retrieved_at)
+    SQL);
+
+    if ($projectRoleInsertStatement === false) {
+        throw new RuntimeException('Failed to prepare insert statement for staging_redmine_group_project_roles.');
+    }
+
+    $userMembershipCount = 0;
+    $projectRoleMembershipCount = 0;
 
     foreach ($groupIds as $groupId) {
         try {
             $response = $client->get(sprintf('groups/%d.json', $groupId), [
-                'query' => ['include' => 'users'],
+                'query' => ['include' => 'users,memberships'],
             ]);
         } catch (GuzzleException $exception) {
             throw new RuntimeException(sprintf('Failed to fetch Redmine members for group %d: %s', $groupId, $exception->getMessage()), 0, $exception);
@@ -2323,7 +2369,17 @@ function refreshRedmineGroupMemberships(Client $client, PDO $pdo, array $groupId
 
         $group = $decoded['group'];
         $users = $group['users'] ?? [];
-        if (!is_array($users) || $users === []) {
+        $memberships = $group['memberships'] ?? [];
+
+        if (!is_array($users)) {
+            $users = [];
+        }
+
+        if (!is_array($memberships)) {
+            $memberships = [];
+        }
+
+        if ($users === [] && $memberships === []) {
             continue;
         }
 
@@ -2345,14 +2401,81 @@ function refreshRedmineGroupMemberships(Client $client, PDO $pdo, array $groupId
                     throw new RuntimeException('Failed to encode Redmine group member payload: ' . $exception->getMessage(), 0, $exception);
                 }
 
-                $insertStatement->execute([
+                $memberInsertStatement->execute([
                     'group_id' => $groupId,
                     'user_id' => $userId,
                     'raw_payload' => $rawPayload,
                     'retrieved_at' => $retrievedAt,
                 ]);
 
-                $totalInserted++;
+                $userMembershipCount++;
+            }
+
+            foreach ($memberships as $membership) {
+                if (!is_array($membership) || !isset($membership['id'])) {
+                    continue;
+                }
+
+                $membershipId = (int)$membership['id'];
+                if ($membershipId <= 0) {
+                    continue;
+                }
+
+                $project = $membership['project'] ?? null;
+                if (!is_array($project) || !isset($project['id'])) {
+                    continue;
+                }
+
+                $projectId = (int)$project['id'];
+                if ($projectId <= 0) {
+                    continue;
+                }
+
+                $projectName = normalizeString($project['name'] ?? null, 255);
+
+                $roles = $membership['roles'] ?? [];
+                if (!is_array($roles) || $roles === []) {
+                    continue;
+                }
+
+                foreach ($roles as $role) {
+                    if (!is_array($role) || !isset($role['id'])) {
+                        continue;
+                    }
+
+                    $roleId = (int)$role['id'];
+                    if ($roleId <= 0) {
+                        continue;
+                    }
+
+                    $roleName = normalizeString($role['name'] ?? null, 255);
+
+                    try {
+                        $rawPayload = json_encode(
+                            [
+                                'membership_id' => $membershipId,
+                                'project' => $project,
+                                'role' => $role,
+                            ],
+                            JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+                        );
+                    } catch (JsonException $exception) {
+                        throw new RuntimeException('Failed to encode Redmine group project role payload: ' . $exception->getMessage(), 0, $exception);
+                    }
+
+                    $projectRoleInsertStatement->execute([
+                        'group_id' => $groupId,
+                        'membership_id' => $membershipId,
+                        'project_id' => $projectId,
+                        'project_name' => $projectName,
+                        'role_id' => $roleId,
+                        'role_name' => $roleName,
+                        'raw_payload' => $rawPayload,
+                        'retrieved_at' => $retrievedAt,
+                    ]);
+
+                    $projectRoleMembershipCount++;
+                }
             }
 
             $pdo->commit();
@@ -2362,7 +2485,10 @@ function refreshRedmineGroupMemberships(Client $client, PDO $pdo, array $groupId
         }
     }
 
-    return $totalInserted;
+    return [
+        'user_memberships' => $userMembershipCount,
+        'project_role_memberships' => $projectRoleMembershipCount,
+    ];
 }
 
 function computeGroupAutomationStateHash(

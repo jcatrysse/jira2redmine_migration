@@ -39,5 +39,10 @@ return [
             // Leave as null to keep Redmine's default (password-based) authentication mode.
             'auth_source_id' => null,
         ],
+        'roles' => [
+            // Optional Redmine role identifier to fall back to when no automatic match is found for a Jira project role.
+            // Leave as null to require manual selection of the target Redmine role per assignment.
+            'default_redmine_role_id' => null,
+        ],
     ],
 ];

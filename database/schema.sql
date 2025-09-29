@@ -92,6 +92,20 @@ CREATE TABLE `staging_redmine_group_members` (
                                                 KEY `idx_redmine_group_members_user` (`user_id`)
 ) COMMENT='Snapshot of Redmine group memberships.';
 
+CREATE TABLE `staging_redmine_group_project_roles` (
+                                                      `group_id` INT NOT NULL,
+                                                      `membership_id` INT NOT NULL,
+                                                      `project_id` INT NOT NULL,
+                                                      `project_name` VARCHAR(255) NULL,
+                                                      `role_id` INT NOT NULL,
+                                                      `role_name` VARCHAR(255) NULL,
+                                                      `raw_payload` JSON NOT NULL,
+                                                      `retrieved_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                      PRIMARY KEY (`group_id`, `membership_id`, `role_id`),
+                                                      KEY `idx_redmine_group_project_roles_project` (`project_id`),
+                                                      KEY `idx_redmine_group_project_roles_role` (`role_id`)
+) COMMENT='Snapshot of Redmine group project role memberships.';
+
 CREATE TABLE `migration_mapping_groups` (
         `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
         `jira_group_id` VARCHAR(255) NOT NULL,
@@ -132,6 +146,22 @@ CREATE TABLE `staging_jira_project_roles` (
                                               `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) COMMENT='Raw extraction of Jira Project Roles.';
 
+CREATE TABLE `staging_jira_project_role_actors` (
+                                                   `project_id` VARCHAR(255) NOT NULL,
+                                                   `project_key` VARCHAR(255) NULL,
+                                                   `project_name` VARCHAR(255) NULL,
+                                                   `role_id` BIGINT NOT NULL,
+                                                   `role_name` VARCHAR(255) NULL,
+                                                   `actor_id` VARCHAR(255) NOT NULL,
+                                                   `actor_display` VARCHAR(255) NULL,
+                                                   `actor_type` ENUM('atlassian-group-role-actor', 'atlassian-user-role-actor') NOT NULL,
+                                                   `raw_payload` JSON NOT NULL,
+                                                   `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                   PRIMARY KEY (`project_id`, `role_id`, `actor_id`, `actor_type`),
+                                                   KEY `idx_jira_role_actor_project_role` (`project_id`, `role_id`),
+                                                   KEY `idx_jira_role_actor_actor` (`actor_id`)
+) COMMENT='Raw extraction of Jira project role actors (users and groups).';
+
 CREATE TABLE `staging_redmine_roles` (
                                          `id` INT NOT NULL PRIMARY KEY,
                                          `name` VARCHAR(255) NOT NULL,
@@ -143,13 +173,40 @@ CREATE TABLE `staging_redmine_roles` (
 CREATE TABLE `migration_mapping_roles` (
                                            `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
                                            `jira_role_id` BIGINT NOT NULL,
+                                           `jira_role_name` VARCHAR(255) NULL,
+                                           `jira_role_description` TEXT NULL,
                                            `redmine_role_id` INT NULL,
+                                           `proposed_redmine_role_id` INT NULL,
+                                           `proposed_redmine_role_name` VARCHAR(255) NULL,
                                            `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
                                            `notes` TEXT,
+                                           `automation_hash` CHAR(64) NULL,
                                            `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                            `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                                            UNIQUE KEY `uk_jira_role_id` (`jira_role_id`)
 ) COMMENT='Mapping and status for Role migration.';
+
+CREATE TABLE `migration_mapping_project_role_groups` (
+                                                        `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
+                                                        `jira_project_id` VARCHAR(255) NOT NULL,
+                                                        `jira_project_key` VARCHAR(255) NULL,
+                                                        `jira_project_name` VARCHAR(255) NULL,
+                                                        `jira_role_id` BIGINT NOT NULL,
+                                                        `jira_role_name` VARCHAR(255) NULL,
+                                                        `jira_group_id` VARCHAR(255) NOT NULL,
+                                                        `jira_group_name` VARCHAR(255) NULL,
+                                                        `redmine_project_id` INT NULL,
+                                                        `redmine_group_id` INT NULL,
+                                                        `redmine_role_id` INT NULL,
+                                                        `proposed_redmine_role_id` INT NULL,
+                                                        `proposed_redmine_role_name` VARCHAR(255) NULL,
+                                                        `migration_status` ENUM('PENDING_ANALYSIS', 'READY_FOR_ASSIGNMENT', 'ASSIGNMENT_RECORDED', 'AWAITING_PROJECT', 'AWAITING_GROUP', 'AWAITING_ROLE', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
+                                                        `notes` TEXT,
+                                                        `automation_hash` CHAR(64) NULL,
+                                                        `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                        `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                        UNIQUE KEY `uk_project_role_group` (`jira_project_id`, `jira_role_id`, `jira_group_id`)
+) COMMENT='Mapping Jira project role group assignments to Redmine projects/groups/roles.';
 
 -- ================================================================
 -- Table Set 4: Issue Statuses

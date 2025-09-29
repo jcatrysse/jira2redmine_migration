@@ -51,3 +51,12 @@ All notable changes to this project will be documented in this file.
 - Add `01_migrate_projects.php`, covering the full extract/transform/push workflow for Redmine projects (with dry-run previews and creation support).
 - Promote project synchronisation to the first migration step and renumber the user and group scripts to `02_migrate_users.php` and `03_migrate_groups.php` respectively.
 - Bump the CLI script versions to `0.0.4` and refresh the README to document the new entry point, updated command names, and workflow ordering.
+
+## [0.0.5] - 2025-09-28
+
+- Introduce `04_migrate_roles.php` to reconcile Jira project roles with Redmine projects, groups, and roles, including a manual push checklist for assigning groups to projects.
+- Extend the staging schema with `staging_jira_project_role_actors`, enrich `migration_mapping_roles`, and add `migration_mapping_project_role_groups` to track per-project role memberships.
+- Add `migration.roles.default_redmine_role_id` configuration support and expand the README with workflow guidance for the new script.
+- Bump all CLI entry points to `0.0.5` and refresh the documentation to reflect the updated version and role-mapping capabilities.
+- Capture Redmine group project role memberships in staging and automatically mark existing assignments as already recorded during the role transform.
+
