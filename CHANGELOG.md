@@ -41,7 +41,7 @@ All notable changes to this project will be documented in this file.
   migration order where project synchronisation (`00_sync_projects.php`) leads the pipeline.
 - Ensure the membership transform re-evaluates groups once a Redmine identifier is present so rows no longer stall in
   `AWAITING_GROUP` after successful creations.
-- Reset membership automation hashes when group identifiers are backfilled from the mapping table so subsequent transforms
+- Reset membership automation hashes when group identifiers are backfilled from the mapping table, so subsequent transforms
   treat them as automation-managed rows instead of reporting spurious manual overrides.
 - Allow `01_migrate_users.php` to read `migration.users.auth_source_id` so newly created Redmine accounts can be bound to the correct authentication mode (e.g. LDAP).
 - Include the optional `auth_source_id` in push requests when configured and document the new toggle with refreshed sample configuration.
@@ -54,9 +54,19 @@ All notable changes to this project will be documented in this file.
 
 ## [0.0.5] - 2025-09-28
 
-- Introduce `04_migrate_roles.php` to reconcile Jira project roles with Redmine projects, groups, and roles, including a manual push checklist for assigning groups to projects.
+- Introduce `04_migrate_roles.php` to reconcile Jira project roles with Redmine projects, groups, and roles, including a manual
+  push checklist for assigning groups to projects.
 - Extend the staging schema with `staging_jira_project_role_actors`, enrich `migration_mapping_roles`, and add `migration_mapping_project_role_groups` to track per-project role memberships.
 - Add `migration.roles.default_redmine_role_id` configuration support and expand the README with workflow guidance for the new script.
 - Bump all CLI entry points to `0.0.5` and refresh the documentation to reflect the updated version and role-mapping capabilities.
 - Capture Redmine group project role memberships in staging and automatically mark existing assignments as already recorded during the role transform.
 
+## [0.0.6] - 2025-09-29
+
+- Add `05_migrate_statuses.php` to extract Jira statuses, refresh the Redmine snapshot, reconcile mappings with
+  automation-hash preservation, and print a manual creation checklist.
+- Add `06_migrate_priorities.php` following the same phased workflow for issue priorities, including Jira/Redmine
+  upserts, reconciliation, and a manual push summary.
+- Extend the staging schema with richer metadata for status and priority mappings (names, proposed values, and
+  automation hashes) so manual overrides persist across reruns.
+- Bump all CLI entry points to `0.0.6` and document the new scripts and workflow guidance in the README.

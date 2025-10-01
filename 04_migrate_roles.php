@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_ROLES_SCRIPT_VERSION = '0.0.5';
+const MIGRATE_ROLES_SCRIPT_VERSION = '0.0.6';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira project roles and their actors into the staging tables.',
     'redmine' => 'Refresh the Redmine roles snapshot from the REST API.',
@@ -397,8 +397,23 @@ function refreshJiraProjectRoleActors(Client $client, PDO $pdo): array
         }
 
         foreach ($roleEndpoints as $roleEndpoint) {
-            $roleData = fetchJiraRoleAssignment($client, $roleEndpoint['url']);
-            if ($roleData === null) {
+            try {
+                $roleData = fetchJiraRoleAssignment($client, $roleEndpoint['url']);
+            } catch (RuntimeException $exception) {
+                $roleNameDisplay = $roleEndpoint['name'] ?? null;
+                if (!is_string($roleNameDisplay) || $roleNameDisplay === '') {
+                    $roleNameDisplay = '(unnamed role)';
+                }
+
+                printf(
+                    "  [warning] Failed to retrieve Jira role \"%s\" for project %s (%s): %s%s",
+                    $roleNameDisplay,
+                    $projectKey ?? $projectId,
+                    $projectId,
+                    $exception->getMessage(),
+                    PHP_EOL
+                );
+
                 continue;
             }
 
@@ -534,41 +549,57 @@ function fetchJiraProjectsForRoleExtraction(Client $client): array
 /**
  * @param Client $client
  * @param string $roleUrl
- * @return array<string, mixed>|null
+ * @return array<string, mixed>
  */
-function fetchJiraRoleAssignment(Client $client, string $roleUrl): ?array
+function fetchJiraRoleAssignment(Client $client, string $roleUrl): array
 {
-    $trimmed = trim($roleUrl);
-    if ($trimmed === '') {
-        return null;
-    }
-
-    $relativeUrl = $trimmed;
-    if (str_starts_with($trimmed, 'http://') || str_starts_with($trimmed, 'https://')) {
-        $parsed = parse_url($trimmed);
-        if (!is_array($parsed) || !isset($parsed['path'])) {
-            return null;
-        }
-
-        $relativeUrl = $parsed['path'];
-        if (isset($parsed['query']) && $parsed['query'] !== '') {
-            $relativeUrl .= '?' . $parsed['query'];
-        }
-    }
+    $relativeUrl = normalizeJiraRoleEndpointUrl($roleUrl);
 
     try {
         $response = $client->get($relativeUrl);
-    } catch (BadResponseException $exception) {
-        printf("  [warning] Jira role endpoint %s returned an error: %s%s", $relativeUrl, $exception->getMessage(), PHP_EOL);
-        return null;
     } catch (GuzzleException $exception) {
-        printf("  [warning] Jira role endpoint %s failed: %s%s", $relativeUrl, $exception->getMessage(), PHP_EOL);
-        return null;
+        throw new RuntimeException(
+            sprintf('Failed to fetch Jira role endpoint %s: %s', $relativeUrl, $exception->getMessage()),
+            0,
+            $exception
+        );
     }
 
     $decoded = decodeJsonResponse($response);
 
-    return is_array($decoded) ? $decoded : null;
+    if (!is_array($decoded)) {
+        throw new RuntimeException(sprintf('Unexpected response when fetching Jira role endpoint %s.', $relativeUrl));
+    }
+
+    return $decoded;
+}
+
+/**
+ * @param string $roleUrl
+ * @return string
+ */
+function normalizeJiraRoleEndpointUrl(string $roleUrl): string
+{
+    $trimmed = trim($roleUrl);
+    if ($trimmed === '') {
+        throw new RuntimeException('Encountered an empty Jira role endpoint URL.');
+    }
+
+    if (!str_starts_with($trimmed, 'http://') && !str_starts_with($trimmed, 'https://')) {
+        return $trimmed;
+    }
+
+    $parsed = parse_url($trimmed);
+    if (!is_array($parsed) || !isset($parsed['path']) || $parsed['path'] === '') {
+        throw new RuntimeException(sprintf('Unable to parse Jira role endpoint URL: %s', $roleUrl));
+    }
+
+    $relativeUrl = $parsed['path'];
+    if (isset($parsed['query']) && $parsed['query'] !== '') {
+        $relativeUrl .= '?' . $parsed['query'];
+    }
+
+    return $relativeUrl;
 }
 
 /**
@@ -1970,25 +2001,40 @@ function parseCommandLineOptions(array $argv): array
  */
 function printUsage(): void
 {
-    $script = basename(__FILE__);
-    $phases = implode(', ', array_keys(AVAILABLE_PHASES));
+    $scriptName = basename(__FILE__);
 
-    printf("Usage: php %s [options]%s", $script, PHP_EOL);
-    printf("\nAvailable options:%s", PHP_EOL);
-    printf("  -h, --help           Show this help message and exit.%s", PHP_EOL);
-    printf("  -V, --version        Display the script version.%s", PHP_EOL);
-    printf("      --phases=<list>  Comma-separated list of phases to run (%s).%s", $phases, PHP_EOL);
-    printf("      --skip=<list>    Comma-separated list of phases to skip.%s", PHP_EOL);
-    printf("      --confirm-push   Confirm marking assignments as recorded during the push phase.%s", PHP_EOL);
-    printf("      --dry-run        Preview the push output without updating migration status.%s", PHP_EOL);
+    echo sprintf(
+        "%s (version %s)%s",
+        $scriptName,
+        MIGRATE_ROLES_SCRIPT_VERSION,
+        PHP_EOL
+    );
+    echo sprintf('Usage: php %s [options]%s', $scriptName, PHP_EOL);
+    echo PHP_EOL;
+    echo "Options:" . PHP_EOL;
+    echo "  -h, --help           Display this help message and exit." . PHP_EOL;
+    echo "  -V, --version        Print the script version and exit." . PHP_EOL;
+    echo "      --phases=LIST    Comma-separated list of phases to execute." . PHP_EOL;
+    echo "      --skip=LIST      Comma-separated list of phases to skip." . PHP_EOL;
+    echo "      --confirm-push   Mark assignments as completed after manual review." . PHP_EOL;
+    echo "      --dry-run        Preview push-phase actions without updating migration status." . PHP_EOL;
+    echo PHP_EOL;
+    echo "Available phases:" . PHP_EOL;
+    foreach (AVAILABLE_PHASES as $phase => $description) {
+        echo sprintf("  %-7s %s%s", $phase, $description, PHP_EOL);
+    }
+    echo PHP_EOL;
+    echo "Examples:" . PHP_EOL;
+    echo sprintf('  php %s --help%s', $scriptName, PHP_EOL);
+    echo sprintf('  php %s --phases=redmine%s', $scriptName, PHP_EOL);
+    echo sprintf('  php %s --skip=jira%s', $scriptName, PHP_EOL);
+    echo sprintf('  php %s --phases=push --dry-run%s', $scriptName, PHP_EOL);
+    echo PHP_EOL;
 }
 
-/**
- * @return void
- */
 function printVersion(): void
 {
-    printf("%s%s", MIGRATE_ROLES_SCRIPT_VERSION, PHP_EOL);
+    printf('%s version %s%s', basename(__FILE__), MIGRATE_ROLES_SCRIPT_VERSION, PHP_EOL);
 }
 
 /**

@@ -39,10 +39,11 @@ The migration must be executed in the following order to respect data dependenci
 | 7     | `07_migrate_trackers.php`      | Trackers            | Migrates Jira "Issue Types" to Redmine "Trackers".                                                                                                        |
 | 8     | `08_migrate_custom_fields.php` | Custom Fields       | Migrates custom fields. This can be complex and may require manual mapping decisions.                                                                     |
 | 9     | `09_assign_members.php`        | Project Memberships | Assigns migrated users and groups to migrated projects with the appropriate roles. **Depends on Users, Groups, Roles, Projects.**                         |
-| 10    | `10_migrate_tags.php`          | Tags (Labels)       | Extracts all unique labels from Jira issues and creates them as tags in Redmine. **Depends on Issues (Extract phase).**                                   |
-| 11    | `11_migrate_issues.php`        | **Issues**          | The main event. Migrates all issues, using the mapping tables to link to the correct Redmine project, tracker, user, status, etc.                         |
+| 10    | `10_migrate_attachments.php`   | Attachments         | Downloads attachments from Jira and uploads them to the corresponding Redmine issues.                                                                     |
+| 11    | `11_migrate_issues.php`        | Issues              | The main event. Migrates all issues, using the mapping tables to link to the correct Redmine project, tracker, user, status, etc.                         |
 | 12    | `12_migrate_journals.php`      | Comments & History  | Migrates issue comments and changelogs. **Depends on Issues.**                                                                                            |
-| 13    | `13_migrate_attachments.php`   | Attachments         | Downloads attachments from Jira and uploads them to the corresponding Redmine issues. **Depends on Issues.**                                              |
+| 13    | `13_migrate_tags.php`          | Tags (Labels)       | Extracts all unique labels from Jira issues and creates them as tags in Redmine. **Depends on Issues (Extract phase).**                                   |
+
 
 ---
 
@@ -94,7 +95,7 @@ This structure is intended to be reused by later migration scripts so that manua
 
 ## 5. Running `01_migrate_projects.php`
 
-Version `0.0.5` introduces the dedicated entry point for synchronising projects. It follows the same CLI ergonomics as the other migration scripts, so you can iterate on the extract, transform, and push phases independently.
+Version `0.0.6` introduces the dedicated entry point for synchronising projects. It follows the same CLI ergonomics as the other migration scripts, so you can iterate on the extract, transform, and push phases independently.
 
 ```bash
 php 01_migrate_projects.php --help
@@ -105,7 +106,7 @@ php 01_migrate_projects.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.5`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.6`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Required toggle to allow the push phase to create projects in Redmine.                |
@@ -149,7 +150,7 @@ php 02_migrate_users.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.5`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.6`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Required toggle to allow the push phase to create users in Redmine.                   |
@@ -196,7 +197,7 @@ the `POST /users.json` payload so the new accounts immediately reference the cor
 
 ## 7. Running `03_migrate_groups.php`
 
-Version `0.0.5` keeps the companion entry point for synchronising Jira groups with Redmine aligned with the user and project scripts. The CLI surface remains identical, so your muscle memory continues to work:
+Version `0.0.6` keeps the companion entry point for synchronising Jira groups with Redmine aligned with the user and project scripts. The CLI surface remains identical, so your muscle memory continues to work:
 
 ```bash
 php 03_migrate_groups.php --help
@@ -207,7 +208,7 @@ php 03_migrate_groups.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.5`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.6`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Required toggle to allow the push phase to create groups in Redmine.                  |
@@ -281,7 +282,7 @@ php 04_migrate_roles.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.5`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.6`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Marks assignments as recorded after you manually action them in Redmine.              |
@@ -311,3 +312,83 @@ php 04_migrate_roles.php --help
 > **Configuration tip:** set `migration.roles.default_redmine_role_id` in `config/config.local.php` when most
 > assignments should share the same Redmine role. The transform phase proposes that role for unresolved mappings while
 > still flagging the row as `AWAITING_ROLE`, making it obvious where a manual review is needed.
+
+---
+
+## 9. Running `05_migrate_statuses.php`
+
+Redmine treats issue statuses as an enumeration that must be curated manually, so the new
+`05_migrate_statuses.php` script focuses on keeping the staging and mapping tables in sync and producing a
+checklist operators can action in the Redmine UI. The CLI workflow mirrors the earlier scripts, so you can run
+individual phases as needed.
+
+```bash
+php 05_migrate_statuses.php --help
+```
+
+### Available options
+
+| Option            | Description                                                                           |
+|-------------------|---------------------------------------------------------------------------------------|
+| `-h`, `--help`    | Print usage information and exit.                                                     |
+| `-V`, `--version` | Display the script version (`0.0.6`).                                                 |
+| `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
+| `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
+| `--confirm-push`  | Acknowledge that you have manually created the proposed statuses in Redmine.          |
+| `--dry-run`       | Preview the push output without recording any acknowledgement.                        |
+
+### Workflow highlights
+
+1. **Jira extraction (`jira`)** – calls `/rest/api/3/status`, capturing the display name, description, and
+   status category key for every Jira status. Raw payloads are upserted into `staging_jira_statuses` so reruns
+   remain idempotent.
+2. **Redmine snapshot (`redmine`)** – refreshes `staging_redmine_issue_statuses` from `GET /issue_statuses.json`,
+   storing the `is_closed` flag so the transform phase can propose sensible defaults.
+3. **Transform (`transform`)** – synchronises `migration_mapping_statuses` with the staging snapshots while
+   honouring automation hashes. Matching is case-insensitive on the status name. When the Jira category indicates
+   `done`, the script proposes `proposed_is_closed = true`; otherwise it defaults to `false`. Missing names or
+   ambiguous closed/open states are routed to `MANUAL_INTERVENTION_REQUIRED` with explanatory notes so operators
+   can tweak the mapping table before rerunning the transform.
+4. **Push (`push`)** – prints a curated checklist of statuses marked `READY_FOR_CREATION`, including the suggested
+   Redmine label and closed flag. Because Redmine lacks a writing API for statuses, the phase does not mutate the
+   database; instead it reminds you to update `migration_mapping_statuses` with the Redmine identifier and set
+   the status to `CREATION_SUCCESS` once the manual work is complete. The `--confirm-push` flag simply records
+   that you have reviewed the checklist during this run.
+
+---
+
+## 10. Running `06_migrate_priorities.php`
+
+Issue priorities follow the same pattern as statuses: Jira exposes them via REST, while Redmine expects manual
+curation. The `06_migrate_priorities.php` entry point keeps the data model aligned and surfaces a human-friendly
+action plan that you can turn into Redmine updates.
+
+```bash
+php 06_migrate_priorities.php --help
+```
+
+### Available options
+
+| Option            | Description                                                                           |
+|-------------------|---------------------------------------------------------------------------------------|
+| `-h`, `--help`    | Print usage information and exit.                                                     |
+| `-V`, `--version` | Display the script version (`0.0.6`).                                                 |
+| `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
+| `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
+| `--confirm-push`  | Acknowledge that you have manually created the proposed priorities in Redmine.        |
+| `--dry-run`       | Preview the push output without recording any acknowledgement.                        |
+
+### Workflow highlights
+
+1. **Jira extraction (`jira`)** – ingests `/rest/api/3/priority`, persisting the label and description into
+   `staging_jira_priorities` with upserts so the staging snapshot stays current.
+2. **Redmine snapshot (`redmine`)** – truncates and repopulates `staging_redmine_issue_priorities` from
+   `GET /enumerations/issue_priorities.json`, capturing each priority’s `is_default` flag.
+3. **Transform (`transform`)** – updates `migration_mapping_priorities`, matching Jira and Redmine names
+   case-insensitively. Proposed Redmine names and default flags are derived automatically, while manual overrides
+   are preserved via automation hashes just like the other scripts. Missing Jira names immediately trigger
+   `MANUAL_INTERVENTION_REQUIRED` so you can fix the staging data before continuing.
+4. **Push (`push`)** – emits a manual checklist for entries in `READY_FOR_CREATION`, highlighting the suggested
+   Redmine label and whether it should become the default priority. As with statuses, the script does not perform
+   API writes; after you create the priorities in Redmine, update the mapping table with the new IDs and set
+   `migration_status` to `CREATION_SUCCESS`.

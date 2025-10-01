@@ -231,9 +231,14 @@ CREATE TABLE `staging_redmine_issue_statuses` (
 CREATE TABLE `migration_mapping_statuses` (
                                               `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
                                               `jira_status_id` VARCHAR(255) NOT NULL,
+                                              `jira_status_name` VARCHAR(255) NULL,
+                                              `jira_status_category_key` VARCHAR(100) NULL,
                                               `redmine_status_id` INT NULL,
+                                              `proposed_redmine_name` VARCHAR(255) NULL,
+                                              `proposed_is_closed` BOOLEAN NULL,
                                               `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
                                               `notes` TEXT,
+                                              `automation_hash` CHAR(64) NULL,
                                               `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                               `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                                               UNIQUE KEY `uk_jira_status_id` (`jira_status_id`)
@@ -261,9 +266,14 @@ CREATE TABLE `staging_redmine_issue_priorities` (
 CREATE TABLE `migration_mapping_priorities` (
                                                 `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
                                                 `jira_priority_id` VARCHAR(255) NOT NULL,
+                                                `jira_priority_name` VARCHAR(255) NULL,
+                                                `jira_priority_description` TEXT NULL,
                                                 `redmine_priority_id` INT NULL,
+                                                `proposed_redmine_name` VARCHAR(255) NULL,
+                                                `proposed_is_default` BOOLEAN NULL,
                                                 `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
                                                 `notes` TEXT,
+                                                `automation_hash` CHAR(64) NULL,
                                                 `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                                 `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                                                 UNIQUE KEY `uk_jira_priority_id` (`jira_priority_id`)
