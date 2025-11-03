@@ -14,6 +14,13 @@ return [
         'base_url' => 'https://your-redmine-instance.example.com',
         // The Redmine REST API key with sufficient permissions for the migration.
         'api_key' => 'your-redmine-api-key',
+        // Optional support for the redmine_extended_api plugin.
+        'extended_api' => [
+            // When true, push phases can automatically create records using the extended API.
+            'enabled' => false,
+            // Change this if the plugin is mounted under a custom prefix.
+            'prefix' => '/extended_api',
+        ],
     ],
     'database' => [
         // MySQL connection string pointing to the staging database that stores the migration state.

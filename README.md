@@ -22,6 +22,45 @@ The core strategy is a phased **ETL (Extract, Transform, Load)** process, broken
 *   **Redmine Access**: A Redmine administrator account. An API key with administrative privileges is required to create new objects.
 *   **Enable REST API**: Ensure that the REST API is enabled in your Redmine instance under `Administration -> Settings -> API`.
 
+### Optional automation via the Redmine Extended API plugin
+
+The migration can now take advantage of the community plugin
+[`redmine_extended_api`](https://github.com/jcatrysse/redmine_extended_api).
+When installed on the Redmine side, it exposes write-capable endpoints for
+administrative resources that are read-only in core Redmine. With the plugin
+ enabled, you can let the push phases of the role, status, and priority migration
+scripts create the necessary records for you instead of carrying out those
+steps manually.
+
+The plugin is **optional**. Without it, the scripts continue to produce the same
+checklists so you can update Redmine by hand. When you do install the plugin,
+you can opt in to the automated push in two ways:
+
+* Set `redmine.extended_api.enabled` to `true` (and adjust the `prefix` if you
+  mounted the plugin somewhere else) in your `config/config.local.php`.
+* Or pass `--use-extended-api` on the command line when running affected scripts.
+
+Every push run that targets the extended API performs a lightweight health
+check first and refuses to continue when the plugin is not reachable or does
+not respond with the expected `X-Redmine-Extended-API` header. This protects
+your Redmine instance from partial updates when the plugin has not been
+installed correctly.
+
+Example (dry-run to inspect the payloads):
+
+```bash
+php 05_migrate_statuses.php --phases=push --use-extended-api --dry-run
+```
+
+Example (create the records after reviewing the dry run):
+
+```bash
+php 05_migrate_statuses.php --phases=push --use-extended-api --confirm-push
+```
+
+If you prefer to keep the process manual simply omit `--use-extended-api` and
+leave `redmine.extended_api.enabled` at its default `false` value.
+
 ---
 
 ## 3. The Migration Process: Step-by-Step

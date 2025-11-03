@@ -14,7 +14,7 @@ const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issue priorities into staging_jira_priorities.',
     'redmine' => 'Refresh the Redmine issue priority snapshot from the REST API.',
     'transform' => 'Reconcile Jira and Redmine priorities to populate migration mappings.',
-    'push' => 'Produce a manual action plan for creating missing Redmine priorities.',
+    'push' => 'Produce a manual action plan or call the extended API to create missing Redmine priorities.',
 ];
 
 if (PHP_SAPI !== 'cli') {
@@ -57,7 +57,7 @@ try {
 
 /**
  * @param array<string, mixed> $config
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool} $cliOptions
+ * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool} $cliOptions
  * @throws Throwable
  */
 function main(array $config, array $cliOptions): void
@@ -73,6 +73,9 @@ function main(array $config, array $cliOptions): void
 
     $databaseConfig = extractArrayConfig($config, 'database');
     $pdo = createDatabaseConnection($databaseConfig);
+
+    /** @var array<string, mixed>|null $redmineConfig */
+    $redmineConfig = null;
 
     if (in_array('jira', $phasesToRun, true)) {
         $jiraConfig = extractArrayConfig($config, 'jira');
@@ -97,7 +100,7 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('redmine', $phasesToRun, true)) {
-        $redmineConfig = extractArrayConfig($config, 'redmine');
+        $redmineConfig ??= extractArrayConfig($config, 'redmine');
         $redmineClient = createRedmineClient($redmineConfig);
 
         printf("[%s] Starting Redmine priority snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -152,8 +155,10 @@ function main(array $config, array $cliOptions): void
     if (in_array('push', $phasesToRun, true)) {
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
+        $redmineConfig ??= extractArrayConfig($config, 'redmine');
+        $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
 
-        runPriorityPushPhase($pdo, $confirmPush, $isDryRun);
+        runPriorityPushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi);
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
@@ -279,8 +284,8 @@ function fetchAndStoreRedmineIssuePriorities(Client $client, PDO $pdo): int
     }
 
     $insertStatement = $pdo->prepare(<<<SQL
-        INSERT INTO staging_redmine_issue_priorities (id, name, is_default, raw_payload, retrieved_at)
-        VALUES (:id, :name, :is_default, :raw_payload, :retrieved_at)
+        INSERT INTO staging_redmine_issue_priorities (id, name, is_default, position, raw_payload, retrieved_at)
+        VALUES (:id, :name, :is_default, :position, :raw_payload, :retrieved_at)
     SQL);
 
     if ($insertStatement === false) {
@@ -320,10 +325,13 @@ function fetchAndStoreRedmineIssuePriorities(Client $client, PDO $pdo): int
                 $isDefaultValue = 0;
             }
 
+            $position = normalizeInteger($priority['position'] ?? null, 1);
+
             $insertStatement->execute([
                 'id' => $priorityId,
                 'name' => $name,
                 'is_default' => $isDefaultValue,
+                'position' => $position,
                 'raw_payload' => $rawPayload,
                 'retrieved_at' => $retrievedAt,
             ]);
@@ -353,6 +361,23 @@ function runPriorityTransformationPhase(PDO $pdo): array
     $redmineLookup = buildRedminePriorityLookup($pdo);
     $mappings = fetchPriorityMappingsForTransform($pdo);
 
+    $usedPositions = [];
+    $maxExistingPosition = 0;
+
+    foreach ($redmineLookup as $details) {
+        $position = isset($details['position']) ? normalizeInteger($details['position'], 1) : null;
+        if ($position === null) {
+            continue;
+        }
+
+        $usedPositions[$position] = true;
+        if ($position > $maxExistingPosition) {
+            $maxExistingPosition = $position;
+        }
+    }
+
+    $nextAvailablePosition = $maxExistingPosition + 1;
+
     $updateStatement = $pdo->prepare(<<<SQL
         UPDATE migration_mapping_priorities
         SET
@@ -361,6 +386,7 @@ function runPriorityTransformationPhase(PDO $pdo): array
             notes = :notes,
             proposed_redmine_name = :proposed_redmine_name,
             proposed_is_default = :proposed_is_default,
+            proposed_redmine_position = :proposed_redmine_position,
             automation_hash = :automation_hash
         WHERE mapping_id = :mapping_id
     SQL);
@@ -394,6 +420,7 @@ function runPriorityTransformationPhase(PDO $pdo): array
         $currentNotes = $row['notes'] !== null ? (string)$row['notes'] : null;
         $currentProposedName = $row['proposed_redmine_name'] !== null ? (string)$row['proposed_redmine_name'] : null;
         $currentProposedIsDefault = normalizeBooleanFlag($row['proposed_is_default'] ?? null);
+        $currentProposedPosition = normalizeInteger($row['proposed_redmine_position'] ?? null, 1);
         $storedAutomationHash = normalizeStoredAutomationHash($row['automation_hash'] ?? null);
 
         $currentAutomationHash = computePriorityAutomationStateHash(
@@ -401,10 +428,23 @@ function runPriorityTransformationPhase(PDO $pdo): array
             $currentStatus,
             $currentProposedName,
             $currentProposedIsDefault,
+            $currentProposedPosition,
             $currentNotes
         );
 
-        if ($storedAutomationHash !== null && $storedAutomationHash !== $currentAutomationHash) {
+        $legacyAutomationHash = computeLegacyPriorityAutomationStateHash(
+            $currentRedmineId,
+            $currentStatus,
+            $currentProposedName,
+            $currentProposedIsDefault,
+            $currentNotes
+        );
+
+        if (
+            $storedAutomationHash !== null
+            && $storedAutomationHash !== $currentAutomationHash
+            && $storedAutomationHash !== $legacyAutomationHash
+        ) {
             $summary['manual_overrides']++;
             printf(
                 "  [preserved] Jira priority %s has manual overrides; skipping automated changes.%s",
@@ -421,6 +461,7 @@ function runPriorityTransformationPhase(PDO $pdo): array
         $newRedmineId = $currentRedmineId;
         $proposedName = $currentProposedName ?? $defaultName;
         $proposedIsDefault = $currentProposedIsDefault ?? false;
+        $proposedPosition = $currentProposedPosition;
 
         if ($defaultName === null) {
             $manualReason = 'Missing Jira priority name in the staging snapshot.';
@@ -433,6 +474,7 @@ function runPriorityTransformationPhase(PDO $pdo): array
                 $newRedmineId = (int)$matchedRedmine['id'];
                 $proposedName = normalizeString($matchedRedmine['name'] ?? $defaultName, 255) ?? $defaultName;
                 $proposedIsDefault = normalizeBooleanFlag($matchedRedmine['is_default'] ?? null) ?? false;
+                $proposedPosition = normalizeInteger($matchedRedmine['position'] ?? null, 1);
             } else {
                 $newStatus = 'READY_FOR_CREATION';
                 $newRedmineId = null;
@@ -441,6 +483,9 @@ function runPriorityTransformationPhase(PDO $pdo): array
                     $proposedIsDefault = $currentProposedIsDefault;
                 } else {
                     $proposedIsDefault = false;
+                }
+                if ($currentProposedPosition !== null) {
+                    $proposedPosition = $currentProposedPosition;
                 }
             }
         }
@@ -467,11 +512,32 @@ function runPriorityTransformationPhase(PDO $pdo): array
             $proposedName = $defaultName ?? $jiraPriorityId;
         }
 
+        if ($proposedPosition !== null) {
+            $proposedPosition = normalizeInteger($proposedPosition, 1);
+        }
+
+        if ($proposedPosition === null && $newStatus === 'READY_FOR_CREATION') {
+            $candidate = max(1, $nextAvailablePosition);
+            while (isset($usedPositions[$candidate])) {
+                $candidate++;
+            }
+
+            $proposedPosition = $candidate;
+        }
+
+        if ($proposedPosition !== null) {
+            $usedPositions[$proposedPosition] = true;
+            if ($nextAvailablePosition <= $proposedPosition) {
+                $nextAvailablePosition = $proposedPosition + 1;
+            }
+        }
+
         $newAutomationHash = computePriorityAutomationStateHash(
             $newRedmineId,
             $newStatus,
             $proposedName,
             $proposedIsDefault,
+            $proposedPosition,
             $notes
         );
 
@@ -479,6 +545,7 @@ function runPriorityTransformationPhase(PDO $pdo): array
             || $currentStatus !== $newStatus
             || $currentProposedName !== $proposedName
             || $currentProposedIsDefault !== $proposedIsDefault
+            || $currentProposedPosition !== $proposedPosition
             || $currentNotes !== $notes
             || $storedAutomationHash !== $newAutomationHash;
 
@@ -493,6 +560,7 @@ function runPriorityTransformationPhase(PDO $pdo): array
             'notes' => $notes,
             'proposed_redmine_name' => $proposedName,
             'proposed_is_default' => normalizeBooleanDatabaseValue($proposedIsDefault),
+            'proposed_redmine_position' => $proposedPosition,
             'automation_hash' => $newAutomationHash,
             'mapping_id' => $row['mapping_id'],
         ]);
@@ -551,7 +619,7 @@ function refreshPriorityMetadata(PDO $pdo): void
 function buildRedminePriorityLookup(PDO $pdo): array
 {
     try {
-        $statement = $pdo->query('SELECT id, name, is_default FROM staging_redmine_issue_priorities');
+        $statement = $pdo->query('SELECT id, name, is_default, position FROM staging_redmine_issue_priorities');
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to build Redmine priority lookup: ' . $exception->getMessage(), 0, $exception);
     }
@@ -596,6 +664,7 @@ function fetchPriorityMappingsForTransform(PDO $pdo): array
             map.notes,
             map.proposed_redmine_name,
             map.proposed_is_default,
+            map.proposed_redmine_position,
             map.automation_hash
         FROM migration_mapping_priorities map
         ORDER BY map.jira_priority_name IS NULL, map.jira_priority_name, map.jira_priority_id
@@ -614,8 +683,40 @@ function fetchPriorityMappingsForTransform(PDO $pdo): array
     return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
 
-function computePriorityAutomationStateHash(?int $redminePriorityId, string $migrationStatus, ?string $proposedName, ?bool $proposedIsDefault, ?string $notes): string
+function computePriorityAutomationStateHash(
+    ?int $redminePriorityId,
+    string $migrationStatus,
+    ?string $proposedName,
+    ?bool $proposedIsDefault,
+    ?int $proposedPosition,
+    ?string $notes
+): string
 {
+    $payload = [
+        'redmine_priority_id' => $redminePriorityId,
+        'migration_status' => $migrationStatus,
+        'proposed_redmine_name' => $proposedName,
+        'proposed_is_default' => $proposedIsDefault,
+        'proposed_redmine_position' => $proposedPosition,
+        'notes' => $notes,
+    ];
+
+    try {
+        $json = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } catch (JsonException $exception) {
+        throw new RuntimeException('Failed to compute automation hash for priority mapping: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    return hash('sha256', $json);
+}
+
+function computeLegacyPriorityAutomationStateHash(
+    ?int $redminePriorityId,
+    string $migrationStatus,
+    ?string $proposedName,
+    ?bool $proposedIsDefault,
+    ?string $notes
+): string {
     $payload = [
         'redmine_priority_id' => $redminePriorityId,
         'migration_status' => $migrationStatus,
@@ -627,7 +728,7 @@ function computePriorityAutomationStateHash(?int $redminePriorityId, string $mig
     try {
         $json = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     } catch (JsonException $exception) {
-        throw new RuntimeException('Failed to compute automation hash for priority mapping: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException('Failed to compute legacy automation hash for priority mapping: ' . $exception->getMessage(), 0, $exception);
     }
 
     return hash('sha256', $json);
@@ -661,12 +762,200 @@ function fetchPriorityMigrationStatusCounts(PDO $pdo): array
     return $results;
 }
 
-function runPriorityPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun): void
+function runPriorityPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi): void
 {
-    printf("[%s] Starting push phase (manual priority checklist)...%s", formatCurrentTimestamp(), PHP_EOL);
-
     $pendingPriorities = fetchPrioritiesReadyForCreation($pdo);
     $pendingCount = count($pendingPriorities);
+
+    if ($useExtendedApi) {
+        printf("[%s] Starting push phase (Redmine extended API)...%s", formatCurrentTimestamp(), PHP_EOL);
+
+        if ($pendingCount === 0) {
+            printf("  No Jira priorities are marked as READY_FOR_CREATION.%s", PHP_EOL);
+            if ($isDryRun) {
+                printf("  --dry-run flag enabled: no API calls will be made.%s", PHP_EOL);
+            }
+            if ($confirmPush) {
+                printf("  --confirm-push provided but there is nothing to process.%s", PHP_EOL);
+            }
+            return;
+        }
+
+        $redmineClient = createRedmineClient($redmineConfig);
+        $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
+        verifyExtendedApiAvailability(
+            $redmineClient,
+            $extendedApiPrefix,
+            'enumerations.json?type=issue_priorities'
+        );
+
+        $endpoint = buildExtendedApiPath($extendedApiPrefix, 'enumerations.json');
+
+        printf("  %d priority/priorities queued for creation via the extended API.%s", $pendingCount, PHP_EOL);
+        foreach ($pendingPriorities as $priority) {
+            $jiraName = $priority['jira_priority_name'] ?? null;
+            $jiraId = (string)$priority['jira_priority_id'];
+            $proposedName = $priority['proposed_redmine_name'] ?? null;
+            $proposedIsDefault = normalizeBooleanFlag($priority['proposed_is_default'] ?? null);
+            $proposedPosition = normalizeInteger($priority['proposed_redmine_position'] ?? null, 1);
+            $notes = $priority['notes'] ?? null;
+
+            $effectiveName = $proposedName ?? ($jiraName ?? $jiraId);
+            $effectiveIsDefault = $proposedIsDefault ?? false;
+            $effectivePosition = $proposedPosition;
+
+            printf(
+                "  - Jira priority %s (ID: %s) -> Redmine \"%s\" (default: %s, position: %s).%s",
+                $jiraName ?? '[missing name]',
+                $jiraId,
+                $effectiveName,
+                formatBooleanForDisplay($effectiveIsDefault),
+                formatIntegerForDisplay($effectivePosition),
+                PHP_EOL
+            );
+            if ($notes !== null) {
+                printf("    Notes: %s%s", $notes, PHP_EOL);
+            }
+        }
+
+        if (!$confirmPush) {
+            printf("  --confirm-push missing: reviewed payloads only, no data was sent to Redmine.%s", PHP_EOL);
+            return;
+        }
+
+        if ($isDryRun) {
+            printf("  --dry-run enabled: skipping API calls after previewing the payloads.%s", PHP_EOL);
+            return;
+        }
+
+        $updateStatement = $pdo->prepare(<<<SQL
+            UPDATE migration_mapping_priorities
+            SET
+                redmine_priority_id = :redmine_priority_id,
+                migration_status = :migration_status,
+                notes = :notes,
+                proposed_redmine_name = :proposed_redmine_name,
+                proposed_is_default = :proposed_is_default,
+                proposed_redmine_position = :proposed_redmine_position,
+                automation_hash = :automation_hash
+            WHERE mapping_id = :mapping_id
+        SQL);
+
+        if ($updateStatement === false) {
+            throw new RuntimeException('Failed to prepare update statement for migration_mapping_priorities during the push phase.');
+        }
+
+        $successCount = 0;
+        $failureCount = 0;
+
+        foreach ($pendingPriorities as $priority) {
+            $mappingId = (int)$priority['mapping_id'];
+            $jiraId = (string)$priority['jira_priority_id'];
+            $jiraName = $priority['jira_priority_name'] ?? null;
+            $proposedName = $priority['proposed_redmine_name'] ?? null;
+            $proposedIsDefault = normalizeBooleanFlag($priority['proposed_is_default'] ?? null) ?? false;
+            $proposedPosition = normalizeInteger($priority['proposed_redmine_position'] ?? null, 1);
+            $notes = $priority['notes'] ?? null;
+
+            $effectiveName = $proposedName ?? ($jiraName ?? $jiraId);
+            $effectivePosition = $proposedPosition;
+
+            $payload = [
+                'enumeration' => [
+                    'name' => $effectiveName,
+                    'is_default' => $proposedIsDefault,
+                    'active' => true,
+                    'type' => 'IssuePriority',
+                ],
+            ];
+
+            if ($effectivePosition !== null) {
+                $payload['enumeration']['position'] = $effectivePosition;
+            }
+
+            try {
+                $response = $redmineClient->post($endpoint, ['json' => $payload]);
+                $decoded = decodeJsonResponse($response);
+                $newPriorityId = extractCreatedPriorityId($decoded);
+
+                $automationHash = computePriorityAutomationStateHash(
+                    $newPriorityId,
+                    'CREATION_SUCCESS',
+                    $effectiveName,
+                    $proposedIsDefault,
+                    $effectivePosition,
+                    null
+                );
+
+                $updateStatement->execute([
+                    'redmine_priority_id' => $newPriorityId,
+                    'migration_status' => 'CREATION_SUCCESS',
+                    'notes' => null,
+                    'proposed_redmine_name' => $effectiveName,
+                    'proposed_is_default' => normalizeBooleanDatabaseValue($proposedIsDefault),
+                    'proposed_redmine_position' => $effectivePosition,
+                    'automation_hash' => $automationHash,
+                    'mapping_id' => $mappingId,
+                ]);
+
+                printf(
+                    "  [created] Jira priority %s (%s) -> Redmine priority #%d.%s",
+                    $jiraName ?? $jiraId,
+                    $jiraId,
+                    $newPriorityId,
+                    PHP_EOL
+                );
+
+                $successCount++;
+            } catch (Throwable $exception) {
+                $errorMessage = summarizeExtendedApiError($exception);
+                $automationHash = computePriorityAutomationStateHash(
+                    null,
+                    'CREATION_FAILED',
+                    $effectiveName,
+                    $proposedIsDefault,
+                    $effectivePosition,
+                    $errorMessage
+                );
+
+                $updateStatement->execute([
+                    'redmine_priority_id' => null,
+                    'migration_status' => 'CREATION_FAILED',
+                    'notes' => $errorMessage,
+                    'proposed_redmine_name' => $effectiveName,
+                    'proposed_is_default' => normalizeBooleanDatabaseValue($proposedIsDefault),
+                    'proposed_redmine_position' => $effectivePosition,
+                    'automation_hash' => $automationHash,
+                    'mapping_id' => $mappingId,
+                ]);
+
+                printf(
+                    "  [failed] Jira priority %s (%s): %s%s",
+                    $jiraName ?? $jiraId,
+                    $jiraId,
+                    $errorMessage,
+                    PHP_EOL
+                );
+
+                if ($notes !== null) {
+                    printf("    Previous notes: %s%s", $notes, PHP_EOL);
+                }
+
+                $failureCount++;
+            }
+        }
+
+        printf(
+            "  Completed extended API push. Success: %d, Failed: %d.%s",
+            $successCount,
+            $failureCount,
+            PHP_EOL
+        );
+
+        return;
+    }
+
+    printf("[%s] Starting push phase (manual priority checklist)...%s", formatCurrentTimestamp(), PHP_EOL);
 
     if ($pendingCount === 0) {
         printf("  No Jira priorities are marked as READY_FOR_CREATION.%s", PHP_EOL);
@@ -687,6 +976,7 @@ function runPriorityPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun): void
         $jiraId = (string)$priority['jira_priority_id'];
         $proposedName = $priority['proposed_redmine_name'] ?? null;
         $proposedIsDefault = normalizeBooleanFlag($priority['proposed_is_default'] ?? null);
+        $proposedPosition = normalizeInteger($priority['proposed_redmine_position'] ?? null, 1);
         $notes = $priority['notes'] ?? null;
 
         printf(
@@ -696,9 +986,10 @@ function runPriorityPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun): void
             PHP_EOL
         );
         printf(
-            "    Proposed Redmine name: %s | Should be default: %s%s",
+            "    Proposed Redmine name: %s | Should be default: %s | Proposed order: %s%s",
             $proposedName ?? ($jiraName ?? 'n/a'),
             formatBooleanForDisplay($proposedIsDefault),
+            formatIntegerForDisplay($proposedPosition),
             PHP_EOL
         );
         if ($notes !== null) {
@@ -717,7 +1008,7 @@ function runPriorityPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun): void
         return;
     }
 
-    printf("  Manual acknowledgement recorded. Remember to update redmine_priority_id and migration_status once the priorities exist in Redmine.%s", PHP_EOL);
+    printf("  Manual acknowledgement recorded. Remember to update redmine_priority_id, proposed_redmine_position, and migration_status once the priorities exist in Redmine.%s", PHP_EOL);
 }
 
 function fetchPrioritiesReadyForCreation(PDO $pdo): array
@@ -729,10 +1020,16 @@ function fetchPrioritiesReadyForCreation(PDO $pdo): array
             map.jira_priority_name,
             map.proposed_redmine_name,
             map.proposed_is_default,
+            map.proposed_redmine_position,
             map.notes
         FROM migration_mapping_priorities map
         WHERE map.migration_status = 'READY_FOR_CREATION'
-        ORDER BY map.jira_priority_name IS NULL, map.jira_priority_name, map.jira_priority_id
+        ORDER BY
+            map.proposed_redmine_position IS NULL,
+            map.proposed_redmine_position,
+            map.jira_priority_name IS NULL,
+            map.jira_priority_name,
+            map.jira_priority_id
     SQL;
 
     try {
@@ -757,9 +1054,18 @@ function formatBooleanForDisplay(?bool $value): string
     return $value ? 'yes' : 'no';
 }
 
+function formatIntegerForDisplay(?int $value): string
+{
+    if ($value === null) {
+        return 'n/a';
+    }
+
+    return (string)$value;
+}
+
 /**
  * @param array<int, string> $argv
- * @return array{0: array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool}, 1: array<int, string>}
+ * @return array{0: array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool}, 1: array<int, string>}
  */
 function parseCommandLineOptions(array $argv): array
 {
@@ -770,6 +1076,7 @@ function parseCommandLineOptions(array $argv): array
         'skip' => null,
         'confirm_push' => false,
         'dry_run' => false,
+        'use_extended_api' => false,
     ];
 
     $positional = [];
@@ -803,6 +1110,9 @@ function parseCommandLineOptions(array $argv): array
                 break;
             case '--dry-run':
                 $options['dry_run'] = true;
+                break;
+            case '--use-extended-api':
+                $options['use_extended_api'] = true;
                 break;
             default:
                 if (str_starts_with($argument, '--phases=')) {
@@ -978,6 +1288,42 @@ function normalizeString(mixed $value, int $maxLength): ?string
     return substr($trimmed, 0, $maxLength);
 }
 
+function normalizeInteger(mixed $value, int $min = PHP_INT_MIN, ?int $max = null): ?int
+{
+    if ($value === null) {
+        return null;
+    }
+
+    if (is_int($value)) {
+        $intValue = $value;
+    } elseif (is_float($value)) {
+        if (!is_finite($value) || floor($value) !== $value) {
+            return null;
+        }
+
+        $intValue = (int)$value;
+    } elseif (is_string($value)) {
+        $trimmed = trim($value);
+        if ($trimmed === '' || !preg_match('/^-?\d+$/', $trimmed)) {
+            return null;
+        }
+
+        $intValue = (int)$trimmed;
+    } else {
+        return null;
+    }
+
+    if ($intValue < $min) {
+        return null;
+    }
+
+    if ($max !== null && $intValue > $max) {
+        return null;
+    }
+
+    return $intValue;
+}
+
 function normalizeBooleanFlag(mixed $value): ?bool
 {
     $normalized = normalizeBooleanDatabaseValue($value);
@@ -1039,6 +1385,134 @@ function normalizeStoredAutomationHash(mixed $value): ?string
     return strtolower($trimmed);
 }
 
+function shouldUseExtendedApi(array $redmineConfig, bool $cliFlag): bool
+{
+    if ($cliFlag) {
+        return true;
+    }
+
+    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
+        ? $redmineConfig['extended_api']
+        : [];
+
+    return (bool)($extendedConfig['enabled'] ?? false);
+}
+
+function resolveExtendedApiPrefix(array $redmineConfig): string
+{
+    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
+        ? $redmineConfig['extended_api']
+        : [];
+
+    $prefix = isset($extendedConfig['prefix']) ? trim((string)$extendedConfig['prefix']) : '/extended_api';
+
+    if ($prefix === '') {
+        $prefix = '/extended_api';
+    }
+
+    return trim($prefix, '/');
+}
+
+function buildExtendedApiPath(string $prefix, string $resource): string
+{
+    $normalizedPrefix = trim($prefix, '/');
+    $normalizedResource = ltrim($resource, '/');
+
+    if ($normalizedPrefix === '') {
+        return $normalizedResource;
+    }
+
+    return $normalizedPrefix . '/' . $normalizedResource;
+}
+
+function verifyExtendedApiAvailability(Client $client, string $prefix, string $resource): void
+{
+    $path = buildExtendedApiPath($prefix, $resource);
+
+    try {
+        $response = $client->get($path);
+    } catch (BadResponseException $exception) {
+        $response = $exception->getResponse();
+        $statusCode = $response ? $response->getStatusCode() : 0;
+        $reason = $response ? $response->getReasonPhrase() : 'unknown error';
+        throw new RuntimeException(
+            sprintf('Extended API availability check failed (%s): HTTP %d %s', $path, $statusCode, $reason),
+            0,
+            $exception
+        );
+    } catch (GuzzleException $exception) {
+        throw new RuntimeException('Failed to reach the extended API: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    $header = $response->getHeaderLine('X-Redmine-Extended-API');
+    if (trim($header) === '') {
+        throw new RuntimeException('Extended API response missing X-Redmine-Extended-API header. Verify the plugin installation.');
+    }
+}
+
+function summarizeExtendedApiError(Throwable $exception): string
+{
+    if ($exception instanceof BadResponseException) {
+        $response = $exception->getResponse();
+        if ($response !== null) {
+            $message = sprintf('HTTP %d %s', $response->getStatusCode(), $response->getReasonPhrase());
+            $details = extractExtendedApiErrorDetails($response);
+            if ($details !== null) {
+                $message .= ': ' . $details;
+            }
+
+            return $message;
+        }
+    }
+
+    return $exception->getMessage();
+}
+
+function extractExtendedApiErrorDetails(ResponseInterface $response): ?string
+{
+    $body = trim((string)$response->getBody());
+    if ($body === '') {
+        return null;
+    }
+
+    try {
+        $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException $exception) {
+        return $body !== '' ? $body : null;
+    }
+
+    if (is_array($decoded)) {
+        if (isset($decoded['errors']) && is_array($decoded['errors'])) {
+            return implode('; ', array_map('strval', $decoded['errors']));
+        }
+
+        if (isset($decoded['error']) && is_string($decoded['error'])) {
+            return $decoded['error'];
+        }
+    }
+
+    return $body !== '' ? $body : null;
+}
+
+function extractCreatedPriorityId(mixed $decoded): int
+{
+    if (is_array($decoded)) {
+        if (isset($decoded['enumeration']) && is_array($decoded['enumeration']) && isset($decoded['enumeration']['id'])) {
+            return (int)$decoded['enumeration']['id'];
+        }
+
+        if (isset($decoded['issue_priority']) && is_array($decoded['issue_priority']) && isset($decoded['issue_priority']['id'])) {
+            return (int)$decoded['issue_priority']['id'];
+        }
+
+        if (isset($decoded['id'])) {
+            return (int)$decoded['id'];
+        }
+    }
+
+    throw new RuntimeException('Unable to determine the new Redmine priority ID from the extended API response.');
+}
+
 function printUsage(): void
 {
     $scriptName = basename(__FILE__);
@@ -1058,6 +1532,7 @@ function printUsage(): void
     echo "      --skip=LIST      Comma-separated list of phases to skip." . PHP_EOL;
     echo "      --confirm-push   Mark priorities as acknowledged after manual review." . PHP_EOL;
     echo "      --dry-run        Preview push-phase actions without updating migration status." . PHP_EOL;
+    echo "      --use-extended-api  Push new priorities through the redmine_extended_api plugin." . PHP_EOL;
     echo PHP_EOL;
     echo "Available phases:" . PHP_EOL;
     foreach (AVAILABLE_PHASES as $phase => $description) {

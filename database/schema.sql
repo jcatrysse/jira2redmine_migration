@@ -259,6 +259,7 @@ CREATE TABLE `staging_redmine_issue_priorities` (
                                                     `id` INT NOT NULL PRIMARY KEY,
                                                     `name` VARCHAR(255) NOT NULL,
                                                     `is_default` BOOLEAN NOT NULL,
+                                                    `position` INT NULL,
                                                     `raw_payload` JSON NOT NULL,
                                                     `retrieved_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) COMMENT='Snapshot of existing Redmine Issue Priorities.';
@@ -271,6 +272,7 @@ CREATE TABLE `migration_mapping_priorities` (
                                                 `redmine_priority_id` INT NULL,
                                                 `proposed_redmine_name` VARCHAR(255) NULL,
                                                 `proposed_is_default` BOOLEAN NULL,
+                                                `proposed_redmine_position` INT NULL,
                                                 `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
                                                 `notes` TEXT,
                                                 `automation_hash` CHAR(64) NULL,

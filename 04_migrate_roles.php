@@ -14,7 +14,7 @@ const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira project roles and their actors into the staging tables.',
     'redmine' => 'Refresh the Redmine roles snapshot from the REST API.',
     'transform' => 'Reconcile Jira roles with Redmine roles and derive project/group assignments.',
-    'push' => 'Generate the manual assignment plan for Redmine projects and groups.',
+    'push' => 'Generate the manual assignment plan or use the extended API to record Redmine assignments.',
 ];
 
 if (PHP_SAPI !== 'cli') {
@@ -57,7 +57,7 @@ try {
 
 /**
  * @param array<string, mixed> $config
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool} $cliOptions
+ * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool} $cliOptions
  * @throws Throwable
  */
 function main(array $config, array $cliOptions): void
@@ -73,6 +73,9 @@ function main(array $config, array $cliOptions): void
 
     $databaseConfig = extractArrayConfig($config, 'database');
     $pdo = createDatabaseConnection($databaseConfig);
+
+    /** @var array<string, mixed>|null $redmineConfig */
+    $redmineConfig = null;
 
     if (in_array('jira', $phasesToRun, true)) {
         $jiraConfig = extractArrayConfig($config, 'jira');
@@ -99,7 +102,7 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('redmine', $phasesToRun, true)) {
-        $redmineConfig = extractArrayConfig($config, 'redmine');
+        $redmineConfig ??= extractArrayConfig($config, 'redmine');
         $redmineClient = createRedmineClient($redmineConfig);
 
         printf("[%s] Starting Redmine role snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -178,8 +181,10 @@ function main(array $config, array $cliOptions): void
     if (in_array('push', $phasesToRun, true)) {
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
+        $redmineConfig ??= extractArrayConfig($config, 'redmine');
+        $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
 
-        runRolePushPhase($pdo, $confirmPush, $isDryRun);
+        runRolePushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi);
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
@@ -1650,12 +1655,246 @@ SQL;
  * @return void
  * @throws Throwable
  */
-function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun): void
+function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi): void
 {
-    printf("[%s] Starting push phase (manual assignment preview)...%s", formatCurrentTimestamp(), PHP_EOL);
-
     $pendingAssignments = fetchPendingRoleAssignments($pdo);
     $pendingCount = count($pendingAssignments);
+
+    if ($useExtendedApi) {
+        printf("[%s] Starting push phase (Redmine extended API)...%s", formatCurrentTimestamp(), PHP_EOL);
+
+        if ($pendingCount === 0) {
+            printf("  No project role assignments are marked as READY_FOR_ASSIGNMENT.%s", PHP_EOL);
+            if ($isDryRun) {
+                printf("  --dry-run flag enabled: no API calls will be made.%s", PHP_EOL);
+            }
+            if ($confirmPush) {
+                printf("  --confirm-push provided but nothing to process.%s", PHP_EOL);
+            }
+            return;
+        }
+
+        $redmineClient = createRedmineClient($redmineConfig);
+        $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
+        verifyExtendedApiAvailability($redmineClient, $extendedApiPrefix, 'roles.json');
+
+        printf("  %d assignment(s) queued for automatic creation.%s", $pendingCount, PHP_EOL);
+        foreach ($pendingAssignments as $assignment) {
+            printf(
+                "  - Project: %s | Jira role: %s | Jira group: %s%s",
+                formatJiraProjectReference($assignment['jira_project_key'], $assignment['jira_project_name'], $assignment['jira_project_id']),
+                $assignment['jira_role_name'] ?? ('Role #' . $assignment['jira_role_id']),
+                $assignment['jira_group_name'] ?? ('Group #' . $assignment['jira_group_id']),
+                PHP_EOL
+            );
+            printf(
+                "    Target: Redmine group #%d (%s) -> project #%d with role #%d (%s).%s",
+                $assignment['redmine_group_id'],
+                $assignment['redmine_group_name'],
+                $assignment['redmine_project_id'],
+                $assignment['redmine_role_id'],
+                $assignment['redmine_role_name'],
+                PHP_EOL
+            );
+
+            $warnings = [];
+            if ($assignment['redmine_project_id'] === null) {
+                $warnings[] = 'missing Redmine project mapping';
+            }
+            if ($assignment['redmine_group_id'] === null) {
+                $warnings[] = 'missing Redmine group mapping';
+            }
+            if ($assignment['redmine_role_id'] === null) {
+                $warnings[] = 'missing Redmine role mapping';
+            }
+            if ($warnings !== []) {
+                printf("    Warning: %s.%s", implode(', ', $warnings), PHP_EOL);
+            }
+
+            if ($assignment['notes'] !== null) {
+                printf("    Notes: %s%s", $assignment['notes'], PHP_EOL);
+            }
+        }
+
+        if (!$confirmPush) {
+            printf("  --confirm-push missing: reviewed payloads only, no data was sent to Redmine.%s", PHP_EOL);
+            return;
+        }
+
+        if ($isDryRun) {
+            printf("  --dry-run enabled: skipping API calls after previewing the assignments.%s", PHP_EOL);
+            return;
+        }
+
+        $updateStatement = $pdo->prepare(<<<SQL
+            UPDATE migration_mapping_project_role_groups
+            SET
+                redmine_project_id = :redmine_project_id,
+                redmine_group_id = :redmine_group_id,
+                redmine_role_id = :redmine_role_id,
+                proposed_redmine_role_id = :proposed_redmine_role_id,
+                proposed_redmine_role_name = :proposed_redmine_role_name,
+                migration_status = :migration_status,
+                notes = :notes,
+                automation_hash = :automation_hash
+            WHERE mapping_id = :mapping_id
+        SQL);
+
+        if ($updateStatement === false) {
+            throw new RuntimeException('Failed to prepare update statement for migration_mapping_project_role_groups during the push phase.');
+        }
+
+        $successCount = 0;
+        $failureCount = 0;
+
+        foreach ($pendingAssignments as $assignment) {
+            $mappingId = (int)$assignment['mapping_id'];
+            $projectId = $assignment['redmine_project_id'];
+            $groupId = $assignment['redmine_group_id'];
+            $roleId = $assignment['redmine_role_id'];
+            $proposedRoleId = $assignment['proposed_redmine_role_id'] ?? $assignment['redmine_role_id'];
+            $proposedRoleName = $assignment['proposed_redmine_role_name'] ?? $assignment['redmine_role_name'];
+            $notes = $assignment['notes'] ?? null;
+
+            if ($projectId === null || $groupId === null || $roleId === null) {
+                $errorMessage = 'Missing Redmine project/group/role identifiers for automatic assignment.';
+                $automationHash = computeProjectRoleAssignmentAutomationHash(
+                    $projectId,
+                    $groupId,
+                    $roleId,
+                    $proposedRoleId,
+                    $proposedRoleName,
+                    'MANUAL_INTERVENTION_REQUIRED',
+                    $errorMessage
+                );
+
+                $updateStatement->execute([
+                    'redmine_project_id' => $projectId,
+                    'redmine_group_id' => $groupId,
+                    'redmine_role_id' => $roleId,
+                    'proposed_redmine_role_id' => $proposedRoleId,
+                    'proposed_redmine_role_name' => $proposedRoleName,
+                    'migration_status' => 'MANUAL_INTERVENTION_REQUIRED',
+                    'notes' => $errorMessage,
+                    'automation_hash' => $automationHash,
+                    'mapping_id' => $mappingId,
+                ]);
+
+                printf(
+                    "  [skipped] Project %s, Jira role %s: %s%s",
+                    formatJiraProjectReference($assignment['jira_project_key'], $assignment['jira_project_name'], $assignment['jira_project_id']),
+                    $assignment['jira_role_name'] ?? ('Role #' . $assignment['jira_role_id']),
+                    $errorMessage,
+                    PHP_EOL
+                );
+
+                $failureCount++;
+                continue;
+            }
+
+            $endpoint = buildExtendedApiPath(
+                $extendedApiPrefix,
+                sprintf('projects/%d/memberships.json', $projectId)
+            );
+
+            $payload = [
+                'membership' => [
+                    'project_id' => $projectId,
+                    'group_id' => $groupId,
+                    'role_ids' => [$roleId],
+                    'notify' => false,
+                ],
+            ];
+
+            try {
+                $response = $redmineClient->post($endpoint, ['json' => $payload]);
+                $decoded = decodeJsonResponse($response);
+                $membershipId = extractCreatedMembershipId($decoded);
+
+                $automationHash = computeProjectRoleAssignmentAutomationHash(
+                    $projectId,
+                    $groupId,
+                    $roleId,
+                    $proposedRoleId,
+                    $proposedRoleName,
+                    'ASSIGNMENT_RECORDED',
+                    null
+                );
+
+                $updateStatement->execute([
+                    'redmine_project_id' => $projectId,
+                    'redmine_group_id' => $groupId,
+                    'redmine_role_id' => $roleId,
+                    'proposed_redmine_role_id' => $proposedRoleId,
+                    'proposed_redmine_role_name' => $proposedRoleName,
+                    'migration_status' => 'ASSIGNMENT_RECORDED',
+                    'notes' => null,
+                    'automation_hash' => $automationHash,
+                    'mapping_id' => $mappingId,
+                ]);
+
+                printf(
+                    "  [created] Project %s -> Redmine group #%d with role #%d (membership #%s).%s",
+                    formatJiraProjectReference($assignment['jira_project_key'], $assignment['jira_project_name'], $assignment['jira_project_id']),
+                    $groupId,
+                    $roleId,
+                    $membershipId,
+                    PHP_EOL
+                );
+
+                $successCount++;
+            } catch (Throwable $exception) {
+                $errorMessage = summarizeExtendedApiError($exception);
+                $automationHash = computeProjectRoleAssignmentAutomationHash(
+                    $projectId,
+                    $groupId,
+                    $roleId,
+                    $proposedRoleId,
+                    $proposedRoleName,
+                    'MANUAL_INTERVENTION_REQUIRED',
+                    $errorMessage
+                );
+
+                $updateStatement->execute([
+                    'redmine_project_id' => $projectId,
+                    'redmine_group_id' => $groupId,
+                    'redmine_role_id' => $roleId,
+                    'proposed_redmine_role_id' => $proposedRoleId,
+                    'proposed_redmine_role_name' => $proposedRoleName,
+                    'migration_status' => 'MANUAL_INTERVENTION_REQUIRED',
+                    'notes' => $errorMessage,
+                    'automation_hash' => $automationHash,
+                    'mapping_id' => $mappingId,
+                ]);
+
+                printf(
+                    "  [failed] Project %s -> group #%d with role #%d: %s%s",
+                    formatJiraProjectReference($assignment['jira_project_key'], $assignment['jira_project_name'], $assignment['jira_project_id']),
+                    $groupId,
+                    $roleId,
+                    $errorMessage,
+                    PHP_EOL
+                );
+
+                if ($notes !== null) {
+                    printf("    Previous notes: %s%s", $notes, PHP_EOL);
+                }
+
+                $failureCount++;
+            }
+        }
+
+        printf(
+            "  Completed extended API push. Success: %d, Failed: %d.%s",
+            $successCount,
+            $failureCount,
+            PHP_EOL
+        );
+
+        return;
+    }
+
+    printf("[%s] Starting push phase (manual assignment preview)...%s", formatCurrentTimestamp(), PHP_EOL);
 
     if ($pendingCount === 0) {
         printf("  No project role assignments are marked as READY_FOR_ASSIGNMENT.%s", PHP_EOL);
@@ -1902,6 +2141,130 @@ function normalizeStoredAutomationHash(mixed $value): ?string
     return strtolower($candidate);
 }
 
+function shouldUseExtendedApi(array $redmineConfig, bool $cliFlag): bool
+{
+    if ($cliFlag) {
+        return true;
+    }
+
+    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
+        ? $redmineConfig['extended_api']
+        : [];
+
+    return (bool)($extendedConfig['enabled'] ?? false);
+}
+
+function resolveExtendedApiPrefix(array $redmineConfig): string
+{
+    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
+        ? $redmineConfig['extended_api']
+        : [];
+
+    $prefix = isset($extendedConfig['prefix']) ? trim((string)$extendedConfig['prefix']) : '/extended_api';
+
+    if ($prefix === '') {
+        $prefix = '/extended_api';
+    }
+
+    return trim($prefix, '/');
+}
+
+function buildExtendedApiPath(string $prefix, string $resource): string
+{
+    $normalizedPrefix = trim($prefix, '/');
+    $normalizedResource = ltrim($resource, '/');
+
+    if ($normalizedPrefix === '') {
+        return $normalizedResource;
+    }
+
+    return $normalizedPrefix . '/' . $normalizedResource;
+}
+
+function verifyExtendedApiAvailability(Client $client, string $prefix, string $resource): void
+{
+    $path = buildExtendedApiPath($prefix, $resource);
+
+    try {
+        $response = $client->get($path);
+    } catch (BadResponseException $exception) {
+        $response = $exception->getResponse();
+        $statusCode = $response ? $response->getStatusCode() : 0;
+        $reason = $response ? $response->getReasonPhrase() : 'unknown error';
+        throw new RuntimeException(
+            sprintf('Extended API availability check failed (%s): HTTP %d %s', $path, $statusCode, $reason),
+            0,
+            $exception
+        );
+    } catch (GuzzleException $exception) {
+        throw new RuntimeException('Failed to reach the extended API: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    $header = $response->getHeaderLine('X-Redmine-Extended-API');
+    if (trim($header) === '') {
+        throw new RuntimeException('Extended API response missing X-Redmine-Extended-API header. Verify the plugin installation.');
+    }
+}
+
+function summarizeExtendedApiError(Throwable $exception): string
+{
+    if ($exception instanceof BadResponseException) {
+        $response = $exception->getResponse();
+        if ($response !== null) {
+            $message = sprintf('HTTP %d %s', $response->getStatusCode(), $response->getReasonPhrase());
+            $details = extractExtendedApiErrorDetails($response);
+            if ($details !== null) {
+                $message .= ': ' . $details;
+            }
+
+            return $message;
+        }
+    }
+
+    return $exception->getMessage();
+}
+
+function extractExtendedApiErrorDetails(ResponseInterface $response): ?string
+{
+    $body = trim((string)$response->getBody());
+    if ($body === '') {
+        return null;
+    }
+
+    try {
+        $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException $exception) {
+        return $body !== '' ? $body : null;
+    }
+
+    if (is_array($decoded)) {
+        if (isset($decoded['errors']) && is_array($decoded['errors'])) {
+            return implode('; ', array_map('strval', $decoded['errors']));
+        }
+
+        if (isset($decoded['error']) && is_string($decoded['error'])) {
+            return $decoded['error'];
+        }
+    }
+
+    return $body !== '' ? $body : null;
+}
+
+function extractCreatedMembershipId(mixed $decoded): string
+{
+    if (is_array($decoded)) {
+        if (isset($decoded['membership']) && is_array($decoded['membership']) && isset($decoded['membership']['id'])) {
+            return (string)$decoded['membership']['id'];
+        }
+
+        if (isset($decoded['id'])) {
+            return (string)$decoded['id'];
+        }
+    }
+
+    return 'unknown';
+}
+
 /**
  * @param string|null $projectKey
  * @param string|null $projectName
@@ -1924,7 +2287,7 @@ function formatJiraProjectReference(?string $projectKey, ?string $projectName, s
 
 /**
  * @param array<string, mixed> $argv
- * @return array{0: array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool}, 1: array<int, string>}
+ * @return array{0: array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool}, 1: array<int, string>}
  */
 function parseCommandLineOptions(array $argv): array
 {
@@ -1935,6 +2298,7 @@ function parseCommandLineOptions(array $argv): array
         'skip' => null,
         'confirm_push' => false,
         'dry_run' => false,
+        'use_extended_api' => false,
     ];
 
     $positionals = [];
@@ -1964,6 +2328,10 @@ function parseCommandLineOptions(array $argv): array
             }
             if ($argument === '--dry-run') {
                 $options['dry_run'] = true;
+                continue;
+            }
+            if ($argument === '--use-extended-api') {
+                $options['use_extended_api'] = true;
                 continue;
             }
 
@@ -2018,6 +2386,7 @@ function printUsage(): void
     echo "      --skip=LIST      Comma-separated list of phases to skip." . PHP_EOL;
     echo "      --confirm-push   Mark assignments as completed after manual review." . PHP_EOL;
     echo "      --dry-run        Preview push-phase actions without updating migration status." . PHP_EOL;
+    echo "      --use-extended-api  Push assignments through the redmine_extended_api plugin." . PHP_EOL;
     echo PHP_EOL;
     echo "Available phases:" . PHP_EOL;
     foreach (AVAILABLE_PHASES as $phase => $description) {

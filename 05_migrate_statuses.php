@@ -14,7 +14,7 @@ const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issue statuses into staging_jira_statuses.',
     'redmine' => 'Refresh the Redmine issue status snapshot from the REST API.',
     'transform' => 'Reconcile Jira and Redmine statuses to populate migration mappings.',
-    'push' => 'Produce a manual action plan for creating missing Redmine statuses.',
+    'push' => 'Produce a manual action plan or call the extended API to create missing Redmine statuses.',
 ];
 
 if (PHP_SAPI !== 'cli') {
@@ -57,7 +57,7 @@ try {
 
 /**
  * @param array<string, mixed> $config
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool} $cliOptions
+ * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool} $cliOptions
  * @throws Throwable
  */
 function main(array $config, array $cliOptions): void
@@ -73,6 +73,9 @@ function main(array $config, array $cliOptions): void
 
     $databaseConfig = extractArrayConfig($config, 'database');
     $pdo = createDatabaseConnection($databaseConfig);
+
+    /** @var array<string, mixed>|null $redmineConfig */
+    $redmineConfig = null;
 
     if (in_array('jira', $phasesToRun, true)) {
         $jiraConfig = extractArrayConfig($config, 'jira');
@@ -97,7 +100,7 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('redmine', $phasesToRun, true)) {
-        $redmineConfig = extractArrayConfig($config, 'redmine');
+        $redmineConfig ??= extractArrayConfig($config, 'redmine');
         $redmineClient = createRedmineClient($redmineConfig);
 
         printf("[%s] Starting Redmine issue status snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -152,8 +155,10 @@ function main(array $config, array $cliOptions): void
     if (in_array('push', $phasesToRun, true)) {
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
+        $redmineConfig ??= extractArrayConfig($config, 'redmine');
+        $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
 
-        runStatusPushPhase($pdo, $confirmPush, $isDryRun);
+        runStatusPushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi);
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
@@ -679,12 +684,182 @@ function fetchStatusMigrationStatusCounts(PDO $pdo): array
     return $results;
 }
 
-function runStatusPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun): void
+function runStatusPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi): void
 {
-    printf("[%s] Starting push phase (manual status checklist)...%s", formatCurrentTimestamp(), PHP_EOL);
-
     $pendingStatuses = fetchStatusesReadyForCreation($pdo);
     $pendingCount = count($pendingStatuses);
+
+    if ($useExtendedApi) {
+        printf("[%s] Starting push phase (Redmine extended API)...%s", formatCurrentTimestamp(), PHP_EOL);
+
+        if ($pendingCount === 0) {
+            printf("  No Jira statuses are marked as READY_FOR_CREATION.%s", PHP_EOL);
+            if ($isDryRun) {
+                printf("  --dry-run flag enabled: no API calls will be made.%s", PHP_EOL);
+            }
+            if ($confirmPush) {
+                printf("  --confirm-push provided but there is nothing to process.%s", PHP_EOL);
+            }
+            return;
+        }
+
+        $redmineClient = createRedmineClient($redmineConfig);
+        $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
+        verifyExtendedApiAvailability($redmineClient, $extendedApiPrefix, 'issue_statuses.json');
+
+        $endpoint = buildExtendedApiPath($extendedApiPrefix, 'issue_statuses.json');
+
+        printf("  %d status(es) queued for creation via the extended API.%s", $pendingCount, PHP_EOL);
+        foreach ($pendingStatuses as $status) {
+            $jiraName = $status['jira_status_name'] ?? null;
+            $jiraId = (string)$status['jira_status_id'];
+            $proposedName = $status['proposed_redmine_name'] ?? null;
+            $proposedIsClosed = normalizeBooleanFlag($status['proposed_is_closed'] ?? null);
+            $categoryKey = $status['jira_status_category_key'] ?? null;
+            $notes = $status['notes'] ?? null;
+
+            $effectiveName = $proposedName ?? ($jiraName ?? $jiraId);
+            $effectiveIsClosed = $proposedIsClosed ?? false;
+
+            printf(
+                "  - Jira status %s (ID: %s) -> Redmine \"%s\" (closed: %s, category: %s).%s",
+                $jiraName ?? '[missing name]',
+                $jiraId,
+                $effectiveName,
+                formatBooleanForDisplay($effectiveIsClosed),
+                $categoryKey ?? 'unknown',
+                PHP_EOL
+            );
+            if ($notes !== null) {
+                printf("    Notes: %s%s", $notes, PHP_EOL);
+            }
+        }
+
+        if (!$confirmPush) {
+            printf("  --confirm-push missing: reviewed payloads only, no data was sent to Redmine.%s", PHP_EOL);
+            return;
+        }
+
+        if ($isDryRun) {
+            printf("  --dry-run enabled: skipping API calls after previewing the payloads.%s", PHP_EOL);
+            return;
+        }
+
+        $updateStatement = $pdo->prepare(<<<SQL
+            UPDATE migration_mapping_statuses
+            SET
+                redmine_status_id = :redmine_status_id,
+                migration_status = :migration_status,
+                notes = :notes,
+                proposed_redmine_name = :proposed_redmine_name,
+                proposed_is_closed = :proposed_is_closed,
+                automation_hash = :automation_hash
+            WHERE mapping_id = :mapping_id
+        SQL);
+
+        if ($updateStatement === false) {
+            throw new RuntimeException('Failed to prepare update statement for migration_mapping_statuses during the push phase.');
+        }
+
+        $successCount = 0;
+        $failureCount = 0;
+
+        foreach ($pendingStatuses as $status) {
+            $mappingId = (int)$status['mapping_id'];
+            $jiraId = (string)$status['jira_status_id'];
+            $jiraName = $status['jira_status_name'] ?? null;
+            $proposedName = $status['proposed_redmine_name'] ?? null;
+            $proposedIsClosed = normalizeBooleanFlag($status['proposed_is_closed'] ?? null) ?? false;
+            $notes = $status['notes'] ?? null;
+
+            $effectiveName = $proposedName ?? ($jiraName ?? $jiraId);
+
+            $payload = [
+                'issue_status' => [
+                    'name' => $effectiveName,
+                    'is_closed' => $proposedIsClosed,
+                ],
+            ];
+
+            try {
+                $response = $redmineClient->post($endpoint, ['json' => $payload]);
+                $decoded = decodeJsonResponse($response);
+                $newStatusId = extractCreatedIssueStatusId($decoded);
+
+                $automationHash = computeStatusAutomationStateHash(
+                    $newStatusId,
+                    'CREATION_SUCCESS',
+                    $effectiveName,
+                    $proposedIsClosed,
+                    null
+                );
+
+                $updateStatement->execute([
+                    'redmine_status_id' => $newStatusId,
+                    'migration_status' => 'CREATION_SUCCESS',
+                    'notes' => null,
+                    'proposed_redmine_name' => $effectiveName,
+                    'proposed_is_closed' => normalizeBooleanDatabaseValue($proposedIsClosed),
+                    'automation_hash' => $automationHash,
+                    'mapping_id' => $mappingId,
+                ]);
+
+                printf(
+                    "  [created] Jira status %s (%s) -> Redmine status #%d.%s",
+                    $jiraName ?? $jiraId,
+                    $jiraId,
+                    $newStatusId,
+                    PHP_EOL
+                );
+
+                $successCount++;
+            } catch (Throwable $exception) {
+                $errorMessage = summarizeExtendedApiError($exception);
+                $automationHash = computeStatusAutomationStateHash(
+                    null,
+                    'CREATION_FAILED',
+                    $effectiveName,
+                    $proposedIsClosed,
+                    $errorMessage
+                );
+
+                $updateStatement->execute([
+                    'redmine_status_id' => null,
+                    'migration_status' => 'CREATION_FAILED',
+                    'notes' => $errorMessage,
+                    'proposed_redmine_name' => $effectiveName,
+                    'proposed_is_closed' => normalizeBooleanDatabaseValue($proposedIsClosed),
+                    'automation_hash' => $automationHash,
+                    'mapping_id' => $mappingId,
+                ]);
+
+                printf(
+                    "  [failed] Jira status %s (%s): %s%s",
+                    $jiraName ?? $jiraId,
+                    $jiraId,
+                    $errorMessage,
+                    PHP_EOL
+                );
+
+                if ($notes !== null) {
+                    printf("    Previous notes: %s%s", $notes, PHP_EOL);
+                }
+
+                $failureCount++;
+            }
+        }
+
+        printf(
+            "  Completed extended API push. Success: %d, Failed: %d.%s",
+            $successCount,
+            $failureCount,
+            PHP_EOL
+        );
+
+        return;
+    }
+
+    printf("[%s] Starting push phase (manual status checklist)...%s", formatCurrentTimestamp(), PHP_EOL);
 
     if ($pendingCount === 0) {
         printf("  No Jira statuses are marked as READY_FOR_CREATION.%s", PHP_EOL);
@@ -780,7 +955,7 @@ function formatBooleanForDisplay(?bool $value): string
 
 /**
  * @param array<int, string> $argv
- * @return array{0: array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool}, 1: array<int, string>}
+ * @return array{0: array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool}, 1: array<int, string>}
  */
 function parseCommandLineOptions(array $argv): array
 {
@@ -791,6 +966,7 @@ function parseCommandLineOptions(array $argv): array
         'skip' => null,
         'confirm_push' => false,
         'dry_run' => false,
+        'use_extended_api' => false,
     ];
 
     $positional = [];
@@ -824,6 +1000,9 @@ function parseCommandLineOptions(array $argv): array
                 break;
             case '--dry-run':
                 $options['dry_run'] = true;
+                break;
+            case '--use-extended-api':
+                $options['use_extended_api'] = true;
                 break;
             default:
                 if (str_starts_with($argument, '--phases=')) {
@@ -1060,6 +1239,130 @@ function normalizeStoredAutomationHash(mixed $value): ?string
     return strtolower($trimmed);
 }
 
+function shouldUseExtendedApi(array $redmineConfig, bool $cliFlag): bool
+{
+    if ($cliFlag) {
+        return true;
+    }
+
+    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
+        ? $redmineConfig['extended_api']
+        : [];
+
+    return (bool)($extendedConfig['enabled'] ?? false);
+}
+
+function resolveExtendedApiPrefix(array $redmineConfig): string
+{
+    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
+        ? $redmineConfig['extended_api']
+        : [];
+
+    $prefix = isset($extendedConfig['prefix']) ? trim((string)$extendedConfig['prefix']) : '/extended_api';
+
+    if ($prefix === '') {
+        $prefix = '/extended_api';
+    }
+
+    return trim($prefix, '/');
+}
+
+function buildExtendedApiPath(string $prefix, string $resource): string
+{
+    $normalizedPrefix = trim($prefix, '/');
+    $normalizedResource = ltrim($resource, '/');
+
+    if ($normalizedPrefix === '') {
+        return $normalizedResource;
+    }
+
+    return $normalizedPrefix . '/' . $normalizedResource;
+}
+
+function verifyExtendedApiAvailability(Client $client, string $prefix, string $resource): void
+{
+    $path = buildExtendedApiPath($prefix, $resource);
+
+    try {
+        $response = $client->get($path);
+    } catch (BadResponseException $exception) {
+        $response = $exception->getResponse();
+        $statusCode = $response ? $response->getStatusCode() : 0;
+        $reason = $response ? $response->getReasonPhrase() : 'unknown error';
+        throw new RuntimeException(
+            sprintf('Extended API availability check failed (%s): HTTP %d %s', $path, $statusCode, $reason),
+            0,
+            $exception
+        );
+    } catch (GuzzleException $exception) {
+        throw new RuntimeException('Failed to reach the extended API: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    $header = $response->getHeaderLine('X-Redmine-Extended-API');
+    if (trim($header) === '') {
+        throw new RuntimeException('Extended API response missing X-Redmine-Extended-API header. Verify the plugin installation.');
+    }
+}
+
+function summarizeExtendedApiError(Throwable $exception): string
+{
+    if ($exception instanceof BadResponseException) {
+        $response = $exception->getResponse();
+        if ($response !== null) {
+            $message = sprintf('HTTP %d %s', $response->getStatusCode(), $response->getReasonPhrase());
+            $details = extractExtendedApiErrorDetails($response);
+            if ($details !== null) {
+                $message .= ': ' . $details;
+            }
+
+            return $message;
+        }
+    }
+
+    return $exception->getMessage();
+}
+
+function extractExtendedApiErrorDetails(ResponseInterface $response): ?string
+{
+    $body = trim((string)$response->getBody());
+    if ($body === '') {
+        return null;
+    }
+
+    try {
+        $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException $exception) {
+        return $body !== '' ? $body : null;
+    }
+
+    if (is_array($decoded)) {
+        if (isset($decoded['errors']) && is_array($decoded['errors'])) {
+            return implode('; ', array_map('strval', $decoded['errors']));
+        }
+
+        if (isset($decoded['error']) && is_string($decoded['error'])) {
+            return $decoded['error'];
+        }
+    }
+
+    return $body !== '' ? $body : null;
+}
+
+function extractCreatedIssueStatusId(mixed $decoded): int
+{
+    if (is_array($decoded)) {
+        if (isset($decoded['issue_status']) && is_array($decoded['issue_status']) && isset($decoded['issue_status']['id'])) {
+            return (int)$decoded['issue_status']['id'];
+        }
+
+        if (isset($decoded['id'])) {
+            return (int)$decoded['id'];
+        }
+    }
+
+    throw new RuntimeException('Unable to determine the new Redmine status ID from the extended API response.');
+}
+
 function printUsage(): void
 {
     $scriptName = basename(__FILE__);
@@ -1079,6 +1382,7 @@ function printUsage(): void
     echo "      --skip=LIST      Comma-separated list of phases to skip." . PHP_EOL;
     echo "      --confirm-push   Mark statuses as acknowledged after manual review." . PHP_EOL;
     echo "      --dry-run        Preview push-phase actions without updating migration status." . PHP_EOL;
+    echo "      --use-extended-api  Push new statuses through the redmine_extended_api plugin." . PHP_EOL;
     echo PHP_EOL;
     echo "Available phases:" . PHP_EOL;
     foreach (AVAILABLE_PHASES as $phase => $description) {
