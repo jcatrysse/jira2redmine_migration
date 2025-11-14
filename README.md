@@ -28,9 +28,9 @@ The migration can now take advantage of the community plugin
 [`redmine_extended_api`](https://github.com/jcatrysse/redmine_extended_api).
 When installed on the Redmine side, it exposes write-capable endpoints for
 administrative resources that are read-only in core Redmine. With the plugin
- enabled, you can let the push phases of the role, status, priority, and tracker migration
-scripts create the necessary records for you instead of carrying out those
-steps manually.
+enabled, you can let the push phases of the role, status, priority, tracker, and
+custom field migration scripts create the necessary records for you instead of
+carrying out those steps manually.
 
 The plugin is **optional**. Without it, the scripts continue to produce the same
 checklists so you can update Redmine by hand. When you do install the plugin,
@@ -46,7 +46,33 @@ not respond with the expected `X-Redmine-Extended-API` header. This protects
 your Redmine instance from partial updates when the plugin has not been
 installed correctly.
 
-Example (dry-run to inspect the payloads):
+### Optional automation for cascading custom fields
+
+Cascading select Jira fields (parent/child dropdowns) can be automated when the
+[`redmine_depending_custom_fields`](https://github.com/jcatrysse/redmine_depending_custom_fields)
+plugin is available on your Redmine instance. The custom field migration script
+automatically detects the plugin by probing `/depending_custom_fields.json`
+before it attempts to create dependent list fields. When present, the push
+phase will:
+
+1. Create the parent list through the extended API (reusing the Jira parent
+   options gathered during the transform phase).
+2. Call the plugin endpoint to create the dependent child field with the Jira
+   value dependencies intact.
+
+If the plugin is missing, the transform phase keeps cascading Jira fields in
+`MANUAL_INTERVENTION_REQUIRED` and the push preview reminds you to create them
+by hand. No additional configuration is required beyond enabling the extended
+API plugin; the script only invokes the dependency endpoints when a cascading
+field is actually queued for automated creation.
+
+The transform step recognises both Jira response styles for cascading select
+fields: either nested `cascadingOptions` blocks or the flattened Cloud variant
+that links child options to parents through the `optionId` attribute. In both
+cases the resulting parent/child matrix is captured in the staging tables so
+the push phase (or your manual review) has the exact Jira dependencies at hand.
+
+Example (dry-run to inspect tracker payloads):
 
 ```bash
 php 07_migrate_trackers.php --phases=push --use-extended-api --dry-run
@@ -56,6 +82,12 @@ Example (create the records after reviewing the dry run):
 
 ```bash
 php 07_migrate_trackers.php --phases=push --use-extended-api --confirm-push
+```
+
+Example (preview proposed custom field creations):
+
+```bash
+php 08_migrate_custom_fields.php --phases=push --use-extended-api --dry-run
 ```
 
 If you prefer to keep the process manual simply omit `--use-extended-api` and
@@ -134,7 +166,7 @@ This structure is intended to be reused by later migration scripts so that manua
 
 ## 5. Running `01_migrate_projects.php`
 
-Version `0.0.7` introduces the dedicated entry point for synchronising projects. It follows the same CLI ergonomics as the other migration scripts, so you can iterate on the extract, transform, and push phases independently.
+Version `0.0.10` introduces the dedicated entry point for synchronising projects. It follows the same CLI ergonomics as the other migration scripts, so you can iterate on the extract, transform, and push phases independently.
 
 ```bash
 php 01_migrate_projects.php --help
@@ -145,7 +177,7 @@ php 01_migrate_projects.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.7`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.10`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Required toggle to allow the push phase to create projects in Redmine.                |
@@ -189,7 +221,7 @@ php 02_migrate_users.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.7`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.10`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Required toggle to allow the push phase to create users in Redmine.                   |
@@ -236,7 +268,7 @@ the `POST /users.json` payload so the new accounts immediately reference the cor
 
 ## 7. Running `03_migrate_groups.php`
 
-Version `0.0.7` keeps the companion entry point for synchronising Jira groups with Redmine aligned with the user and project scripts. The CLI surface remains identical, so your muscle memory continues to work:
+Version `0.0.10` keeps the companion entry point for synchronising Jira groups with Redmine aligned with the user and project scripts. The CLI surface remains identical, so your muscle memory continues to work:
 
 ```bash
 php 03_migrate_groups.php --help
@@ -247,7 +279,7 @@ php 03_migrate_groups.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.7`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.10`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Required toggle to allow the push phase to create groups in Redmine.                  |
@@ -321,7 +353,7 @@ php 04_migrate_roles.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.7`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.10`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Marks assignments as recorded after you manually action them in Redmine.              |
@@ -370,7 +402,7 @@ php 05_migrate_statuses.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.7`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.10`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Acknowledge that you have manually created the proposed statuses in Redmine.          |
@@ -411,7 +443,7 @@ php 06_migrate_priorities.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.7`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.10`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Acknowledge that you have manually created the proposed priorities in Redmine.        |
@@ -448,7 +480,7 @@ php 07_migrate_trackers.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.7`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.10`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Acknowledge manual tracker creation or confirm the extended API run.                  |
@@ -471,3 +503,72 @@ php 07_migrate_trackers.php --help
 > **Configuration tip:** set `migration.trackers.default_redmine_status_id` when every new tracker should share the
 > same default Redmine status. Otherwise the transform phase falls back to the first open status discovered in the
 > staging snapshot.
+
+---
+
+## 12. Running `08_migrate_custom_fields.php`
+
+Custom fields bridge a lot of Jira-specific behaviour with Redmine's more
+opinionated data model. The custom field migration script follows the same ETL
+pattern as the previous entries while introducing type-aware defaults and clear
+manual review hooks for scenarios that require human judgement.
+
+```bash
+php 08_migrate_custom_fields.php --help
+```
+
+### Available options
+
+| Option              | Description                                                                           |
+|---------------------|---------------------------------------------------------------------------------------|
+| `-h`, `--help`      | Print usage information and exit.                                                     |
+| `-V`, `--version`   | Display the script version (`0.0.10`).                                                |
+| `--phases=<list>`   | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
+| `--skip=<list>`     | Comma-separated list of phases to skip.                                               |
+| `--confirm-push`    | Acknowledge manual creations or confirm extended API operations.                      |
+| `--dry-run`         | Preview the push payloads without writing to Redmine or the mapping tables.           |
+| `--use-extended-api`| Create missing custom fields through the `redmine_extended_api` plugin.               |
+
+### Workflow highlights
+
+1. **Jira extraction (`jira`)** – reads `/rest/api/3/field`, captures the schema
+   type, custom type key, searcher information, and stores the raw payloads in
+   `staging_jira_fields`. For every custom Jira field the script also walks the
+   `/rest/api/3/field/{id}/context` and `/context/{contextId}/option` endpoints,
+   recording the per-project/per-issue-type contexts together with their allowed
+   values in `staging_jira_field_contexts`.
+2. **Redmine snapshot (`redmine`)** – truncates and repopulates
+   `staging_redmine_custom_fields` from `GET /custom_fields.json`, storing
+   metadata such as `customized_type`, `field_format`, possible values, default
+   values, and tracker/role/project associations for comparison.
+3. **Transform (`transform`)** – synchronises `migration_mapping_custom_fields`
+   with the staging snapshots, preserving automation hashes so operator edits
+   survive reruns. Contexts that share the same allowed values are collapsed into
+   a single Redmine proposal; divergent contexts automatically fan out into
+   separate mapping rows with context-aware name suffixes. The transform phase
+   reuses the Jira option lists where possible, derives sensible defaults for
+   simple field types, and maps Jira projects and issue types to the corresponding
+   Redmine projects and trackers. Missing project or tracker mappings, unsupported
+   field types, and contexts without option data are routed to
+   `MANUAL_INTERVENTION_REQUIRED` with explanatory notes.
+4. **Push (`push`)** – when `--use-extended-api` is supplied the script creates
+   standard custom fields through `POST /custom_fields.json` and, when the
+   `redmine_depending_custom_fields` plugin is available, provisions cascading
+   selects by first creating the parent list via the extended API and then
+   calling `POST /depending_custom_fields.json` for the dependent child field.
+   Without the plugins it produces a detailed checklist that reflects the
+   context-specific naming, project scope, tracker scope, and option lists
+   derived during the transform so you can create the fields manually before
+   acknowledging them with `--confirm-push`.
+
+> **Tip:** list-style Jira fields pull their options directly from the Jira
+> context metadata. If a context lacks options or a Jira project/issue type
+> cannot be mapped yet, the row is flagged for manual intervention with a
+> targeted note so you can fill in the missing pieces before rerunning the
+> transform.
+
+> **Cascading selects:** the push phase auto-detects the
+> `redmine_depending_custom_fields` REST endpoints. When reachable it creates a
+> parent list field and a dependent child field automatically; otherwise the
+> transform output remains untouched and the mapping row stays in
+> `MANUAL_INTERVENTION_REQUIRED` so you can handle the migration manually.

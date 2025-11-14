@@ -334,15 +334,42 @@ CREATE TABLE `staging_jira_fields` (
                                        `name` VARCHAR(255) NOT NULL,
                                        `is_custom` BOOLEAN NOT NULL,
                                        `schema_type` VARCHAR(255),
+                                       `schema_custom` VARCHAR(255) NULL,
+                                       `searcher_key` VARCHAR(255) NULL,
                                        `raw_payload` JSON NOT NULL,
                                        `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) COMMENT='Raw extraction of Jira Fields (system and custom).';
 
+CREATE TABLE `staging_jira_field_contexts` (
+                                               `field_id` VARCHAR(255) NOT NULL,
+                                               `context_id` BIGINT NOT NULL,
+                                               `name` VARCHAR(255) NULL,
+                                               `is_global` BOOLEAN NULL,
+                                               `is_any_issue_type` BOOLEAN NULL,
+                                               `project_ids` JSON NULL,
+                                               `issue_type_ids` JSON NULL,
+                                               `options` JSON NULL,
+                                               `raw_context` JSON NOT NULL,
+                                               `raw_options` JSON NULL,
+                                               `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                               PRIMARY KEY (`field_id`, `context_id`),
+                                               KEY `idx_jira_field_context_field` (`field_id`)
+) COMMENT='Raw extraction of Jira custom field contexts and allowed values.';
+
 CREATE TABLE `staging_redmine_custom_fields` (
                                                  `id` INT NOT NULL PRIMARY KEY,
                                                  `name` VARCHAR(255) NOT NULL,
+                                                 `customized_type` VARCHAR(255) NULL,
                                                  `field_format` VARCHAR(255) NOT NULL,
+                                                 `is_required` BOOLEAN NULL,
+                                                 `is_filter` BOOLEAN NULL,
                                                  `is_for_all` BOOLEAN,
+                                                 `is_multiple` BOOLEAN NULL,
+                                                 `possible_values` JSON NULL,
+                                                 `default_value` TEXT NULL,
+                                                 `tracker_ids` JSON NULL,
+                                                 `role_ids` JSON NULL,
+                                                 `project_ids` JSON NULL,
                                                  `raw_payload` JSON NOT NULL,
                                                  `retrieved_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) COMMENT='Snapshot of existing Redmine Custom Fields.';
@@ -350,12 +377,35 @@ CREATE TABLE `staging_redmine_custom_fields` (
 CREATE TABLE `migration_mapping_custom_fields` (
                                                    `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
                                                    `jira_field_id` VARCHAR(255) NOT NULL,
+                                                   `jira_field_name` VARCHAR(255) NULL,
+                                                   `jira_schema_type` VARCHAR(255) NULL,
+                                                   `jira_schema_custom` VARCHAR(255) NULL,
+                                                   `jira_searcher_key` VARCHAR(255) NULL,
+                                                   `context_scope_hash` VARCHAR(64) NOT NULL,
+                                                   `context_scope_label` VARCHAR(255) NULL,
+                                                   `jira_context_ids` JSON NULL,
+                                                   `jira_project_ids` JSON NULL,
+                                                   `jira_issue_type_ids` JSON NULL,
+                                                   `jira_allowed_values` JSON NULL,
                                                    `redmine_custom_field_id` INT NULL,
+                                                   `redmine_parent_custom_field_id` INT NULL,
+                                                   `proposed_redmine_name` VARCHAR(255) NULL,
+                                                   `proposed_field_format` VARCHAR(255) NULL,
+                                                   `proposed_is_required` BOOLEAN NULL,
+                                                   `proposed_is_filter` BOOLEAN NULL,
+                                                   `proposed_is_for_all` BOOLEAN NULL,
+                                                   `proposed_is_multiple` BOOLEAN NULL,
+                                                   `proposed_possible_values` JSON NULL,
+                                                   `proposed_default_value` TEXT NULL,
+                                                   `proposed_tracker_ids` JSON NULL,
+                                                   `proposed_role_ids` JSON NULL,
+                                                   `proposed_project_ids` JSON NULL,
                                                    `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
                                                    `notes` TEXT,
+                                                   `automation_hash` CHAR(64) NULL,
                                                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                                    `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                                                   UNIQUE KEY `uk_jira_field_id` (`jira_field_id`)
+                                                   UNIQUE KEY `uk_jira_field_context` (`jira_field_id`, `context_scope_hash`)
 ) COMMENT='Mapping and status for Custom Field migration.';
 
 -- ================================================================

@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_ROLES_SCRIPT_VERSION = '0.0.7';
+const MIGRATE_ROLES_SCRIPT_VERSION = '0.0.10';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira project roles and their actors into the staging tables.',
     'redmine' => 'Refresh the Redmine roles snapshot from the REST API.',

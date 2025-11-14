@@ -79,3 +79,39 @@ All notable changes to this project will be documented in this file.
   overrides persist across reruns, and teach the transform phase to derive default status IDs automatically.
 - Add `migration.trackers.default_redmine_status_id` to the configuration and document the new workflow in the README.
 - Refresh the README examples to cover the tracker automation flow and bump all CLI entry points to `0.0.7`.
+
+## [0.0.8] - 2025-10-01
+
+- Add `08_migrate_custom_fields.php`, covering the full extract/transform/push pipeline for Jira custom fields with
+  optional automation via the `redmine_extended_api` plugin.
+- Enrich the staging and mapping schema for custom fields with metadata columns (schema hints, proposed Redmine
+  attributes, automation hashes) so manual overrides persist across reruns and list-style fields can capture
+  proposed option values.
+- Teach the README about the new script, update the extended API guidance with custom field examples, and bump all
+  CLI entry points to `0.0.8`.
+
+## [0.0.9] - 2025-10-02
+
+- Extend `08_migrate_custom_fields.php` to retrieve Jira field contexts and allowed option values, persisting them
+  in the new `staging_jira_field_contexts` table for downstream analysis.
+- Expand `migration_mapping_custom_fields` with context metadata (hashes, Jira project/issue type lists, allowed
+  values) so the transform phase can reason about per-project option differences.
+- Update the transform logic to split divergent Jira contexts into distinct Redmine proposals with context-aware
+  names, automatically populate option lists, and map Jira projects/issue types to Redmine projects and trackers.
+- Refresh the README with the context-aware workflow, clarify the extended API checklist, and bump all CLI entry
+  points to version `0.0.9`.
+
+## [0.0.10] - 2025-11-14
+
+- Extend `08_migrate_custom_fields.php` with native support for cascading select
+  fields by detecting the `redmine_depending_custom_fields` plugin, creating the
+  required parent list via the extended API, and issuing dependent field
+  requests against the plugin's REST endpoint.
+- Capture Jira context option hierarchies (parent/child relationships) in
+  `staging_jira_field_contexts` and propagate them through the transform so
+  migrations can surface parent sets, child unions, and dependency maps.
+- Persist Redmine parent custom field identifiers in the mapping table so
+  repeated runs and manual acknowledgements honour previously created parent
+  fields.
+- Refresh the README with the new cascading workflow, document the plugin
+  behaviour, and bump all CLI entry points to `0.0.10`.

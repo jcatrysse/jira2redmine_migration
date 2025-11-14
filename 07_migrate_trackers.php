@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_TRACKERS_SCRIPT_VERSION = '0.0.7';
+const MIGRATE_TRACKERS_SCRIPT_VERSION = '0.0.10';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issue types into staging_jira_issue_types.',
     'redmine' => 'Refresh the Redmine tracker snapshot from the REST API.',

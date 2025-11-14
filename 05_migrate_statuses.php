@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_STATUSES_SCRIPT_VERSION = '0.0.7';
+const MIGRATE_STATUSES_SCRIPT_VERSION = '0.0.10';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issue statuses into staging_jira_statuses.',
     'redmine' => 'Refresh the Redmine issue status snapshot from the REST API.',
