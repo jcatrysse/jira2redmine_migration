@@ -70,3 +70,12 @@ All notable changes to this project will be documented in this file.
 - Extend the staging schema with richer metadata for status and priority mappings (names, proposed values, and
   automation hashes) so manual overrides persist across reruns.
 - Bump all CLI entry points to `0.0.6` and document the new scripts and workflow guidance in the README.
+
+## [0.0.7] - 2025-09-30
+
+- Introduce `07_migrate_trackers.php` to reconcile Jira issue types with Redmine trackers, including optional
+  creation support through the `redmine_extended_api` plugin.
+- Extend the tracker mapping table with Jira metadata, proposed Redmine attributes, and automation hashes so manual
+  overrides persist across reruns, and teach the transform phase to derive default status IDs automatically.
+- Add `migration.trackers.default_redmine_status_id` to the configuration and document the new workflow in the README.
+- Refresh the README examples to cover the tracker automation flow and bump all CLI entry points to `0.0.7`.

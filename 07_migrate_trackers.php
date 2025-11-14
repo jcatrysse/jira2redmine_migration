@@ -9,12 +9,12 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_STATUSES_SCRIPT_VERSION = '0.0.7';
+const MIGRATE_TRACKERS_SCRIPT_VERSION = '0.0.7';
 const AVAILABLE_PHASES = [
-    'jira' => 'Extract Jira issue statuses into staging_jira_statuses.',
-    'redmine' => 'Refresh the Redmine issue status snapshot from the REST API.',
-    'transform' => 'Reconcile Jira and Redmine statuses to populate migration mappings.',
-    'push' => 'Produce a manual action plan or call the extended API to create missing Redmine statuses.',
+    'jira' => 'Extract Jira issue types into staging_jira_issue_types.',
+    'redmine' => 'Refresh the Redmine tracker snapshot from the REST API.',
+    'transform' => 'Reconcile Jira issue types with Redmine trackers to populate migration mappings.',
+    'push' => 'Produce a manual action plan or call the extended API to create missing Redmine trackers.',
 ];
 
 if (PHP_SAPI !== 'cli') {
@@ -81,19 +81,19 @@ function main(array $config, array $cliOptions): void
         $jiraConfig = extractArrayConfig($config, 'jira');
         $jiraClient = createJiraClient($jiraConfig);
 
-        printf("[%s] Starting Jira issue status extraction...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Jira issue type extraction...%s", formatCurrentTimestamp(), PHP_EOL);
 
-        $totalJiraProcessed = fetchAndStoreJiraIssueStatuses($jiraClient, $pdo);
+        $totalJiraProcessed = fetchAndStoreJiraIssueTypes($jiraClient, $pdo);
 
         printf(
-            "[%s] Completed Jira extraction. %d status records processed.%s",
+            "[%s] Completed Jira extraction. %d issue type records processed.%s",
             formatCurrentTimestamp(),
             $totalJiraProcessed,
             PHP_EOL
         );
     } else {
         printf(
-            "[%s] Skipping Jira issue status extraction (disabled via CLI option).%s",
+            "[%s] Skipping Jira issue type extraction (disabled via CLI option).%s",
             formatCurrentTimestamp(),
             PHP_EOL
         );
@@ -103,28 +103,28 @@ function main(array $config, array $cliOptions): void
         $redmineConfig ??= extractArrayConfig($config, 'redmine');
         $redmineClient = createRedmineClient($redmineConfig);
 
-        printf("[%s] Starting Redmine issue status snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Redmine tracker snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
 
-        $totalRedmineProcessed = fetchAndStoreRedmineIssueStatuses($redmineClient, $pdo);
+        $totalRedmineProcessed = fetchAndStoreRedmineTrackers($redmineClient, $pdo);
 
         printf(
-            "[%s] Completed Redmine snapshot. %d status records processed.%s",
+            "[%s] Completed Redmine snapshot. %d tracker records processed.%s",
             formatCurrentTimestamp(),
             $totalRedmineProcessed,
             PHP_EOL
         );
     } else {
         printf(
-            "[%s] Skipping Redmine issue status snapshot (disabled via CLI option).%s",
+            "[%s] Skipping Redmine tracker snapshot (disabled via CLI option).%s",
             formatCurrentTimestamp(),
             PHP_EOL
         );
     }
 
     if (in_array('transform', $phasesToRun, true)) {
-        printf("[%s] Starting status reconciliation & transform phase...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting tracker reconciliation & transform phase...%s", formatCurrentTimestamp(), PHP_EOL);
 
-        $transformSummary = runStatusTransformationPhase($pdo);
+        $transformSummary = runTrackerTransformationPhase($pdo, $config);
 
         printf(
             "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
@@ -139,7 +139,7 @@ function main(array $config, array $cliOptions): void
         );
 
         if ($transformSummary['status_counts'] !== []) {
-            printf("  Current status mapping breakdown:%s", PHP_EOL);
+            printf("  Current tracker mapping breakdown:%s", PHP_EOL);
             foreach ($transformSummary['status_counts'] as $status => $count) {
                 printf("  - %-32s %d%s", $status, $count, PHP_EOL);
             }
@@ -158,7 +158,7 @@ function main(array $config, array $cliOptions): void
         $redmineConfig ??= extractArrayConfig($config, 'redmine');
         $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
 
-        runStatusPushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi);
+        runTrackerPushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi);
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
@@ -171,39 +171,42 @@ function main(array $config, array $cliOptions): void
 /**
  * @throws Throwable
  */
-function fetchAndStoreJiraIssueStatuses(Client $client, PDO $pdo): int
+function fetchAndStoreJiraIssueTypes(Client $client, PDO $pdo): int
 {
     $insertStatement = $pdo->prepare(<<<SQL
-        INSERT INTO staging_jira_statuses (id, name, description, status_category_key, raw_payload, extracted_at)
-        VALUES (:id, :name, :description, :status_category_key, :raw_payload, :extracted_at)
+        INSERT INTO staging_jira_issue_types (id, name, description, is_subtask, hierarchy_level, scope_type, scope_project_id, raw_payload, extracted_at)
+        VALUES (:id, :name, :description, :is_subtask, :hierarchy_level, :scope_type, :scope_project_id, :raw_payload, :extracted_at)
         ON DUPLICATE KEY UPDATE
             name = VALUES(name),
             description = VALUES(description),
-            status_category_key = VALUES(status_category_key),
+            is_subtask = VALUES(is_subtask),
+            hierarchy_level = VALUES(hierarchy_level),
+            scope_type = VALUES(scope_type),
+            scope_project_id = VALUES(scope_project_id),
             raw_payload = VALUES(raw_payload),
             extracted_at = VALUES(extracted_at)
     SQL);
 
     if ($insertStatement === false) {
-        throw new RuntimeException('Failed to prepare insert statement for staging_jira_statuses.');
+        throw new RuntimeException('Failed to prepare insert statement for staging_jira_issue_types.');
     }
 
     try {
-        $response = $client->get('/rest/api/3/status');
+        $response = $client->get('/rest/api/3/issuetype');
     } catch (BadResponseException $exception) {
         $response = $exception->getResponse();
-        $message = 'Failed to fetch issue statuses from Jira';
+        $message = 'Failed to fetch issue types from Jira';
         $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
 
         throw new RuntimeException($message, 0, $exception);
     } catch (GuzzleException $exception) {
-        throw new RuntimeException('Failed to fetch issue statuses from Jira: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException('Failed to fetch issue types from Jira: ' . $exception->getMessage(), 0, $exception);
     }
 
     $decoded = decodeJsonResponse($response);
 
     if (!is_array($decoded)) {
-        throw new RuntimeException('Unexpected response when fetching issue statuses from Jira.');
+        throw new RuntimeException('Unexpected response when fetching issue types from Jira.');
     }
 
     $totalInserted = 0;
@@ -212,43 +215,58 @@ function fetchAndStoreJiraIssueStatuses(Client $client, PDO $pdo): int
     $pdo->beginTransaction();
 
     try {
-        foreach ($decoded as $status) {
-            if (!is_array($status)) {
+        foreach ($decoded as $issueType) {
+            if (!is_array($issueType)) {
                 continue;
             }
 
-            $statusId = isset($status['id']) ? (string)$status['id'] : '';
-            $name = normalizeString($status['name'] ?? null, 255);
+            $issueTypeId = isset($issueType['id']) ? (string)$issueType['id'] : '';
+            $name = normalizeString($issueType['name'] ?? null, 255);
 
-            if ($statusId === '' || $name === null) {
+            if ($issueTypeId === '' || $name === null) {
                 continue;
             }
 
-            $description = $status['description'] ?? null;
+            $description = $issueType['description'] ?? null;
             if (!is_string($description)) {
                 $description = null;
             }
 
-            $statusCategoryKey = null;
-            if (isset($status['statusCategory']) && is_array($status['statusCategory'])) {
-                $statusCategoryKey = normalizeString($status['statusCategory']['key'] ?? null, 100);
+            $isSubtask = normalizeBooleanDatabaseValue($issueType['subtask'] ?? null);
+            $hierarchyLevel = normalizeInteger($issueType['hierarchyLevel'] ?? null);
+
+            $scopeType = null;
+            $scopeProjectId = null;
+            if (isset($issueType['scope']) && is_array($issueType['scope'])) {
+                $scopeTypeValue = $issueType['scope']['type'] ?? null;
+                if (is_string($scopeTypeValue)) {
+                    $scopeType = normalizeString($scopeTypeValue, 50);
+                }
+
+                $projectDetails = $issueType['scope']['project'] ?? null;
+                if (is_array($projectDetails) && isset($projectDetails['id'])) {
+                    $scopeProjectId = normalizeString((string)$projectDetails['id'], 255);
+                }
             }
 
             try {
-                $rawPayload = json_encode($status, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                $rawPayload = json_encode($issueType, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             } catch (JsonException $exception) {
                 throw new RuntimeException(
-                    sprintf('Failed to encode Jira status payload for %s: %s', $statusId, $exception->getMessage()),
+                    sprintf('Failed to encode Jira issue type payload for %s: %s', $issueTypeId, $exception->getMessage()),
                     0,
                     $exception
                 );
             }
 
             $insertStatement->execute([
-                'id' => $statusId,
+                'id' => $issueTypeId,
                 'name' => $name,
                 'description' => $description,
-                'status_category_key' => $statusCategoryKey,
+                'is_subtask' => $isSubtask ?? 0,
+                'hierarchy_level' => $hierarchyLevel,
+                'scope_type' => $scopeType,
+                'scope_project_id' => $scopeProjectId,
                 'raw_payload' => $rawPayload,
                 'extracted_at' => $extractedAt,
             ]);
@@ -262,7 +280,7 @@ function fetchAndStoreJiraIssueStatuses(Client $client, PDO $pdo): int
         throw $exception;
     }
 
-    printf("  Processed %d Jira status records.%s", $totalInserted, PHP_EOL);
+    printf("  Processed %d Jira issue type records.%s", $totalInserted, PHP_EOL);
 
     return $totalInserted;
 }
@@ -270,33 +288,33 @@ function fetchAndStoreJiraIssueStatuses(Client $client, PDO $pdo): int
 /**
  * @throws Throwable
  */
-function fetchAndStoreRedmineIssueStatuses(Client $client, PDO $pdo): int
+function fetchAndStoreRedmineTrackers(Client $client, PDO $pdo): int
 {
     try {
-        $pdo->exec('TRUNCATE TABLE staging_redmine_issue_statuses');
+        $pdo->exec('TRUNCATE TABLE staging_redmine_trackers');
     } catch (PDOException $exception) {
-        throw new RuntimeException('Unable to truncate staging_redmine_issue_statuses: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException('Unable to truncate staging_redmine_trackers: ' . $exception->getMessage(), 0, $exception);
     }
 
     try {
-        $response = $client->get('issue_statuses.json');
+        $response = $client->get('trackers.json');
     } catch (GuzzleException $exception) {
-        throw new RuntimeException('Failed to fetch issue statuses from Redmine: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException('Failed to fetch trackers from Redmine: ' . $exception->getMessage(), 0, $exception);
     }
 
     $decoded = decodeJsonResponse($response);
 
-    if (!is_array($decoded) || !isset($decoded['issue_statuses']) || !is_array($decoded['issue_statuses'])) {
-        throw new RuntimeException('Unexpected response when fetching issue statuses from Redmine.');
+    if (!is_array($decoded) || !isset($decoded['trackers']) || !is_array($decoded['trackers'])) {
+        throw new RuntimeException('Unexpected response when fetching trackers from Redmine.');
     }
 
     $insertStatement = $pdo->prepare(<<<SQL
-        INSERT INTO staging_redmine_issue_statuses (id, name, is_closed, raw_payload, retrieved_at)
-        VALUES (:id, :name, :is_closed, :raw_payload, :retrieved_at)
+        INSERT INTO staging_redmine_trackers (id, name, description, default_status_id, raw_payload, retrieved_at)
+        VALUES (:id, :name, :description, :default_status_id, :raw_payload, :retrieved_at)
     SQL);
 
     if ($insertStatement === false) {
-        throw new RuntimeException('Failed to prepare insert statement for staging_redmine_issue_statuses.');
+        throw new RuntimeException('Failed to prepare insert statement for staging_redmine_trackers.');
     }
 
     $retrievedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
@@ -305,37 +323,40 @@ function fetchAndStoreRedmineIssueStatuses(Client $client, PDO $pdo): int
     $pdo->beginTransaction();
 
     try {
-        foreach ($decoded['issue_statuses'] as $status) {
-            if (!is_array($status)) {
+        foreach ($decoded['trackers'] as $tracker) {
+            if (!is_array($tracker)) {
                 continue;
             }
 
-            $statusId = isset($status['id']) ? (int)$status['id'] : 0;
-            $name = normalizeString($status['name'] ?? null, 255);
+            $trackerId = isset($tracker['id']) ? (int)$tracker['id'] : 0;
+            $name = normalizeString($tracker['name'] ?? null, 255);
 
-            if ($statusId <= 0 || $name === null) {
+            if ($trackerId <= 0 || $name === null) {
                 continue;
             }
+
+            $description = $tracker['description'] ?? null;
+            if (!is_string($description)) {
+                $description = null;
+            }
+
+            $defaultStatusId = normalizeInteger($tracker['default_status_id'] ?? null, 1);
 
             try {
-                $rawPayload = json_encode($status, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                $rawPayload = json_encode($tracker, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             } catch (JsonException $exception) {
                 throw new RuntimeException(
-                    sprintf('Failed to encode Redmine issue status payload for %d: %s', $statusId, $exception->getMessage()),
+                    sprintf('Failed to encode Redmine tracker payload for %d: %s', $trackerId, $exception->getMessage()),
                     0,
                     $exception
                 );
             }
 
-            $isClosedValue = normalizeBooleanDatabaseValue($status['is_closed'] ?? null);
-            if ($isClosedValue === null) {
-                $isClosedValue = 0;
-            }
-
             $insertStatement->execute([
-                'id' => $statusId,
+                'id' => $trackerId,
                 'name' => $name,
-                'is_closed' => $isClosedValue,
+                'description' => $description,
+                'default_status_id' => $defaultStatusId,
                 'raw_payload' => $rawPayload,
                 'retrieved_at' => $retrievedAt,
             ]);
@@ -349,7 +370,7 @@ function fetchAndStoreRedmineIssueStatuses(Client $client, PDO $pdo): int
         throw $exception;
     }
 
-    printf("  Captured %d Redmine status records.%s", $totalInserted, PHP_EOL);
+    printf("  Captured %d Redmine tracker records.%s", $totalInserted, PHP_EOL);
 
     return $totalInserted;
 }
@@ -357,28 +378,31 @@ function fetchAndStoreRedmineIssueStatuses(Client $client, PDO $pdo): int
 /**
  * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int, status_counts: array<string, int>}
  */
-function runStatusTransformationPhase(PDO $pdo): array
-{
-    syncStatusMappings($pdo);
-    refreshStatusMetadata($pdo);
 
-    $redmineLookup = buildRedmineStatusLookup($pdo);
-    $mappings = fetchStatusMappingsForTransform($pdo);
+function runTrackerTransformationPhase(PDO $pdo, array $config): array
+{
+    syncTrackerMappings($pdo);
+    refreshTrackerMetadata($pdo);
+
+    $redmineLookup = buildRedmineTrackerLookup($pdo);
+    $mappings = fetchTrackerMappingsForTransform($pdo);
+    $defaultStatusId = resolveDefaultTrackerStatusId($pdo, $config);
 
     $updateStatement = $pdo->prepare(<<<SQL
-        UPDATE migration_mapping_statuses
+        UPDATE migration_mapping_trackers
         SET
-            redmine_status_id = :redmine_status_id,
+            redmine_tracker_id = :redmine_tracker_id,
             migration_status = :migration_status,
             notes = :notes,
             proposed_redmine_name = :proposed_redmine_name,
-            proposed_is_closed = :proposed_is_closed,
+            proposed_redmine_description = :proposed_redmine_description,
+            proposed_default_status_id = :proposed_default_status_id,
             automation_hash = :automation_hash
         WHERE mapping_id = :mapping_id
     SQL);
 
     if ($updateStatement === false) {
-        throw new RuntimeException('Failed to prepare update statement for migration_mapping_statuses.');
+        throw new RuntimeException('Failed to prepare update statement for migration_mapping_trackers.');
     }
 
     $summary = [
@@ -399,52 +423,49 @@ function runStatusTransformationPhase(PDO $pdo): array
             continue;
         }
 
-        $jiraStatusId = (string)$row['jira_status_id'];
-        $jiraStatusName = $row['jira_status_name'] !== null ? (string)$row['jira_status_name'] : null;
-        $jiraCategoryKey = $row['jira_status_category_key'] !== null ? strtolower((string)$row['jira_status_category_key']) : null;
+        $jiraIssueTypeId = (string)$row['jira_issue_type_id'];
+        $jiraIssueTypeName = $row['jira_issue_type_name'] !== null ? (string)$row['jira_issue_type_name'] : null;
+        $jiraIssueTypeDescription = $row['jira_issue_type_description'] !== null ? (string)$row['jira_issue_type_description'] : null;
+        $jiraIsSubtask = normalizeBooleanFlag($row['jira_is_subtask'] ?? null) ?? false;
 
-        $currentRedmineId = $row['redmine_status_id'] !== null ? (int)$row['redmine_status_id'] : null;
+        $currentRedmineId = $row['redmine_tracker_id'] !== null ? (int)$row['redmine_tracker_id'] : null;
         $currentNotes = $row['notes'] !== null ? (string)$row['notes'] : null;
         $currentProposedName = $row['proposed_redmine_name'] !== null ? (string)$row['proposed_redmine_name'] : null;
-        $currentProposedIsClosed = normalizeBooleanFlag($row['proposed_is_closed'] ?? null);
+        $currentProposedDescription = $row['proposed_redmine_description'] !== null ? (string)$row['proposed_redmine_description'] : null;
+        $currentProposedDefaultStatusId = normalizeInteger($row['proposed_default_status_id'] ?? null, 1);
         $storedAutomationHash = normalizeStoredAutomationHash($row['automation_hash'] ?? null);
 
-        $currentAutomationHash = computeStatusAutomationStateHash(
+        $currentAutomationHash = computeTrackerAutomationStateHash(
             $currentRedmineId,
             $currentStatus,
             $currentProposedName,
-            $currentProposedIsClosed,
+            $currentProposedDescription,
+            $currentProposedDefaultStatusId,
             $currentNotes
         );
 
         if ($storedAutomationHash !== null && $storedAutomationHash !== $currentAutomationHash) {
             $summary['manual_overrides']++;
             printf(
-                "  [preserved] Jira status %s has manual overrides; skipping automated changes.%s",
-                $jiraStatusName ?? $jiraStatusId,
+                "  [preserved] Jira issue type %s has manual overrides; skipping automated changes.%s",
+                $jiraIssueTypeName ?? $jiraIssueTypeId,
                 PHP_EOL
             );
             continue;
         }
 
-        $defaultName = $jiraStatusName !== null ? normalizeString($jiraStatusName, 255) : null;
-        $defaultIsClosed = null;
-        if ($jiraCategoryKey !== null) {
-            if ($jiraCategoryKey === 'done') {
-                $defaultIsClosed = true;
-            } elseif (in_array($jiraCategoryKey, ['todo', 'indeterminate', 'new'], true)) {
-                $defaultIsClosed = false;
-            }
-        }
+        $defaultName = $jiraIssueTypeName !== null ? normalizeString($jiraIssueTypeName, 255) : null;
+        $defaultDescription = $jiraIssueTypeDescription !== null ? trim($jiraIssueTypeDescription) : null;
 
         $manualReason = null;
         $newStatus = $currentStatus;
         $newRedmineId = $currentRedmineId;
         $proposedName = $currentProposedName ?? $defaultName;
-        $proposedIsClosed = $currentProposedIsClosed ?? $defaultIsClosed;
+        $proposedDescription = $currentProposedDescription ?? $defaultDescription;
+        $proposedDefaultStatusId = $currentProposedDefaultStatusId ?? $defaultStatusId;
 
         if ($defaultName === null) {
-            $manualReason = 'Missing Jira status name in the staging snapshot.';
+            $manualReason = 'Missing Jira issue type name in the staging snapshot.';
         } else {
             $lookupKey = strtolower($defaultName);
             $matchedRedmine = $redmineLookup[$lookupKey] ?? null;
@@ -453,55 +474,75 @@ function runStatusTransformationPhase(PDO $pdo): array
                 $newStatus = 'MATCH_FOUND';
                 $newRedmineId = (int)$matchedRedmine['id'];
                 $proposedName = normalizeString($matchedRedmine['name'] ?? $defaultName, 255) ?? $defaultName;
-                $proposedIsClosed = normalizeBooleanFlag($matchedRedmine['is_closed'] ?? null);
+                $matchedDescription = $matchedRedmine['description'] ?? null;
+                $proposedDescription = is_string($matchedDescription) ? trim($matchedDescription) : null;
+                $matchedDefaultStatusId = normalizeInteger($matchedRedmine['default_status_id'] ?? null, 1);
+                $proposedDefaultStatusId = $matchedDefaultStatusId;
             } else {
                 $newStatus = 'READY_FOR_CREATION';
                 $newRedmineId = null;
                 $proposedName = $defaultName;
-                if ($proposedIsClosed === null) {
-                    $proposedIsClosed = $defaultIsClosed;
+                if ($proposedDescription === null) {
+                    $proposedDescription = $defaultDescription;
+                }
+
+                if ($currentProposedDefaultStatusId !== null) {
+                    $proposedDefaultStatusId = $currentProposedDefaultStatusId;
+                } elseif ($defaultStatusId !== null) {
+                    $proposedDefaultStatusId = $defaultStatusId;
+                } else {
+                    $proposedDefaultStatusId = null;
                 }
             }
         }
 
-        if ($manualReason === null && $proposedIsClosed === null) {
-            $manualReason = 'Unable to derive closed/open flag from the Jira status category.';
+        if ($manualReason === null && $newStatus === 'READY_FOR_CREATION' && $proposedDefaultStatusId === null) {
+            $manualReason = 'Unable to determine a default Redmine status for the tracker.';
         }
 
         if ($manualReason !== null) {
             $newStatus = 'MANUAL_INTERVENTION_REQUIRED';
             $newRedmineId = null;
             if ($proposedName === null) {
-                $proposedName = $defaultName ?? $jiraStatusId;
+                $proposedName = $defaultName ?? $jiraIssueTypeId;
             }
+
             $notes = $manualReason;
+            if ($jiraIsSubtask) {
+                $notes .= ' (Jira issue type is a sub-task.)';
+            }
 
             printf(
-                "  [manual] Jira status %s: %s%s",
-                $defaultName ?? $jiraStatusId,
+                "  [manual] Jira issue type %s: %s%s",
+                $defaultName ?? $jiraIssueTypeId,
                 $manualReason,
                 PHP_EOL
             );
         } else {
             $notes = null;
+            if ($jiraIsSubtask && $newStatus === 'READY_FOR_CREATION') {
+                $notes = 'Jira issue type is a sub-task; confirm whether a separate Redmine tracker is required.';
+            }
         }
 
         if ($proposedName === null) {
-            $proposedName = $defaultName ?? $jiraStatusId;
+            $proposedName = $defaultName ?? $jiraIssueTypeId;
         }
 
-        $newAutomationHash = computeStatusAutomationStateHash(
+        $newAutomationHash = computeTrackerAutomationStateHash(
             $newRedmineId,
             $newStatus,
             $proposedName,
-            $proposedIsClosed,
+            $proposedDescription,
+            $proposedDefaultStatusId,
             $notes
         );
 
         $needsUpdate = $currentRedmineId !== $newRedmineId
             || $currentStatus !== $newStatus
             || $currentProposedName !== $proposedName
-            || $currentProposedIsClosed !== $proposedIsClosed
+            || $currentProposedDescription !== $proposedDescription
+            || $currentProposedDefaultStatusId !== $proposedDefaultStatusId
             || $currentNotes !== $notes
             || $storedAutomationHash !== $newAutomationHash;
 
@@ -511,11 +552,12 @@ function runStatusTransformationPhase(PDO $pdo): array
         }
 
         $updateStatement->execute([
-            'redmine_status_id' => $newRedmineId,
+            'redmine_tracker_id' => $newRedmineId,
             'migration_status' => $newStatus,
             'notes' => $notes,
             'proposed_redmine_name' => $proposedName,
-            'proposed_is_closed' => normalizeBooleanDatabaseValue($proposedIsClosed),
+            'proposed_redmine_description' => $proposedDescription,
+            'proposed_default_status_id' => $proposedDefaultStatusId,
             'automation_hash' => $newAutomationHash,
             'mapping_id' => $row['mapping_id'],
         ]);
@@ -529,54 +571,64 @@ function runStatusTransformationPhase(PDO $pdo): array
         }
     }
 
-    $summary['status_counts'] = fetchStatusMigrationStatusCounts($pdo);
+    $summary['status_counts'] = fetchTrackerMigrationStatusCounts($pdo);
 
     return $summary;
 }
 
-function syncStatusMappings(PDO $pdo): void
+
+function syncTrackerMappings(PDO $pdo): void
 {
     $sql = <<<SQL
-        INSERT INTO migration_mapping_statuses (jira_status_id, migration_status, notes, created_at, last_updated_at)
-        SELECT js.id, 'PENDING_ANALYSIS', NULL, NOW(), NOW()
-        FROM staging_jira_statuses js
+        INSERT INTO migration_mapping_trackers (jira_issue_type_id, migration_status, notes, created_at, last_updated_at)
+        SELECT jit.id, 'PENDING_ANALYSIS', NULL, NOW(), NOW()
+        FROM staging_jira_issue_types jit
         ON DUPLICATE KEY UPDATE last_updated_at = VALUES(last_updated_at)
     SQL;
 
     try {
         $pdo->exec($sql);
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to synchronise migration_mapping_statuses: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException('Failed to synchronise migration_mapping_trackers: ' . $exception->getMessage(), 0, $exception);
     }
 }
 
-function refreshStatusMetadata(PDO $pdo): void
+
+function refreshTrackerMetadata(PDO $pdo): void
 {
     $sql = <<<SQL
-        UPDATE migration_mapping_statuses map
-        INNER JOIN staging_jira_statuses js ON js.id = map.jira_status_id
+        UPDATE migration_mapping_trackers map
+        INNER JOIN staging_jira_issue_types jit ON jit.id = map.jira_issue_type_id
         SET
-            map.jira_status_name = js.name,
-            map.jira_status_category_key = js.status_category_key
+            map.jira_issue_type_name = jit.name,
+            map.jira_issue_type_description = jit.description,
+            map.jira_is_subtask = jit.is_subtask,
+            map.jira_hierarchy_level = jit.hierarchy_level,
+            map.jira_scope_type = jit.scope_type,
+            map.jira_scope_project_id = jit.scope_project_id
         WHERE 1
     SQL;
 
     try {
         $pdo->exec($sql);
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to refresh Jira status metadata in migration_mapping_statuses: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException('Failed to refresh Jira issue type metadata in migration_mapping_trackers: ' . $exception->getMessage(), 0, $exception);
     }
 }
 
 /**
- * @return array<string, array{id: int, name: string, is_closed: mixed}>
+/**
+ * @return array<string, array{id: int, name: string, is_default: mixed}>
  */
-function buildRedmineStatusLookup(PDO $pdo): array
+
+
+
+function buildRedmineTrackerLookup(PDO $pdo): array
 {
     try {
-        $statement = $pdo->query('SELECT id, name, is_closed FROM staging_redmine_issue_statuses');
+        $statement = $pdo->query('SELECT id, name, description, default_status_id FROM staging_redmine_trackers');
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to build Redmine status lookup: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException('Failed to build Redmine tracker lookup: ' . $exception->getMessage(), 0, $exception);
     }
 
     if ($statement === false) {
@@ -606,28 +658,33 @@ function buildRedmineStatusLookup(PDO $pdo): array
 /**
  * @return array<int, array<string, mixed>>
  */
-function fetchStatusMappingsForTransform(PDO $pdo): array
+function fetchTrackerMappingsForTransform(PDO $pdo): array
 {
     $sql = <<<SQL
         SELECT
             map.mapping_id,
-            map.jira_status_id,
-            map.jira_status_name,
-            map.jira_status_category_key,
-            map.redmine_status_id,
+            map.jira_issue_type_id,
+            map.jira_issue_type_name,
+            map.jira_issue_type_description,
+            map.jira_is_subtask,
+            map.jira_hierarchy_level,
+            map.jira_scope_type,
+            map.jira_scope_project_id,
+            map.redmine_tracker_id,
             map.migration_status,
             map.notes,
             map.proposed_redmine_name,
-            map.proposed_is_closed,
+            map.proposed_redmine_description,
+            map.proposed_default_status_id,
             map.automation_hash
-        FROM migration_mapping_statuses map
-        ORDER BY map.jira_status_name IS NULL, map.jira_status_name, map.jira_status_id
+        FROM migration_mapping_trackers map
+        ORDER BY map.jira_issue_type_name IS NULL, map.jira_issue_type_name, map.jira_issue_type_id
     SQL;
 
     try {
         $statement = $pdo->query($sql);
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to fetch migration mapping rows for statuses: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException('Failed to fetch migration mapping rows for trackers: ' . $exception->getMessage(), 0, $exception);
     }
 
     if ($statement === false) {
@@ -637,31 +694,39 @@ function fetchStatusMappingsForTransform(PDO $pdo): array
     return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
 
-function computeStatusAutomationStateHash(?int $redmineStatusId, string $migrationStatus, ?string $proposedName, ?bool $proposedIsClosed, ?string $notes): string
+function computeTrackerAutomationStateHash(
+    ?int $redmineTrackerId,
+    string $migrationStatus,
+    ?string $proposedName,
+    ?string $proposedDescription,
+    ?int $proposedDefaultStatusId,
+    ?string $notes
+): string
 {
     $payload = [
-        'redmine_status_id' => $redmineStatusId,
+        'redmine_tracker_id' => $redmineTrackerId,
         'migration_status' => $migrationStatus,
         'proposed_redmine_name' => $proposedName,
-        'proposed_is_closed' => $proposedIsClosed,
+        'proposed_redmine_description' => $proposedDescription,
+        'proposed_default_status_id' => $proposedDefaultStatusId,
         'notes' => $notes,
     ];
 
     try {
         $json = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     } catch (JsonException $exception) {
-        throw new RuntimeException('Failed to compute automation hash for status mapping: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException('Failed to compute automation hash for tracker mapping: ' . $exception->getMessage(), 0, $exception);
     }
 
     return hash('sha256', $json);
 }
 
-function fetchStatusMigrationStatusCounts(PDO $pdo): array
+function fetchTrackerMigrationStatusCounts(PDO $pdo): array
 {
     try {
-        $statement = $pdo->query('SELECT migration_status, COUNT(*) AS total FROM migration_mapping_statuses GROUP BY migration_status');
+        $statement = $pdo->query('SELECT migration_status, COUNT(*) AS total FROM migration_mapping_trackers GROUP BY migration_status');
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to compute status migration breakdown: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException('Failed to compute tracker migration breakdown: ' . $exception->getMessage(), 0, $exception);
     }
 
     if ($statement === false) {
@@ -684,16 +749,74 @@ function fetchStatusMigrationStatusCounts(PDO $pdo): array
     return $results;
 }
 
-function runStatusPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi): void
+
+
+function resolveDefaultTrackerStatusId(PDO $pdo, array $config): ?int
 {
-    $pendingStatuses = fetchStatusesReadyForCreation($pdo);
-    $pendingCount = count($pendingStatuses);
+    $configured = null;
+
+    if (isset($config['migration']) && is_array($config['migration'])) {
+        $migrationConfig = $config['migration'];
+        if (isset($migrationConfig['trackers']) && is_array($migrationConfig['trackers'])) {
+            $trackerConfig = $migrationConfig['trackers'];
+            if (isset($trackerConfig['default_redmine_status_id'])) {
+                $configuredValue = $trackerConfig['default_redmine_status_id'];
+                if ($configuredValue !== null && $configuredValue !== '') {
+                    $configured = normalizeInteger($configuredValue, 1);
+                }
+            }
+        }
+    }
+
+    if ($configured !== null) {
+        return $configured;
+    }
+
+    try {
+        $statement = $pdo->query('SELECT id FROM staging_redmine_issue_statuses WHERE is_closed = 0 ORDER BY id LIMIT 1');
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to determine a default Redmine status for trackers: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement !== false) {
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if ($row !== false && isset($row['id'])) {
+            $openStatusId = normalizeInteger($row['id'], 1);
+            if ($openStatusId !== null) {
+                return $openStatusId;
+            }
+        }
+    }
+
+    try {
+        $statement = $pdo->query('SELECT id FROM staging_redmine_issue_statuses ORDER BY id LIMIT 1');
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to inspect Redmine statuses for tracker defaults: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement !== false) {
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if ($row !== false && isset($row['id'])) {
+            $anyStatusId = normalizeInteger($row['id'], 1);
+            if ($anyStatusId !== null) {
+                return $anyStatusId;
+            }
+        }
+    }
+
+    return null;
+}
+
+function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi): void
+{
+    $pendingTrackers = fetchTrackersReadyForCreation($pdo);
+    $pendingCount = count($pendingTrackers);
 
     if ($useExtendedApi) {
         printf("[%s] Starting push phase (Redmine extended API)...%s", formatCurrentTimestamp(), PHP_EOL);
 
         if ($pendingCount === 0) {
-            printf("  No Jira statuses are marked as READY_FOR_CREATION.%s", PHP_EOL);
+            printf("  No Jira issue types are marked as READY_FOR_CREATION.%s", PHP_EOL);
             if ($isDryRun) {
                 printf("  --dry-run flag enabled: no API calls will be made.%s", PHP_EOL);
             }
@@ -705,31 +828,37 @@ function runStatusPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $
 
         $redmineClient = createRedmineClient($redmineConfig);
         $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
-        verifyExtendedApiAvailability($redmineClient, $extendedApiPrefix, 'issue_statuses.json');
+        verifyExtendedApiAvailability($redmineClient, $extendedApiPrefix, 'trackers.json');
 
-        $endpoint = buildExtendedApiPath($extendedApiPrefix, 'issue_statuses.json');
+        $endpoint = buildExtendedApiPath($extendedApiPrefix, 'trackers.json');
 
-        printf("  %d status(es) queued for creation via the extended API.%s", $pendingCount, PHP_EOL);
-        foreach ($pendingStatuses as $status) {
-            $jiraName = $status['jira_status_name'] ?? null;
-            $jiraId = (string)$status['jira_status_id'];
-            $proposedName = $status['proposed_redmine_name'] ?? null;
-            $proposedIsClosed = normalizeBooleanFlag($status['proposed_is_closed'] ?? null);
-            $categoryKey = $status['jira_status_category_key'] ?? null;
-            $notes = $status['notes'] ?? null;
+        printf("  %d tracker(s) queued for creation via the extended API.%s", $pendingCount, PHP_EOL);
+        foreach ($pendingTrackers as $tracker) {
+            $jiraName = $tracker['jira_issue_type_name'] ?? null;
+            $jiraId = (string)$tracker['jira_issue_type_id'];
+            $proposedName = $tracker['proposed_redmine_name'] ?? null;
+            $proposedDescription = $tracker['proposed_redmine_description'] ?? null;
+            $proposedDefaultStatusId = normalizeInteger($tracker['proposed_default_status_id'] ?? null, 1);
+            $notes = $tracker['notes'] ?? null;
 
             $effectiveName = $proposedName ?? ($jiraName ?? $jiraId);
-            $effectiveIsClosed = $proposedIsClosed ?? false;
+            $effectiveDescription = $proposedDescription !== null ? trim((string)$proposedDescription) : null;
+            if ($effectiveDescription === '') {
+                $effectiveDescription = null;
+            }
+            $effectiveDefaultStatusId = $proposedDefaultStatusId;
 
             printf(
-                "  - Jira status %s (ID: %s) -> Redmine \"%s\" (closed: %s, category: %s).%s",
+                '  - Jira issue type %s (ID: %s) -> Redmine "%s" (default status ID: %s).%s',
                 $jiraName ?? '[missing name]',
                 $jiraId,
                 $effectiveName,
-                formatBooleanForDisplay($effectiveIsClosed),
-                $categoryKey ?? 'unknown',
+                $effectiveDefaultStatusId !== null ? (string)$effectiveDefaultStatusId : 'n/a',
                 PHP_EOL
             );
+            if ($effectiveDescription !== null) {
+                printf("    Description: %s%s", $effectiveDescription, PHP_EOL);
+            }
             if ($notes !== null) {
                 printf("    Notes: %s%s", $notes, PHP_EOL);
             }
@@ -746,95 +875,113 @@ function runStatusPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $
         }
 
         $updateStatement = $pdo->prepare(<<<SQL
-            UPDATE migration_mapping_statuses
+            UPDATE migration_mapping_trackers
             SET
-                redmine_status_id = :redmine_status_id,
+                redmine_tracker_id = :redmine_tracker_id,
                 migration_status = :migration_status,
                 notes = :notes,
                 proposed_redmine_name = :proposed_redmine_name,
-                proposed_is_closed = :proposed_is_closed,
+                proposed_redmine_description = :proposed_redmine_description,
+                proposed_default_status_id = :proposed_default_status_id,
                 automation_hash = :automation_hash
             WHERE mapping_id = :mapping_id
         SQL);
 
         if ($updateStatement === false) {
-            throw new RuntimeException('Failed to prepare update statement for migration_mapping_statuses during the push phase.');
+            throw new RuntimeException('Failed to prepare update statement for migration_mapping_trackers during the push phase.');
         }
 
         $successCount = 0;
         $failureCount = 0;
 
-        foreach ($pendingStatuses as $status) {
-            $mappingId = (int)$status['mapping_id'];
-            $jiraId = (string)$status['jira_status_id'];
-            $jiraName = $status['jira_status_name'] ?? null;
-            $proposedName = $status['proposed_redmine_name'] ?? null;
-            $proposedIsClosed = normalizeBooleanFlag($status['proposed_is_closed'] ?? null) ?? false;
-            $notes = $status['notes'] ?? null;
+        foreach ($pendingTrackers as $tracker) {
+            $mappingId = (int)$tracker['mapping_id'];
+            $jiraId = (string)$tracker['jira_issue_type_id'];
+            $jiraName = $tracker['jira_issue_type_name'] ?? null;
+            $proposedName = $tracker['proposed_redmine_name'] ?? null;
+            $proposedDescription = $tracker['proposed_redmine_description'] ?? null;
+            $proposedDefaultStatusId = normalizeInteger($tracker['proposed_default_status_id'] ?? null, 1);
+            $notes = $tracker['notes'] ?? null;
 
             $effectiveName = $proposedName ?? ($jiraName ?? $jiraId);
+            $effectiveDescription = $proposedDescription !== null ? trim((string)$proposedDescription) : null;
+            if ($effectiveDescription === '') {
+                $effectiveDescription = null;
+            }
+            $effectiveDefaultStatusId = $proposedDefaultStatusId;
 
             $payload = [
-                'issue_status' => [
+                'tracker' => [
                     'name' => $effectiveName,
-                    'is_closed' => $proposedIsClosed,
                 ],
             ];
+
+            if ($effectiveDescription !== null) {
+                $payload['tracker']['description'] = $effectiveDescription;
+            }
+
+            if ($effectiveDefaultStatusId !== null) {
+                $payload['tracker']['default_status_id'] = $effectiveDefaultStatusId;
+            }
 
             try {
                 $response = $redmineClient->post($endpoint, ['json' => $payload]);
                 $decoded = decodeJsonResponse($response);
-                $newStatusId = extractCreatedIssueStatusId($decoded);
+                $newTrackerId = extractCreatedTrackerId($decoded);
 
-                $automationHash = computeStatusAutomationStateHash(
-                    $newStatusId,
+                $automationHash = computeTrackerAutomationStateHash(
+                    $newTrackerId,
                     'CREATION_SUCCESS',
                     $effectiveName,
-                    $proposedIsClosed,
+                    $effectiveDescription,
+                    $effectiveDefaultStatusId,
                     null
                 );
 
                 $updateStatement->execute([
-                    'redmine_status_id' => $newStatusId,
+                    'redmine_tracker_id' => $newTrackerId,
                     'migration_status' => 'CREATION_SUCCESS',
                     'notes' => null,
                     'proposed_redmine_name' => $effectiveName,
-                    'proposed_is_closed' => normalizeBooleanDatabaseValue($proposedIsClosed),
+                    'proposed_redmine_description' => $effectiveDescription,
+                    'proposed_default_status_id' => $effectiveDefaultStatusId,
                     'automation_hash' => $automationHash,
                     'mapping_id' => $mappingId,
                 ]);
 
                 printf(
-                    "  [created] Jira status %s (%s) -> Redmine status #%d.%s",
+                    '  [created] Jira issue type %s (%s) -> Redmine tracker #%d.%s',
                     $jiraName ?? $jiraId,
                     $jiraId,
-                    $newStatusId,
+                    $newTrackerId,
                     PHP_EOL
                 );
 
                 $successCount++;
             } catch (Throwable $exception) {
                 $errorMessage = summarizeExtendedApiError($exception);
-                $automationHash = computeStatusAutomationStateHash(
+                $automationHash = computeTrackerAutomationStateHash(
                     null,
                     'CREATION_FAILED',
                     $effectiveName,
-                    $proposedIsClosed,
+                    $effectiveDescription,
+                    $effectiveDefaultStatusId,
                     $errorMessage
                 );
 
                 $updateStatement->execute([
-                    'redmine_status_id' => null,
+                    'redmine_tracker_id' => null,
                     'migration_status' => 'CREATION_FAILED',
                     'notes' => $errorMessage,
                     'proposed_redmine_name' => $effectiveName,
-                    'proposed_is_closed' => normalizeBooleanDatabaseValue($proposedIsClosed),
+                    'proposed_redmine_description' => $effectiveDescription,
+                    'proposed_default_status_id' => $effectiveDefaultStatusId,
                     'automation_hash' => $automationHash,
                     'mapping_id' => $mappingId,
                 ]);
 
                 printf(
-                    "  [failed] Jira status %s (%s): %s%s",
+                    '  [failed] Jira issue type %s (%s): %s%s',
                     $jiraName ?? $jiraId,
                     $jiraId,
                     $errorMessage,
@@ -859,43 +1006,45 @@ function runStatusPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $
         return;
     }
 
-    printf("[%s] Starting push phase (manual status checklist)...%s", formatCurrentTimestamp(), PHP_EOL);
+    printf('[%s] Starting push phase (manual tracker checklist)...%s', formatCurrentTimestamp(), PHP_EOL);
 
     if ($pendingCount === 0) {
-        printf("  No Jira statuses are marked as READY_FOR_CREATION.%s", PHP_EOL);
+        printf("  No Jira issue types are marked as READY_FOR_CREATION.%s", PHP_EOL);
         if ($isDryRun) {
             printf("  --dry-run flag enabled: no database changes will be made.%s", PHP_EOL);
         }
         if ($confirmPush) {
             printf("  --confirm-push provided but there is nothing to acknowledge.%s", PHP_EOL);
         } else {
-            printf("  Provide --confirm-push after manually creating any outstanding statuses in Redmine.%s", PHP_EOL);
+            printf("  Provide --confirm-push after manually creating any outstanding trackers in Redmine.%s", PHP_EOL);
         }
         return;
     }
 
-    printf("  %d status(es) require manual creation in Redmine.%s", $pendingCount, PHP_EOL);
-    foreach ($pendingStatuses as $status) {
-        $jiraName = $status['jira_status_name'] ?? null;
-        $jiraId = (string)$status['jira_status_id'];
-        $proposedName = $status['proposed_redmine_name'] ?? null;
-        $proposedIsClosed = normalizeBooleanFlag($status['proposed_is_closed'] ?? null);
-        $categoryKey = $status['jira_status_category_key'] ?? null;
-        $notes = $status['notes'] ?? null;
+    printf("  %d tracker(s) require manual creation in Redmine.%s", $pendingCount, PHP_EOL);
+    foreach ($pendingTrackers as $tracker) {
+        $jiraName = $tracker['jira_issue_type_name'] ?? null;
+        $jiraId = (string)$tracker['jira_issue_type_id'];
+        $proposedName = $tracker['proposed_redmine_name'] ?? null;
+        $proposedDescription = $tracker['proposed_redmine_description'] ?? null;
+        $proposedDefaultStatusId = normalizeInteger($tracker['proposed_default_status_id'] ?? null, 1);
+        $notes = $tracker['notes'] ?? null;
 
         printf(
-            "  - Jira status: %s (ID: %s)%s",
+            "  - Jira issue type: %s (ID: %s)%s",
             $jiraName ?? '[missing name]',
             $jiraId,
             PHP_EOL
         );
         printf(
-            "    Proposed Redmine name: %s | Should be closed: %s | Jira category: %s%s",
+            "    Proposed Redmine name: %s | Default status ID: %s%s",
             $proposedName ?? ($jiraName ?? 'n/a'),
-            formatBooleanForDisplay($proposedIsClosed),
-            $categoryKey ?? 'unknown',
+            $proposedDefaultStatusId !== null ? (string)$proposedDefaultStatusId : 'n/a',
             PHP_EOL
         );
+        if ($proposedDescription !== null && trim((string)$proposedDescription) !== '') {
+            printf("    Proposed description: %s%s", trim((string)$proposedDescription), PHP_EOL);
+        }
         if ($notes !== null) {
             printf("    Notes: %s%s", $notes, PHP_EOL);
         }
@@ -903,7 +1052,7 @@ function runStatusPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $
 
     if (!$confirmPush) {
         printf("  --confirm-push not supplied: mappings remain in READY_FOR_CREATION.%s", PHP_EOL);
-        printf("  After creating the statuses manually, update migration_mapping_statuses with the Redmine IDs and set migration_status to CREATION_SUCCESS.%s", PHP_EOL);
+        printf("  After creating the trackers manually, update migration_mapping_trackers with the Redmine IDs and set migration_status to CREATION_SUCCESS.%s", PHP_EOL);
         return;
     }
 
@@ -912,29 +1061,37 @@ function runStatusPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $
         return;
     }
 
-    printf("  Manual acknowledgement recorded. Remember to update redmine_status_id and migration_status once the statuses exist in Redmine.%s", PHP_EOL);
+    printf("  Manual acknowledgement recorded. Remember to update redmine_tracker_id and migration_status once the trackers exist in Redmine.%s", PHP_EOL);
 }
 
-function fetchStatusesReadyForCreation(PDO $pdo): array
+
+function fetchTrackersReadyForCreation(PDO $pdo): array
 {
     $sql = <<<SQL
         SELECT
             map.mapping_id,
-            map.jira_status_id,
-            map.jira_status_name,
-            map.jira_status_category_key,
+            map.jira_issue_type_id,
+            map.jira_issue_type_name,
+            map.jira_issue_type_description,
+            map.jira_is_subtask,
             map.proposed_redmine_name,
-            map.proposed_is_closed,
+            map.proposed_redmine_description,
+            map.proposed_default_status_id,
             map.notes
-        FROM migration_mapping_statuses map
+        FROM migration_mapping_trackers map
         WHERE map.migration_status = 'READY_FOR_CREATION'
-        ORDER BY map.jira_status_name IS NULL, map.jira_status_name, map.jira_status_id
+        ORDER BY
+            map.proposed_redmine_name IS NULL,
+            map.proposed_redmine_name,
+            map.jira_issue_type_name IS NULL,
+            map.jira_issue_type_name,
+            map.jira_issue_type_id
     SQL;
 
     try {
         $statement = $pdo->query($sql);
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to fetch statuses ready for creation: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException('Failed to fetch trackers ready for creation: ' . $exception->getMessage(), 0, $exception);
     }
 
     if ($statement === false) {
@@ -951,6 +1108,15 @@ function formatBooleanForDisplay(?bool $value): string
     }
 
     return $value ? 'yes' : 'no';
+}
+
+function formatIntegerForDisplay(?int $value): string
+{
+    if ($value === null) {
+        return 'n/a';
+    }
+
+    return (string)$value;
 }
 
 /**
@@ -1178,6 +1344,42 @@ function normalizeString(mixed $value, int $maxLength): ?string
     return substr($trimmed, 0, $maxLength);
 }
 
+function normalizeInteger(mixed $value, int $min = PHP_INT_MIN, ?int $max = null): ?int
+{
+    if ($value === null) {
+        return null;
+    }
+
+    if (is_int($value)) {
+        $intValue = $value;
+    } elseif (is_float($value)) {
+        if (!is_finite($value) || floor($value) !== $value) {
+            return null;
+        }
+
+        $intValue = (int)$value;
+    } elseif (is_string($value)) {
+        $trimmed = trim($value);
+        if ($trimmed === '' || !preg_match('/^-?\d+$/', $trimmed)) {
+            return null;
+        }
+
+        $intValue = (int)$trimmed;
+    } else {
+        return null;
+    }
+
+    if ($intValue < $min) {
+        return null;
+    }
+
+    if ($max !== null && $intValue > $max) {
+        return null;
+    }
+
+    return $intValue;
+}
+
 function normalizeBooleanFlag(mixed $value): ?bool
 {
     $normalized = normalizeBooleanDatabaseValue($value);
@@ -1348,11 +1550,12 @@ function extractExtendedApiErrorDetails(ResponseInterface $response): ?string
     return $body !== '' ? $body : null;
 }
 
-function extractCreatedIssueStatusId(mixed $decoded): int
+
+function extractCreatedTrackerId(mixed $decoded): int
 {
     if (is_array($decoded)) {
-        if (isset($decoded['issue_status']) && is_array($decoded['issue_status']) && isset($decoded['issue_status']['id'])) {
-            return (int)$decoded['issue_status']['id'];
+        if (isset($decoded['tracker']) && is_array($decoded['tracker']) && isset($decoded['tracker']['id'])) {
+            return (int)$decoded['tracker']['id'];
         }
 
         if (isset($decoded['id'])) {
@@ -1360,7 +1563,7 @@ function extractCreatedIssueStatusId(mixed $decoded): int
         }
     }
 
-    throw new RuntimeException('Unable to determine the new Redmine status ID from the extended API response.');
+    throw new RuntimeException('Unable to determine the new Redmine tracker ID from the extended API response.');
 }
 
 function printUsage(): void
@@ -1370,7 +1573,7 @@ function printUsage(): void
     echo sprintf(
         "%s (version %s)%s",
         $scriptName,
-        MIGRATE_STATUSES_SCRIPT_VERSION,
+        MIGRATE_TRACKERS_SCRIPT_VERSION,
         PHP_EOL
     );
     echo sprintf('Usage: php %s [options]%s', $scriptName, PHP_EOL);
@@ -1380,9 +1583,9 @@ function printUsage(): void
     echo "  -V, --version        Print the script version and exit." . PHP_EOL;
     echo "      --phases=LIST    Comma-separated list of phases to execute." . PHP_EOL;
     echo "      --skip=LIST      Comma-separated list of phases to skip." . PHP_EOL;
-    echo "      --confirm-push   Mark statuses as acknowledged after manual review." . PHP_EOL;
+    echo "      --confirm-push   Mark trackers as acknowledged after manual review." . PHP_EOL;
     echo "      --dry-run        Preview push-phase actions without updating migration status." . PHP_EOL;
-    echo "      --use-extended-api  Push new statuses through the redmine_extended_api plugin." . PHP_EOL;
+    echo "      --use-extended-api  Push new trackers through the redmine_extended_api plugin." . PHP_EOL;
     echo PHP_EOL;
     echo "Available phases:" . PHP_EOL;
     foreach (AVAILABLE_PHASES as $phase => $description) {
@@ -1399,5 +1602,5 @@ function printUsage(): void
 
 function printVersion(): void
 {
-    printf('%s version %s%s', basename(__FILE__), MIGRATE_STATUSES_SCRIPT_VERSION, PHP_EOL);
+    printf('%s version %s%s', basename(__FILE__), MIGRATE_TRACKERS_SCRIPT_VERSION, PHP_EOL);
 }

@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_PRIORITIES_SCRIPT_VERSION = '0.0.6';
+const MIGRATE_PRIORITIES_SCRIPT_VERSION = '0.0.7';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issue priorities into staging_jira_priorities.',
     'redmine' => 'Refresh the Redmine issue priority snapshot from the REST API.',

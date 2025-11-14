@@ -51,5 +51,10 @@ return [
             // Leave as null to require manual selection of the target Redmine role per assignment.
             'default_redmine_role_id' => null,
         ],
+        'trackers' => [
+            // Optional Redmine status identifier to propose when creating new trackers via the extended API.
+            // Leave as null to derive the lowest open status from the staging snapshot.
+            'default_redmine_status_id' => null,
+        ],
     ],
 ];
