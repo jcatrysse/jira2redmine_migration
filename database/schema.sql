@@ -356,6 +356,17 @@ CREATE TABLE `staging_jira_field_contexts` (
                                                KEY `idx_jira_field_context_field` (`field_id`)
 ) COMMENT='Raw extraction of Jira custom field contexts and allowed values.';
 
+CREATE TABLE `staging_jira_field_usage` (
+                                           `field_id` VARCHAR(255) NOT NULL,
+                                           `usage_scope` ENUM('issue') NOT NULL DEFAULT 'issue',
+                                           `total_issues` INT NOT NULL,
+                                           `issues_with_value` INT NOT NULL,
+                                           `issues_with_non_empty_value` INT NOT NULL,
+                                           `last_counted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                           PRIMARY KEY (`field_id`, `usage_scope`),
+                                           CONSTRAINT `fk_jira_field_usage_field` FOREIGN KEY (`field_id`) REFERENCES `staging_jira_fields` (`id`) ON DELETE CASCADE
+) COMMENT='Aggregated usage statistics for Jira custom fields across staging entities.';
+
 CREATE TABLE `staging_redmine_custom_fields` (
                                                  `id` INT NOT NULL PRIMARY KEY,
                                                  `name` VARCHAR(255) NOT NULL,

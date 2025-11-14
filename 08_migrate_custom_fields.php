@@ -9,13 +9,15 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.10';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.11';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
+    'usage' => 'Analyse Jira custom field usage statistics from staging data.',
     'redmine' => 'Refresh the Redmine custom field snapshot from the REST API.',
     'transform' => 'Reconcile Jira custom fields with Redmine custom fields to populate migration mappings.',
     'push' => 'Produce a manual action plan or call the extended API to create missing Redmine custom fields.',
 ];
+const FIELD_USAGE_SCOPE_ISSUE = 'issue';
 
 if (PHP_SAPI !== 'cli') {
     throw new RuntimeException('This script is intended to be run from the command line.');
@@ -94,6 +96,52 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping Jira custom field extraction (disabled via CLI option).%s",
+            formatCurrentTimestamp(),
+            PHP_EOL
+        );
+    }
+
+    if (in_array('usage', $phasesToRun, true)) {
+        printf("[%s] Starting Jira custom field usage analysis...%s", formatCurrentTimestamp(), PHP_EOL);
+
+        $usageSummary = runCustomFieldUsagePhase($pdo);
+
+        printf(
+            "[%s] Completed usage analysis. Analysed: %d, With values: %d, With non-empty values: %d.%s",
+            formatCurrentTimestamp(),
+            $usageSummary['analysed_fields'],
+            $usageSummary['fields_with_values'],
+            $usageSummary['fields_with_non_empty_values'],
+            PHP_EOL
+        );
+
+        if ($usageSummary['total_issues'] === 0) {
+            printf("  No Jira issues are present in staging_jira_issues; all usage counts are zero.%s", PHP_EOL);
+        } else {
+            printf(
+                "  Total staged issues: %d (latest analysis at %s).%s",
+                $usageSummary['total_issues'],
+                $usageSummary['last_counted_at'],
+                PHP_EOL
+            );
+        }
+
+        if ($usageSummary['top_fields'] !== []) {
+            printf("  Top custom fields by non-empty issue count:%s", PHP_EOL);
+            foreach ($usageSummary['top_fields'] as $topField) {
+                printf(
+                    "  - %-32s (%s): %d issue(s) ≈ %.2f%%%%s",
+                    $topField['field_name'],
+                    $topField['field_id'],
+                    $topField['issues_with_non_empty_value'],
+                    $topField['non_empty_percentage'],
+                    PHP_EOL
+                );
+            }
+        }
+    } else {
+        printf(
+            "[%s] Skipping Jira custom field usage analysis (disabled via CLI option).%s",
             formatCurrentTimestamp(),
             PHP_EOL
         );
@@ -1449,6 +1497,180 @@ function purgeOrphanedCustomFieldMappings(PDO $pdo): void
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to purge orphaned custom field mappings: ' . $exception->getMessage(), 0, $exception);
     }
+}
+
+/**
+ * @return array{
+ *     analysed_fields: int,
+ *     fields_with_values: int,
+ *     fields_with_non_empty_values: int,
+ *     total_issues: int,
+ *     last_counted_at: string,
+ *     top_fields: array<int, array{field_id: string, field_name: string, issues_with_non_empty_value: int, non_empty_percentage: float}>
+ * }
+ */
+function runCustomFieldUsagePhase(PDO $pdo): array
+{
+    $analysisTimestamp = formatCurrentTimestamp('Y-m-d H:i:s');
+
+    try {
+        $issuesCountStatement = $pdo->query('SELECT COUNT(*) FROM staging_jira_issues');
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to count Jira issues for usage analysis: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($issuesCountStatement === false) {
+        throw new RuntimeException('Failed to query staging_jira_issues for usage analysis.');
+    }
+
+    $totalIssues = (int)($issuesCountStatement->fetchColumn() ?? 0);
+    $issuesCountStatement->closeCursor();
+
+    try {
+        $fieldsStatement = $pdo->query('SELECT id, name FROM staging_jira_fields WHERE is_custom = 1 ORDER BY id');
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to query Jira custom fields for usage analysis: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($fieldsStatement === false) {
+        throw new RuntimeException('Failed to iterate Jira custom fields for usage analysis.');
+    }
+
+    $usageStatement = $pdo->prepare(<<<SQL
+        SELECT
+            SUM(CASE WHEN value_type IS NULL OR value_type IN ('NULL', 'MISSING') THEN 0 ELSE 1 END) AS issues_with_value,
+            SUM(CASE
+                WHEN value_type IS NULL OR value_type IN ('NULL', 'MISSING') THEN 0
+                WHEN value_type = 'STRING' THEN CASE WHEN TRIM(JSON_UNQUOTE(value)) = '' THEN 0 ELSE 1 END
+                WHEN value_type IN ('ARRAY', 'OBJECT') THEN CASE WHEN JSON_LENGTH(value) = 0 THEN 0 ELSE 1 END
+                ELSE 1
+            END) AS issues_with_non_empty_value
+        FROM (
+            SELECT
+                JSON_EXTRACT(raw_payload, CONCAT('$.fields.', :field_id)) AS value,
+                JSON_TYPE(JSON_EXTRACT(raw_payload, CONCAT('$.fields.', :field_id))) AS value_type
+            FROM staging_jira_issues
+        ) AS extracted
+    SQL);
+
+    if ($usageStatement === false) {
+        throw new RuntimeException('Failed to prepare Jira custom field usage aggregation statement.');
+    }
+
+    $insertStatement = $pdo->prepare(<<<SQL
+        INSERT INTO staging_jira_field_usage (
+            field_id,
+            usage_scope,
+            total_issues,
+            issues_with_value,
+            issues_with_non_empty_value,
+            last_counted_at
+        ) VALUES (
+            :field_id,
+            :usage_scope,
+            :total_issues,
+            :issues_with_value,
+            :issues_with_non_empty_value,
+            :last_counted_at
+        )
+        ON DUPLICATE KEY UPDATE
+            total_issues = VALUES(total_issues),
+            issues_with_value = VALUES(issues_with_value),
+            issues_with_non_empty_value = VALUES(issues_with_non_empty_value),
+            last_counted_at = VALUES(last_counted_at)
+    SQL);
+
+    if ($insertStatement === false) {
+        throw new RuntimeException('Failed to prepare staging_jira_field_usage upsert statement.');
+    }
+
+    $analysedFields = 0;
+    $fieldsWithValues = 0;
+    $fieldsWithNonEmptyValues = 0;
+    $topCandidates = [];
+
+    while (true) {
+        $field = $fieldsStatement->fetch(PDO::FETCH_ASSOC);
+        if ($field === false) {
+            break;
+        }
+
+        $fieldId = isset($field['id']) ? trim((string)$field['id']) : '';
+        if ($fieldId === '') {
+            continue;
+        }
+
+        $fieldName = isset($field['name']) ? trim((string)$field['name']) : '';
+        if ($fieldName === '') {
+            $fieldName = $fieldId;
+        }
+
+        $analysedFields++;
+
+        $issuesWithValue = 0;
+        $issuesWithNonEmptyValue = 0;
+
+        if ($totalIssues > 0) {
+            $usageStatement->execute(['field_id' => $fieldId]);
+            $usageRow = $usageStatement->fetch(PDO::FETCH_ASSOC) ?: [];
+            $usageStatement->closeCursor();
+
+            $issuesWithValue = (int)($usageRow['issues_with_value'] ?? 0);
+            $issuesWithNonEmptyValue = (int)($usageRow['issues_with_non_empty_value'] ?? 0);
+        }
+
+        if ($issuesWithNonEmptyValue > $issuesWithValue) {
+            $issuesWithNonEmptyValue = $issuesWithValue;
+        }
+
+        if ($issuesWithValue > 0) {
+            $fieldsWithValues++;
+        }
+
+        if ($issuesWithNonEmptyValue > 0) {
+            $fieldsWithNonEmptyValues++;
+            $topCandidates[] = [
+                'field_id' => $fieldId,
+                'field_name' => $fieldName,
+                'issues_with_non_empty_value' => $issuesWithNonEmptyValue,
+            ];
+        }
+
+        $insertStatement->execute([
+            'field_id' => $fieldId,
+            'usage_scope' => FIELD_USAGE_SCOPE_ISSUE,
+            'total_issues' => $totalIssues,
+            'issues_with_value' => $issuesWithValue,
+            'issues_with_non_empty_value' => $issuesWithNonEmptyValue,
+            'last_counted_at' => $analysisTimestamp,
+        ]);
+    }
+
+    $fieldsStatement->closeCursor();
+
+    usort($topCandidates, static function (array $left, array $right): int {
+        return $right['issues_with_non_empty_value'] <=> $left['issues_with_non_empty_value'];
+    });
+
+    $topFields = [];
+    $denominator = max($totalIssues, 1);
+    foreach (array_slice($topCandidates, 0, 10) as $candidate) {
+        $topFields[] = [
+            'field_id' => $candidate['field_id'],
+            'field_name' => $candidate['field_name'],
+            'issues_with_non_empty_value' => $candidate['issues_with_non_empty_value'],
+            'non_empty_percentage' => $candidate['issues_with_non_empty_value'] / $denominator * 100,
+        ];
+    }
+
+    return [
+        'analysed_fields' => $analysedFields,
+        'fields_with_values' => $fieldsWithValues,
+        'fields_with_non_empty_values' => $fieldsWithNonEmptyValues,
+        'total_issues' => $totalIssues,
+        'last_counted_at' => $analysisTimestamp,
+        'top_fields' => $topFields,
+    ];
 }
 
 /**
@@ -3947,6 +4169,7 @@ function printUsage(): void
     echo PHP_EOL;
     echo "Examples:" . PHP_EOL;
     echo sprintf('  php %s --help%s', $scriptName, PHP_EOL);
+    echo sprintf('  php %s --phases=usage%s', $scriptName, PHP_EOL);
     echo sprintf('  php %s --phases=redmine%s', $scriptName, PHP_EOL);
     echo sprintf('  php %s --skip=jira%s', $scriptName, PHP_EOL);
     echo sprintf('  php %s --phases=push --dry-run%s', $scriptName, PHP_EOL);

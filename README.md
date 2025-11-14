@@ -93,6 +93,28 @@ php 08_migrate_custom_fields.php --phases=push --use-extended-api --dry-run
 If you prefer to keep the process manual simply omit `--use-extended-api` and
 leave `redmine.extended_api.enabled` at its default `false` value.
 
+### Custom field usage analysis
+
+To help decide which Jira custom fields deserve a Redmine counterpart, the
+custom field migration script exposes an extra **usage** phase. It inspects all
+staged Jira issues (`staging_jira_issues.raw_payload`) and records how many
+issues contain a value for each custom field. The aggregated counts are stored
+in `staging_jira_field_usage`, alongside the timestamp of the last analysis and
+the number of issues that contained non-empty values. A CLI summary highlights
+the most-used fields so you can quickly spot candidates for migration.
+
+```bash
+# Refresh usage statistics without contacting Jira or Redmine
+php 08_migrate_custom_fields.php --phases=usage
+
+# Combine usage analysis with an extract run
+php 08_migrate_custom_fields.php --phases=jira,usage
+```
+
+Because the usage phase works entirely on staging data, you can rerun it at any
+time. Use the table to drive review meetings or export the numbers into your own
+reporting tools before deciding which custom fields to recreate in Redmine.
+
 ---
 
 ## 3. The Migration Process: Step-by-Step
