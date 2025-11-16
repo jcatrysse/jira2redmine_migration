@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.11';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.12';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
     'usage' => 'Analyse Jira custom field usage statistics from staging data.',
@@ -130,7 +130,7 @@ function main(array $config, array $cliOptions): void
             printf("  Top custom fields by non-empty issue count:%s", PHP_EOL);
             foreach ($usageSummary['top_fields'] as $topField) {
                 printf(
-                    "  - %-32s (%s): %d issue(s) ≈ %.2f%%%%s",
+                    "  - %-32s (%s): %d issue(s) ≈ %.2f%%%s",
                     $topField['field_name'],
                     $topField['field_id'],
                     $topField['issues_with_non_empty_value'],
@@ -175,12 +175,13 @@ function main(array $config, array $cliOptions): void
         $transformSummary = runCustomFieldTransformationPhase($pdo);
 
         printf(
-            "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
+            "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Ignored (unused): %d, Skipped: %d, Unchanged: %d.%s",
             formatCurrentTimestamp(),
             $transformSummary['matched'],
             $transformSummary['ready_for_creation'],
             $transformSummary['manual_review'],
             $transformSummary['manual_overrides'],
+            $transformSummary['ignored_unused'],
             $transformSummary['skipped'],
             $transformSummary['unchanged'],
             PHP_EOL
@@ -1550,6 +1551,7 @@ function runCustomFieldUsagePhase(PDO $pdo): array
                 JSON_EXTRACT(raw_payload, CONCAT('$.fields.', :field_id)) AS value,
                 JSON_TYPE(JSON_EXTRACT(raw_payload, CONCAT('$.fields.', :field_id))) AS value_type
             FROM staging_jira_issues
+            WHERE JSON_VALID(raw_payload)
         ) AS extracted
     SQL);
 
@@ -1911,7 +1913,7 @@ function extractIdListFromRedmineCustomField(mixed $value): ?string
     }
 }
 /**
- * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int, status_counts: array<string, int>}
+ * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, ignored_unused: int, skipped: int, unchanged: int, status_counts: array<string, int>}
  */
 function runCustomFieldTransformationPhase(PDO $pdo): array
 {
@@ -1967,6 +1969,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         'ready_for_creation' => 0,
         'manual_review' => 0,
         'manual_overrides' => 0,
+        'ignored_unused' => 0,
         'skipped' => 0,
         'unchanged' => 0,
         'status_counts' => [],
@@ -2057,6 +2060,27 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             $proposedProjectIds = null;
         }
 
+        $usageTotalIssues = isset($row['usage_total_issues']) ? (int)$row['usage_total_issues'] : 0;
+        $usageIssuesWithValue = isset($row['usage_issues_with_value']) ? (int)$row['usage_issues_with_value'] : 0;
+        $usageIssuesWithNonEmpty = isset($row['usage_issues_with_non_empty_value'])
+            ? (int)$row['usage_issues_with_non_empty_value']
+            : 0;
+        $usageLastCountedAtRaw = isset($row['usage_last_counted_at']) ? (string)$row['usage_last_counted_at'] : null;
+        $usageLastCountedAt = $usageLastCountedAtRaw !== '' ? $usageLastCountedAtRaw : 'n/a';
+
+        if ($usageTotalIssues === 0) {
+            $usageNote = 'Usage snapshot: no staged issues counted yet.';
+        } else {
+            $usageNote = sprintf(
+                'Usage snapshot (%s): non-empty values in %d/%d issues (values present in %d/%d).',
+                $usageLastCountedAt,
+                $usageIssuesWithNonEmpty,
+                $usageTotalIssues,
+                $usageIssuesWithValue,
+                $usageTotalIssues
+            );
+        }
+
         $currentAutomationHash = computeCustomFieldAutomationStateHash(
             $currentRedmineId,
             $currentStatus,
@@ -2121,7 +2145,68 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         }
 
         $manualReasons = [];
-        $infoNotes = [];
+        $infoNotes = [$usageNote];
+
+        $autoIgnoreUnused = $usageTotalIssues > 0 && $usageIssuesWithValue === 0 && $usageIssuesWithNonEmpty === 0;
+        if ($autoIgnoreUnused && in_array($currentStatus, $allowedStatuses, true)) {
+            $notesParts = [];
+            if ($currentNotes !== null && trim($currentNotes) !== '') {
+                $notesParts[] = trim($currentNotes);
+            }
+
+            $notesParts[] = 'Automatically ignored: no staged issues contain values for this custom field. ' . $usageNote;
+            $notes = implode(' ', array_unique($notesParts));
+
+            $proposedPossibleValuesJson = encodeJsonColumn($proposedPossibleValues);
+            $proposedTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
+            $proposedRoleIdsJson = encodeJsonColumn($proposedRoleIds);
+            $proposedProjectIdsJson = encodeJsonColumn($proposedProjectIds);
+
+            $automationHash = computeCustomFieldAutomationStateHash(
+                $currentRedmineId,
+                'IGNORED',
+                $proposedName,
+                $proposedFormat,
+                $proposedIsRequired,
+                $proposedIsFilter,
+                $proposedIsForAll,
+                $proposedIsMultiple,
+                $proposedPossibleValuesJson,
+                $proposedDefaultValue,
+                $proposedTrackerIdsJson,
+                $proposedRoleIdsJson,
+                $proposedProjectIdsJson,
+                $notes,
+                $currentRedmineParentId
+            );
+
+            $updateStatement->execute([
+                'redmine_custom_field_id' => $currentRedmineId,
+                'migration_status' => 'IGNORED',
+                'notes' => $notes,
+                'proposed_redmine_name' => $proposedName,
+                'proposed_field_format' => $proposedFormat,
+                'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
+                'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
+                'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
+                'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
+                'proposed_possible_values' => $proposedPossibleValuesJson,
+                'proposed_default_value' => $proposedDefaultValue,
+                'proposed_tracker_ids' => $proposedTrackerIdsJson,
+                'proposed_role_ids' => $proposedRoleIdsJson,
+                'proposed_project_ids' => $proposedProjectIdsJson,
+                'automation_hash' => $automationHash,
+                'mapping_id' => (int)$row['mapping_id'],
+            ]);
+
+            if ($automationHash === $currentAutomationHash) {
+                $summary['ignored_unused']++;
+                continue;
+            }
+
+            $summary['ignored_unused']++;
+            continue;
+        }
 
         $isCascadingField = !empty($classification['is_cascading']);
         $cascadingDescriptor = null;
@@ -2577,19 +2662,26 @@ function fetchCustomFieldMappingsForTransform(PDO $pdo): array
             map.proposed_tracker_ids,
             map.proposed_role_ids,
             map.proposed_project_ids,
-            map.automation_hash
+            map.automation_hash,
+            usage_stats.total_issues AS usage_total_issues,
+            usage_stats.issues_with_value AS usage_issues_with_value,
+            usage_stats.issues_with_non_empty_value AS usage_issues_with_non_empty_value,
+            usage_stats.last_counted_at AS usage_last_counted_at
         FROM migration_mapping_custom_fields map
+        LEFT JOIN staging_jira_field_usage usage_stats ON usage_stats.field_id = map.jira_field_id
+            AND usage_stats.usage_scope = :usage_scope
         ORDER BY map.jira_field_name IS NULL, map.jira_field_name, map.jira_field_id
     SQL;
 
     try {
-        $statement = $pdo->query($sql);
+        $statement = $pdo->prepare($sql);
+        if ($statement === false) {
+            return [];
+        }
+
+        $statement->execute(['usage_scope' => FIELD_USAGE_SCOPE_ISSUE]);
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to fetch migration mapping rows for custom fields: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    if ($statement === false) {
-        return [];
     }
 
     return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];

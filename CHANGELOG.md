@@ -9,10 +9,24 @@ All notable changes to this project will be documented in this file.
 - Migrate custom fields script: investigate unsupported field types (any, team, option, option-with-child, option2, sd-customerrequesttype, object, sd-approvals, ...)
 - Migrate custom fields script: investigate cascading fields and how to match them with https://github.com/jcatrysse/redmine_depending_custom_fields
 - Migrate custom fields script: investigate and validate the transformation from Jira Context to separate custom fields in Redmine.
-- Migrate custom fields script: investigate usage based on the migrate issues script, jira phase.
 - Fine-tune the attachments, issues, and journals scripts.
 - Migrate issues script: on a rerun, newer issues should be fetched.
+- Migrate issues script: on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
 - Create the missing scripts.
+
+## [0.0.27] - 2025-11-29
+
+- Extend the custom field transform so it reads the latest usage snapshot,
+  auto-ignores Jira custom fields that never appear in staged issues, and
+  surfaces the usage statistics in the mapping notes to aid manual reviews.
+- Surface an `Ignored (unused)` counter in the transform summary and bump the
+  custom field CLI version to `0.0.12`.
+
+## [0.0.26] - 2025-11-28
+
+- Harden the custom field usage phase so it only analyses issues whose raw Jira
+  payload is valid JSON, preventing the aggregation query from failing when
+  staging data was ingested before the issue extraction script was fixed.
 
 ## [0.0.25] - 2025-11-27
 
