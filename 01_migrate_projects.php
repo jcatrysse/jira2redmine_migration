@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_PROJECTS_SCRIPT_VERSION = '0.0.10';
+const MIGRATE_PROJECTS_SCRIPT_VERSION = '0.0.11';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract projects from Jira and persist them into staging tables.',
     'redmine' => 'Refresh the Redmine project snapshot from the REST API.',

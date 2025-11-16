@@ -56,5 +56,21 @@ return [
             // Leave as null to derive the lowest open status from the staging snapshot.
             'default_redmine_status_id' => null,
         ],
+        'issues' => [
+            // Optional JQL filter AND-ed with each automatic `project = "KEY"` clause before `ORDER BY id ASC`.
+            // Provide any additional constraints (date range, issue types, etc.) or leave blank to export every issue per project.
+            'jql' => '',
+            // Number of issues requested per Jira search page (max 100).
+            'batch_size' => 100,
+            // Optional Redmine identifiers used as fallbacks when Jira data cannot be matched automatically.
+            'default_redmine_project_id' => null,
+            'default_redmine_tracker_id' => null,
+            'default_redmine_status_id' => null,
+            'default_redmine_priority_id' => null,
+            'default_redmine_author_id' => null,
+            'default_redmine_assignee_id' => null,
+            // When set, overrides the privacy flag proposed during the transform phase (true/false/null).
+            'default_is_private' => null,
+        ],
     ],
 ];

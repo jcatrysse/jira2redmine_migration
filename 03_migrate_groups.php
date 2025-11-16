@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_GROUPS_SCRIPT_VERSION = '0.0.10';
+const MIGRATE_GROUPS_SCRIPT_VERSION = '0.0.11';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract groups and memberships from Jira and persist them into staging tables.',
     'redmine' => 'Refresh the Redmine groups and memberships snapshot from the REST API.',
