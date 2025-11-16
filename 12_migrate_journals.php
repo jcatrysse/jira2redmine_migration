@@ -1,4 +1,5 @@
-<?php /** @noinspection PhpArrayIndexImmediatelyRewrittenInspection */
+<?php
+/** @noinspection PhpArrayIndexImmediatelyRewrittenInspection */
 /** @noinspection DuplicatedCode */
 /** @noinspection SpellCheckingInspection */
 
@@ -8,8 +9,9 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
+use League\HTMLToMarkdown\HtmlConverter;
 
-const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.14';
+const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.15';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira comments and changelog entries into staging tables.',
     'transform' => 'Populate and classify journal mappings based on issue availability.',
@@ -161,6 +163,7 @@ function fetchJiraJournals(Client $client, PDO $pdo, array $config): array
             issue_id,
             author_account_id,
             body_adf,
+            body_html,
             created_at,
             updated_at,
             raw_payload
@@ -169,6 +172,7 @@ function fetchJiraJournals(Client $client, PDO $pdo, array $config): array
             :issue_id,
             :author_account_id,
             :body_adf,
+            :body_html,
             :created_at,
             :updated_at,
             :raw_payload
@@ -176,6 +180,7 @@ function fetchJiraJournals(Client $client, PDO $pdo, array $config): array
         ON DUPLICATE KEY UPDATE
             author_account_id = VALUES(author_account_id),
             body_adf = VALUES(body_adf),
+            body_html = VALUES(body_html),
             created_at = VALUES(created_at),
             updated_at = VALUES(updated_at),
             raw_payload = VALUES(raw_payload),
@@ -290,6 +295,9 @@ function fetchJiraCommentsForIssue(Client $client, PDOStatement $statement, stri
             $createdAt = isset($comment['created']) ? normalizeDateTimeString($comment['created']) : null;
             $updatedAt = isset($comment['updated']) ? normalizeDateTimeString($comment['updated']) : $createdAt;
             $bodyAdf = isset($comment['body']) ? encodeJson($comment['body']) : null;
+            $bodyHtml = isset($comment['renderedBody']) && is_string($comment['renderedBody'])
+                ? trim((string)$comment['renderedBody'])
+                : null;
             $rawPayload = encodeJson($comment);
 
             $statement->execute([
@@ -297,6 +305,7 @@ function fetchJiraCommentsForIssue(Client $client, PDOStatement $statement, stri
                 'issue_id' => $issueId,
                 'author_account_id' => $authorId,
                 'body_adf' => $bodyAdf,
+                'body_html' => $bodyHtml,
                 'created_at' => $createdAt,
                 'updated_at' => $updatedAt,
                 'raw_payload' => $rawPayload,
@@ -522,9 +531,10 @@ function runJournalPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $i
     }
 
     $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
+    $attachmentMetadata = buildAttachmentMetadataIndex($pdo);
 
     foreach ($candidateComments as $comment) {
-        processCommentPush($redmineClient, $pdo, $comment, $config);
+        processCommentPush($redmineClient, $pdo, $comment, $config, $attachmentMetadata);
     }
 
     foreach ($candidateChangelogs as $history) {
@@ -546,6 +556,7 @@ function fetchPushableComments(PDO $pdo): array
             issue_map.redmine_issue_id,
             c.author_account_id,
             c.body_adf,
+            c.body_html,
             c.created_at,
             c.updated_at,
             c.raw_payload
@@ -604,8 +615,9 @@ function fetchPushableChangelog(PDO $pdo): array
 
 /**
  * @param array<string, mixed> $comment
+ * @param array<string, array<string, string>> $attachmentMetadata
  */
-function processCommentPush(Client $client, PDO $pdo, array $comment, array $config): void
+function processCommentPush(Client $client, PDO $pdo, array $comment, array $config, array $attachmentMetadata): void
 {
     $mappingId = (int)$comment['mapping_id'];
     $jiraIssueId = (string)$comment['jira_issue_id'];
@@ -616,6 +628,7 @@ function processCommentPush(Client $client, PDO $pdo, array $comment, array $con
     $authorId = isset($comment['author_account_id']) ? (string)$comment['author_account_id'] : null;
     $createdAt = isset($comment['created_at']) ? (string)$comment['created_at'] : null;
     $bodyAdf = isset($comment['body_adf']) ? (string)$comment['body_adf'] : null;
+    $bodyHtml = isset($comment['body_html']) ? (string)$comment['body_html'] : null;
 
     $noteParts = [];
     if ($authorId !== null) {
@@ -628,7 +641,12 @@ function processCommentPush(Client $client, PDO $pdo, array $comment, array $con
     }
     $noteParts[] = '';
 
-    $bodyText = $bodyAdf !== null ? convertJiraAdfToPlaintext($bodyAdf) : '';
+    $issueAttachments = $attachmentMetadata[$jiraIssueId] ?? [];
+    $bodyText = $bodyHtml !== null ? convertJiraHtmlToMarkdown($bodyHtml, $issueAttachments) : null;
+    if ($bodyText === null && $bodyAdf !== null) {
+        $bodyText = convertJiraAdfToPlaintext($bodyAdf);
+    }
+    $bodyText = $bodyText ?? '';
 
     $attachments = fetchPreparedJournalAttachments($pdo, $jiraIssueId, $createdAt);
     $uploadPayload = buildAttachmentUploadPayload($attachments);
@@ -1038,6 +1056,135 @@ function updateAttachmentMappingAfterPush(PDO $pdo, int $mappingId, ?int $redmin
         'mapping_id' => $mappingId,
     ]);
     $statement->closeCursor();
+}
+
+/**
+ * @return array<string, array<string, string>>
+ */
+function buildAttachmentMetadataIndex(PDO $pdo): array
+{
+    $sql = 'SELECT id, issue_id, filename FROM staging_jira_attachments';
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to build attachment metadata index: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement === false) {
+        throw new RuntimeException('Failed to build attachment metadata index.');
+    }
+
+    $index = [];
+    while (true) {
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            break;
+        }
+
+        $issueId = isset($row['issue_id']) ? (string)$row['issue_id'] : '';
+        $attachmentId = isset($row['id']) ? (string)$row['id'] : '';
+        if ($issueId === '' || $attachmentId === '') {
+            continue;
+        }
+
+        $filename = isset($row['filename']) ? (string)$row['filename'] : '';
+        if (!isset($index[$issueId])) {
+            $index[$issueId] = [];
+        }
+        $index[$issueId][$attachmentId] = $filename;
+    }
+
+    $statement->closeCursor();
+
+    return $index;
+}
+
+function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
+{
+    if ($html === null) {
+        return null;
+    }
+
+    $trimmed = trim($html);
+    if ($trimmed === '') {
+        return null;
+    }
+
+    $rewrittenHtml = rewriteJiraAttachmentLinks($trimmed, $attachments);
+
+    static $converter = null;
+    if ($converter === null) {
+        $converter = new HtmlConverter([
+            'strip_tags' => false,
+            'hard_break' => true,
+        ]);
+    }
+
+    try {
+        $markdown = trim($converter->convert($rewrittenHtml));
+    } catch (Throwable) {
+        $markdown = trim(strip_tags($rewrittenHtml));
+    }
+
+    return $markdown !== '' ? $markdown : null;
+}
+
+function rewriteJiraAttachmentLinks(string $html, array $attachments): string
+{
+    if ($attachments === []) {
+        return $html;
+    }
+
+    $document = new DOMDocument();
+    $previous = libxml_use_internal_errors(true);
+    $options = 0;
+    if (defined('LIBXML_HTML_NOIMPLIED')) {
+        $options |= LIBXML_HTML_NOIMPLIED;
+    }
+    if (defined('LIBXML_HTML_NODEFDTD')) {
+        $options |= LIBXML_HTML_NODEFDTD;
+    }
+
+    $htmlPayload = '<?xml encoding="utf-8"?>' . $html;
+    $loaded = $document->loadHTML($htmlPayload, $options);
+    libxml_clear_errors();
+    libxml_use_internal_errors($previous);
+
+    if (!$loaded) {
+        return $html;
+    }
+
+    foreach ($document->getElementsByTagName('a') as $link) {
+        if (!$link instanceof DOMElement) {
+            continue;
+        }
+
+        $href = $link->getAttribute('href');
+        $attachmentId = null;
+        if ($href !== '' && preg_match('#attachment/(\d+)#', $href, $matches)) {
+            $attachmentId = $matches[1];
+        } elseif ($link->hasAttribute('data-linked-resource-id')) {
+            $attachmentId = (string)$link->getAttribute('data-linked-resource-id');
+        }
+
+        if ($attachmentId === null || !isset($attachments[$attachmentId])) {
+            continue;
+        }
+
+        $filename = $attachments[$attachmentId] !== ''
+            ? $attachments[$attachmentId]
+            : sprintf('attachment-%s', $attachmentId);
+
+        while ($link->firstChild !== null) {
+            $link->removeChild($link->firstChild);
+        }
+        $link->appendChild($document->createTextNode($filename));
+        $link->setAttribute('href', sprintf('attachment:%s', $filename));
+    }
+
+    $converted = $document->saveHTML();
+
+    return $converted !== false ? $converted : $html;
 }
 
 function encodeJson(mixed $value): ?string

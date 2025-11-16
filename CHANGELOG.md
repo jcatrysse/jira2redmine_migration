@@ -11,9 +11,27 @@ All notable changes to this project will be documented in this file.
 - Migrate custom fields script: investigate and validate the transformation from Jira Context to separate custom fields in Redmine.
 - Migrate custom fields script: investigate usage based on the migrate issues script, jira phase.
 - Fine-tune the attachments, issues, and journals scripts.
-- Migrate custom issues and journals scripts: download the html jira description to the database and the attachments metadata (names, id, ...) so we can use that information to create the redmine content.
-- Migrate custom issues and journals scripts: find a solution to convert the html to markdown, preserving the new Redmine names for the attachments and things alike. Preferably using an existing mechanism or library to convert to markdown (CommonMark variant).
+- Migrate issues script: on a rerun, newer issues should be fetched.
 - Create the missing scripts.
+
+## [0.0.25] - 2025-11-27
+
+- Fix `11_migrate_issues.php` so the Jira extraction phase calls
+  `/rest/api/3/search/jql` via query parameters instead of the deprecated POST
+  payload, reintroducing the `fieldsByKeys` flag and honouring Jira's reported
+  batch size to prevent the `Invalid request payload` errors seen when
+  requesting rendered HTML descriptions. The CLI now reports version `0.0.25`.
+
+## [0.0.24] - 2025-11-26
+
+- Capture Jira's rendered HTML descriptions and comment bodies in the staging
+  tables, refresh the attachment metadata index, and depend on
+  `league/html-to-markdown` so the issue and journal transforms can convert the
+  HTML into CommonMark while rewriting Jira attachment links to Redmine's
+  `attachment:` syntax.
+- Document the new workflow in the README and bump the CLI versions so operators
+  know the description/comment Markdown now honours the rendered HTML payloads
+  and attachment metadata stored during extraction.
 
 ## [0.0.23] - 2025-11-25
 

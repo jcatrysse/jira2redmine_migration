@@ -1,4 +1,5 @@
-<?php /** @noinspection PhpArrayIndexImmediatelyRewrittenInspection */
+<?php
+/** @noinspection PhpArrayIndexImmediatelyRewrittenInspection */
 /** @noinspection DuplicatedCode */
 /** @noinspection SpellCheckingInspection */
 
@@ -8,8 +9,9 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
+use League\HTMLToMarkdown\HtmlConverter;
 
-const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.23';
+const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.25';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issues into staging_jira_issues (and related staging tables).',
     'transform' => 'Reconcile Jira issues with Redmine dependencies to populate migration mappings.',
@@ -186,7 +188,9 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
 
     $queryBase = [
         'maxResults' => $batchSize,
-        'fields' => ['*all'],
+        'fields' => '*all',
+        'expand' => 'renderedFields',
+        'fieldsByKeys' => 'false',
     ];
 
     $totalIssuesProcessed = 0;
@@ -201,6 +205,7 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
             issue_key,
             summary,
             description_adf,
+            description_html,
             project_id,
             issuetype_id,
             status_id,
@@ -225,6 +230,7 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
             :issue_key,
             :summary,
             :description_adf,
+            :description_html,
             :project_id,
             :issuetype_id,
             :status_id,
@@ -249,6 +255,7 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
             issue_key = VALUES(issue_key),
             summary = VALUES(summary),
             description_adf = VALUES(description_adf),
+            description_html = VALUES(description_html),
             project_id = VALUES(project_id),
             issuetype_id = VALUES(issuetype_id),
             status_id = VALUES(status_id),
@@ -420,7 +427,7 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
             $query['jql'] = sprintf('%s ORDER BY id ASC', implode(' AND ', $conditions));
 
             try {
-                $response = $client->post('/rest/api/3/search/jql', ['json' => $query]);
+                $response = $client->get('/rest/api/3/search/jql', ['query' => $query]);
             } catch (BadResponseException $exception) {
                 $response = $exception->getResponse();
                 $message = sprintf('Failed to fetch issues from Jira for project %s', $projectKey);
@@ -541,6 +548,17 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
                     }
                 }
 
+                $renderedFields = isset($issue['renderedFields']) && is_array($issue['renderedFields'])
+                    ? $issue['renderedFields']
+                    : [];
+                $descriptionHtml = null;
+                if (isset($renderedFields['description']) && is_string($renderedFields['description'])) {
+                    $descriptionHtml = trim($renderedFields['description']);
+                    if ($descriptionHtml === '') {
+                        $descriptionHtml = null;
+                    }
+                }
+
                 try {
                     $rawPayload = json_encode($issue, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 } catch (JsonException $exception) {
@@ -552,6 +570,7 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
                     'issue_key' => $issueKey,
                     'summary' => $summary,
                     'description_adf' => $descriptionJson,
+                    'description_html' => $descriptionHtml,
                     'project_id' => $issueProjectId,
                     'issuetype_id' => $issueTypeId,
                     'status_id' => $statusId,
@@ -685,7 +704,12 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
                 PHP_EOL
             );
 
-            if ($fetchedCount < $batchSize) {
+            $serverBatchSize = isset($payload['maxResults']) ? (int)$payload['maxResults'] : $batchSize;
+            if ($serverBatchSize <= 0) {
+                $serverBatchSize = $batchSize;
+            }
+
+            if ($fetchedCount < $serverBatchSize) {
                 break;
             }
         }
@@ -709,6 +733,9 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
     ];
 }
 
+/**
+ * @throws Throwable
+ */
 function runIssueTransformationPhase(PDO $pdo, array $config): array
 {
     syncIssueMappings($pdo);
@@ -728,6 +755,7 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
     $defaultAuthorId = isset($issueConfig['default_redmine_author_id']) ? normalizeInteger($issueConfig['default_redmine_author_id'], 1) : null;
     $defaultAssigneeId = isset($issueConfig['default_redmine_assignee_id']) ? normalizeInteger($issueConfig['default_redmine_assignee_id'], 1) : null;
     $defaultIsPrivate = array_key_exists('default_is_private', $issueConfig) ? normalizeBooleanFlag($issueConfig['default_is_private']) : null;
+    $attachmentMetadata = buildAttachmentMetadataIndex($pdo);
 
     $mappings = fetchIssueMappingsForTransform($pdo);
 
@@ -835,6 +863,7 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
 
         $issueSummary = isset($row['jira_summary']) ? (string)$row['jira_summary'] : $jiraIssueKey;
         $issueDescriptionAdf = $row['jira_description_adf'] ?? null;
+        $issueDescriptionHtml = isset($row['jira_description_html']) ? (string)$row['jira_description_html'] : null;
         $issueCreatedAt = isset($row['jira_created_at']) ? (string)$row['jira_created_at'] : null;
         $issueDueDate = isset($row['jira_due_date']) ? (string)$row['jira_due_date'] : null;
         $issueStatusCategory = isset($row['jira_status_category_key']) ? (string)$row['jira_status_category_key'] : null;
@@ -857,8 +886,14 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
         $proposedAssigneeId = $redmineAssigneeId ?? $defaultAssigneeId;
         $proposedParentIssueId = $redmineParentIssueId;
 
+        $issueAttachments = $attachmentMetadata[$row['jira_issue_id']] ?? [];
         $proposedSubject = truncateString($issueSummary, 255);
-        $proposedDescription = $issueDescriptionAdf !== null ? convertJiraAdfToPlaintext($issueDescriptionAdf) : null;
+        $proposedDescription = $issueDescriptionHtml !== null
+            ? convertJiraHtmlToMarkdown($issueDescriptionHtml, $issueAttachments)
+            : null;
+        if ($proposedDescription === null && $issueDescriptionAdf !== null) {
+            $proposedDescription = convertJiraAdfToPlaintext($issueDescriptionAdf);
+        }
         $proposedStartDate = $issueCreatedAt !== null ? substr($issueCreatedAt, 0, 10) : null;
         $proposedDueDate = $issueDueDate !== null ? $issueDueDate : null;
         $proposedDoneRatio = ($issueStatusCategory !== null && strtolower($issueStatusCategory) === 'done') ? 100 : null;
@@ -877,7 +912,6 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
         }
 
         $notes = [];
-        $nextStatus = $currentStatus;
 
         if ($row['redmine_issue_id'] !== null) {
             $nextStatus = 'MATCH_FOUND';
@@ -1121,7 +1155,7 @@ function runIssuePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $r
                 'done_ratio' => $candidate['proposed_done_ratio'] !== null ? (int)$candidate['proposed_done_ratio'] : null,
                 'estimated_hours' => $candidate['proposed_estimated_hours'] !== null ? (float)$candidate['proposed_estimated_hours'] : null,
                 'parent_issue_id' => $candidate['proposed_parent_issue_id'] !== null ? (int)$candidate['proposed_parent_issue_id'] : null,
-                'is_private' => $candidate['proposed_is_private'] !== null ? ((bool)$candidate['proposed_is_private'] ? 1 : 0) : null,
+                'is_private' => $candidate['proposed_is_private'] !== null ? ($candidate['proposed_is_private'] ? 1 : 0) : null,
                 'custom_fields' => $candidate['proposed_custom_field_payload'] !== null ? json_decode((string)$candidate['proposed_custom_field_payload'], true) : null,
                 'uploads' => buildIssueUploadPayload($preparedAttachments),
             ], static fn($value) => $value !== null),
@@ -1327,8 +1361,8 @@ function summarizeAttachmentStatusesForIssue(PDO $pdo, string $jiraIssueId): arr
 {
     $sql = <<<SQL
         SELECT
-            SUM(CASE WHEN migration_status = 'PENDING_ASSOCIATION' THEN 1 ELSE 0 END) AS ready_count,
-            SUM(CASE WHEN migration_status IN ('PENDING_DOWNLOAD', 'PENDING_UPLOAD') THEN 1 ELSE 0 END) AS blocked_count
+            SUM(IF(migration_status = 'PENDING_ASSOCIATION', 1, 0)) AS ready_count,
+            SUM(IF(migration_status IN ('PENDING_DOWNLOAD', 'PENDING_UPLOAD'), 1, 0)) AS blocked_count
         FROM migration_mapping_attachments
         WHERE jira_issue_id = :issue_id
           AND association_hint = 'ISSUE'
@@ -1560,9 +1594,10 @@ function fetchIssueMappingsForTransform(PDO $pdo): array
 {
     $sql = <<<SQL
         SELECT
-            map.*,
+            map.*, 
             issue.summary AS jira_summary,
             issue.description_adf AS jira_description_adf,
+            issue.description_html AS jira_description_html,
             issue.due_date AS jira_due_date,
             issue.status_category_key AS jira_status_category_key,
             issue.time_original_estimate AS jira_time_original_estimate,
@@ -1767,6 +1802,47 @@ function buildUserLookup(PDO $pdo): array
 
     return $lookup;
 }
+
+/**
+ * @return array<string, array<string, string>>
+ */
+function buildAttachmentMetadataIndex(PDO $pdo): array
+{
+    $sql = 'SELECT id, issue_id, filename FROM staging_jira_attachments';
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to build attachment metadata index: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement === false) {
+        throw new RuntimeException('Failed to build attachment metadata index.');
+    }
+
+    $index = [];
+    while (true) {
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            break;
+        }
+
+        $issueId = isset($row['issue_id']) ? (string)$row['issue_id'] : '';
+        $attachmentId = isset($row['id']) ? (string)$row['id'] : '';
+        if ($issueId === '' || $attachmentId === '') {
+            continue;
+        }
+
+        $filename = isset($row['filename']) ? (string)$row['filename'] : '';
+        if (!isset($index[$issueId])) {
+            $index[$issueId] = [];
+        }
+        $index[$issueId][$attachmentId] = $filename;
+    }
+
+    $statement->closeCursor();
+
+    return $index;
+}
 function resolveRedmineProjectId(array $lookup, string $jiraProjectId): ?int
 {
     if (!isset($lookup[$jiraProjectId])) {
@@ -1923,6 +1999,95 @@ function computeIssueAutomationStateHash(
 
     return hash('sha256', $encoded);
 }
+
+function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
+{
+    if ($html === null) {
+        return null;
+    }
+
+    $trimmed = trim($html);
+    if ($trimmed === '') {
+        return null;
+    }
+
+    $rewrittenHtml = rewriteJiraAttachmentLinks($trimmed, $attachments);
+
+    static $converter = null;
+    if ($converter === null) {
+        $converter = new HtmlConverter([
+            'strip_tags' => false,
+            'hard_break' => true,
+        ]);
+    }
+
+    try {
+        $markdown = trim($converter->convert($rewrittenHtml));
+    } catch (Throwable) {
+        $markdown = trim(strip_tags($rewrittenHtml));
+    }
+
+    return $markdown !== '' ? $markdown : null;
+}
+
+function rewriteJiraAttachmentLinks(string $html, array $attachments): string
+{
+    if ($attachments === []) {
+        return $html;
+    }
+
+    $document = new DOMDocument();
+    $previous = libxml_use_internal_errors(true);
+    $options = 0;
+    if (defined('LIBXML_HTML_NOIMPLIED')) {
+        $options |= LIBXML_HTML_NOIMPLIED;
+    }
+    if (defined('LIBXML_HTML_NODEFDTD')) {
+        $options |= LIBXML_HTML_NODEFDTD;
+    }
+
+    $htmlPayload = '<?xml encoding="utf-8"?>' . $html;
+    $loaded = $document->loadHTML($htmlPayload, $options);
+    libxml_clear_errors();
+    libxml_use_internal_errors($previous);
+
+    if (!$loaded) {
+        return $html;
+    }
+
+    foreach ($document->getElementsByTagName('a') as $link) {
+        if (!$link instanceof DOMElement) {
+            continue;
+        }
+
+        $href = $link->getAttribute('href');
+        $attachmentId = null;
+        if ($href !== '' && preg_match('#attachment/(\d+)#', $href, $matches)) {
+            $attachmentId = $matches[1];
+        } elseif ($link->hasAttribute('data-linked-resource-id')) {
+            $attachmentId = (string)$link->getAttribute('data-linked-resource-id');
+        }
+
+        if ($attachmentId === null || !isset($attachments[$attachmentId])) {
+            continue;
+        }
+
+        $filename = $attachments[$attachmentId] !== ''
+            ? $attachments[$attachmentId]
+            : sprintf('attachment-%s', $attachmentId);
+
+        while ($link->firstChild !== null) {
+            $link->removeChild($link->firstChild);
+        }
+        $link->appendChild($document->createTextNode($filename));
+        $link->setAttribute('href', sprintf('attachment:%s', $filename));
+    }
+
+    $converted = $document->saveHTML();
+
+    return $converted !== false ? $converted : $html;
+}
+
 function convertJiraAdfToPlaintext(mixed $descriptionAdf): ?string
 {
     if ($descriptionAdf === null) {

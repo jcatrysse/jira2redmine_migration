@@ -682,7 +682,7 @@ php 11_migrate_issues.php --help
 | Option              | Description                                                                                          |
 |---------------------|------------------------------------------------------------------------------------------------------|
 | `-h`, `--help`      | Print usage information and exit.                                                                    |
-| `-V`, `--version`   | Display the script version (`0.0.22`).                                                                |
+| `-V`, `--version`   | Display the script version (`0.0.25`).                                                                |
 | `--phases=<list>`   | Comma-separated list of phases to run (e.g., `jira`, `transform`, `push`).                           |
 | `--skip=<list>`     | Comma-separated list of phases to skip.                                                              |
 | `--confirm-push`    | Required toggle to allow the push phase to create Redmine issues.                                   |
@@ -702,12 +702,13 @@ php 11_migrate_issues.php --help
    `issues_extracted_at` column so reruns automatically resume after failures
    while untouched projects continue to flow through the pipeline. Each request
    still walks the Jira search API in configurable batches (default 100 issues
-   per page) and asks for `fields=*all` so every standard and custom field is
-   preserved in `staging_jira_issues.raw_payload`. The script captures
-   frequently used attributes (project, issue type, status, reporter/assignee,
-   due dates, time tracking metrics) as dedicated columns, stores the full ADF
-   description, and normalises timestamps for later transforms. Attachment
-   metadata is persisted in `staging_jira_attachments` together with an
+  per page) and asks for `fields=*all` so every standard and custom field is
+  preserved in `staging_jira_issues.raw_payload`. The script captures
+  frequently used attributes (project, issue type, status, reporter/assignee,
+  due dates, time tracking metrics) as dedicated columns, stores both the raw
+  ADF and Jira-rendered HTML description, and normalises timestamps for later
+  transforms. Attachment metadata (ID, filename, size, MIME type, author, and
+  timestamps) is persisted in `staging_jira_attachments` together with an
    association hint (`ISSUE` when the timestamp falls within a minute of the
    issue creation, otherwise `JOURNAL`). No binaries are moved during this
    phase; `10_migrate_attachments.php` consumes the metadata to download the
@@ -720,12 +721,14 @@ php 11_migrate_issues.php --help
    latest staging data while respecting automation hashes. It cross-references
    the project, tracker, status, priority, and user mapping tables to propose the
    corresponding Redmine identifiers, falls back to the optional
-   `migration.issues.*` defaults when configured, and downgrades rows to
-   `MANUAL_INTERVENTION_REQUIRED` when any dependency is unresolved (missing
-   Redmine project, tracker, reporter/assignee, or parent issue). Jira ADF
-   descriptions are flattened into a plain-text preview so operators can review
-   the proposed Redmine payload, and time tracking values are converted from
-   seconds to hours for the `estimated_hours` column. Manual overrides persist
+  `migration.issues.*` defaults when configured, and downgrades rows to
+  `MANUAL_INTERVENTION_REQUIRED` when any dependency is unresolved (missing
+  Redmine project, tracker, reporter/assignee, or parent issue). Jira's rendered
+  HTML descriptions are converted to CommonMark via `league/html-to-markdown`
+  and attachment links are rewritten to Redmine's `attachment:` syntax (with the
+  ADF payload used as a fallback) so operators can review the final text. Time
+  tracking values are converted from seconds to hours for the
+  `estimated_hours` column. Manual overrides persist
    across reruns thanks to the automation hash signature – clear it when you
    want the script to resume managing the row.
 3. **Push (`push`)** – lists every row in `READY_FOR_CREATION`, highlighting the
@@ -785,7 +788,7 @@ php 12_migrate_journals.php --help
 | Option            | Description                                                                 |
 |-------------------|-----------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                           |
-| `-V`, `--version` | Display the script version (`0.0.14`).                                      |
+| `-V`, `--version` | Display the script version (`0.0.15`).                                      |
 | `--phases=<list>` | Comma-separated list of phases to run (default: `jira,transform,push`).     |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                     |
 | `--confirm-push`  | Required toggle to create journals in Redmine.                              |
@@ -795,17 +798,20 @@ php 12_migrate_journals.php --help
 
 1. **Jira extraction (`jira`)** – iterates over staged issues and calls both the
    comment and changelog endpoints. Payloads are persisted in
-   `staging_jira_comments` and `staging_jira_changelogs`, preserving the Atlassian
-   Document Format bodies and change histories for later conversion.
+   `staging_jira_comments` and `staging_jira_changelogs`, preserving both the
+   Atlassian Document Format bodies and Jira-rendered HTML so later phases can
+   recreate Markdown that mirrors the original formatting.
 2. **Transform (`transform`)** – inserts missing rows into
    `migration_mapping_journals`, joins them with the issue mapping table, and
    marks entries as `READY_FOR_PUSH` once the target Redmine issue identifier is
    known. Failed rows keep their diagnostic notes for follow-up.
 3. **Push (`push`)** – in dry-run mode prints the target issue and entity ID for
-   each queued comment/changelog. With `--confirm-push` the script converts Jira
-   ADF bodies into plain text notes, reuses any `JOURNAL` attachment tokens, and
-   updates Redmine via `PUT /issues/:id.json`. It then reconciles the resulting
-   journal/attachment identifiers so reruns stay idempotent.
+   each queued comment/changelog. With `--confirm-push` the script converts the
+   rendered HTML bodies to CommonMark (falling back to the ADF JSON when needed),
+   rewrites Jira attachment links to `attachment:` references, reuses any
+   `JOURNAL` upload tokens, and updates Redmine via `PUT /issues/:id.json`. It
+   then reconciles the resulting journal/attachment identifiers so reruns stay
+   idempotent.
 
 > **Prerequisites:** run `11_migrate_issues.php --phases=push --confirm-push` to
 > create the parent issues first, and make sure the attachment migration has

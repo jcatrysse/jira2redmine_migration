@@ -6,7 +6,10 @@
     "guzzlehttp/guzzle": "^7.10",
     "ext-pdo": "*",
     "ext-mbstring": "*",
-    "ext-ctype": "*"
+    "ext-ctype": "*",
+    "league/html-to-markdown": "^5.1",
+    "ext-dom": "*",
+    "ext-libxml": "*"
   },
   "license": "GPL-3.0",
   "authors": [
