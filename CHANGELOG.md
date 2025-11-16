@@ -11,9 +11,27 @@ All notable changes to this project will be documented in this file.
 - Migrate custom fields script: investigate and validate the transformation from Jira Context to separate custom fields in Redmine.
 - Migrate custom fields script: investigate usage based on the migrate issues script, jira phase.
 - Fine-tune the attachments, issues, and journals scripts.
-- Investigate: "att.created_at IS NULL" is always false in the query.
-- Create and document new scripts, before 13_migrate_tags.php, to migrate / define subtasks in Redmine, and a script to migrate / define relations to Redmine. If that information has not yet been retrieved or retrieved in a good way, some other scripts and database schemas might need adjustments.
+- Migrate custom issues and journals scripts: download the html jira description to the database and the attachments metadata (names, id, ...) so we can use that information to create the redmine content.
+- Migrate custom issues and journals scripts: find a solution to convert the html to markdown, preserving the new Redmine names for the attachments and things alike. Preferably using an existing mechanism or library to convert to markdown (CommonMark variant).
 - Create the missing scripts.
+
+## [0.0.23] - 2025-11-25
+
+- Teach `11_migrate_issues.php` to persist Jira issue link metadata in the new
+  `staging_jira_issue_links` table so downstream scripts can reason about
+  relation directionality, and relax `staging_jira_attachments.created_at` to
+  accept `NULL` values so the association hint fallback works when Jira omits a
+  timestamp. The CLI now reports version `0.0.23`.
+- Introduce `13_migrate_subtasks.php` to analyse Jira parent/child pairs and
+  update the corresponding Redmine `parent_issue_id` assignments with optional
+  dry-run previews and automation-hash preservation.
+- Add `14_migrate_issue_relations.php` plus the
+  `migration_mapping_issue_relations` table to map Jira links to Redmine relation
+  types, queue rows for review, and create the final relations via the Redmine
+  REST API.
+- Document the new workflow in the README, extend the script order table with
+  the subtask/relation steps, and describe the new CLIs so operators know how to
+  run them before the tags migration.
 
 ## [0.0.22] - 2025-11-24
 

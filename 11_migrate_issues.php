@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.22';
+const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.23';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issues into staging_jira_issues (and related staging tables).',
     'transform' => 'Reconcile Jira issues with Redmine dependencies to populate migration mappings.',
@@ -319,6 +319,49 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
         throw new RuntimeException('Failed to prepare insert statement for staging_jira_attachments.');
     }
 
+    $insertIssueLinkStatement = $pdo->prepare(<<<SQL
+        INSERT INTO staging_jira_issue_links (
+            link_id,
+            source_issue_id,
+            source_issue_key,
+            target_issue_id,
+            target_issue_key,
+            link_type_id,
+            link_type_name,
+            link_type_inward,
+            link_type_outward,
+            raw_payload,
+            extracted_at
+        ) VALUES (
+            :link_id,
+            :source_issue_id,
+            :source_issue_key,
+            :target_issue_id,
+            :target_issue_key,
+            :link_type_id,
+            :link_type_name,
+            :link_type_inward,
+            :link_type_outward,
+            :raw_payload,
+            :extracted_at
+        )
+        ON DUPLICATE KEY UPDATE
+            source_issue_id = VALUES(source_issue_id),
+            source_issue_key = VALUES(source_issue_key),
+            target_issue_id = VALUES(target_issue_id),
+            target_issue_key = VALUES(target_issue_key),
+            link_type_id = VALUES(link_type_id),
+            link_type_name = VALUES(link_type_name),
+            link_type_inward = VALUES(link_type_inward),
+            link_type_outward = VALUES(link_type_outward),
+            raw_payload = VALUES(raw_payload),
+            extracted_at = VALUES(extracted_at)
+    SQL);
+
+    if ($insertIssueLinkStatement === false) {
+        throw new RuntimeException('Failed to prepare insert statement for staging_jira_issue_links.');
+    }
+
     $projectSql = <<<SQL
         SELECT p.project_key, p.id AS jira_project_id
         FROM migration_mapping_projects AS map
@@ -576,6 +619,60 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
                         ]);
 
                         $totalAttachmentsProcessed++;
+                    }
+                }
+
+                if (isset($fields['issuelinks']) && is_array($fields['issuelinks'])) {
+                    foreach ($fields['issuelinks'] as $issueLink) {
+                        if (!is_array($issueLink) || !isset($issueLink['id'])) {
+                            continue;
+                        }
+
+                        $linkId = (string)$issueLink['id'];
+                        $linkType = isset($issueLink['type']) && is_array($issueLink['type']) ? $issueLink['type'] : [];
+                        $linkTypeId = isset($linkType['id']) ? (string)$linkType['id'] : null;
+                        $linkTypeName = isset($linkType['name']) ? (string)$linkType['name'] : null;
+                        $linkTypeInward = isset($linkType['inward']) ? (string)$linkType['inward'] : null;
+                        $linkTypeOutward = isset($linkType['outward']) ? (string)$linkType['outward'] : null;
+
+                        $sourceIssueId = $issueId;
+                        $sourceIssueKey = $issueKey;
+                        $targetIssueId = null;
+                        $targetIssueKey = null;
+
+                        if (isset($issueLink['outwardIssue']) && is_array($issueLink['outwardIssue'])) {
+                            $targetIssueId = isset($issueLink['outwardIssue']['id']) ? (string)$issueLink['outwardIssue']['id'] : null;
+                            $targetIssueKey = isset($issueLink['outwardIssue']['key']) ? (string)$issueLink['outwardIssue']['key'] : null;
+                        } elseif (isset($issueLink['inwardIssue']) && is_array($issueLink['inwardIssue'])) {
+                            $sourceIssueId = isset($issueLink['inwardIssue']['id']) ? (string)$issueLink['inwardIssue']['id'] : null;
+                            $sourceIssueKey = isset($issueLink['inwardIssue']['key']) ? (string)$issueLink['inwardIssue']['key'] : null;
+                            $targetIssueId = $issueId;
+                            $targetIssueKey = $issueKey;
+                        }
+
+                        if ($sourceIssueId === null || $targetIssueId === null || $sourceIssueKey === null || $targetIssueKey === null) {
+                            continue;
+                        }
+
+                        try {
+                            $linkPayload = json_encode($issueLink, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                        } catch (JsonException $exception) {
+                            throw new RuntimeException('Failed to encode Jira issue link payload: ' . $exception->getMessage(), 0, $exception);
+                        }
+
+                        $insertIssueLinkStatement->execute([
+                            'link_id' => $linkId,
+                            'source_issue_id' => $sourceIssueId,
+                            'source_issue_key' => $sourceIssueKey,
+                            'target_issue_id' => $targetIssueId,
+                            'target_issue_key' => $targetIssueKey,
+                            'link_type_id' => $linkTypeId,
+                            'link_type_name' => $linkTypeName,
+                            'link_type_inward' => $linkTypeInward,
+                            'link_type_outward' => $linkTypeOutward,
+                            'raw_payload' => $linkPayload,
+                            'extracted_at' => $now,
+                        ]);
                     }
                 }
             }

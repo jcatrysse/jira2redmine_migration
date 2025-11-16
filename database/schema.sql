@@ -569,6 +569,45 @@ CREATE TABLE `migration_mapping_issues` (
                                             UNIQUE KEY `uk_jira_issue_key` (`jira_issue_key`)
 ) COMMENT='Mapping and status for Issue migration.';
 
+CREATE TABLE `staging_jira_issue_links` (
+                                             `link_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                             `source_issue_id` VARCHAR(255) NOT NULL,
+                                             `source_issue_key` VARCHAR(255) NOT NULL,
+                                             `target_issue_id` VARCHAR(255) NOT NULL,
+                                             `target_issue_key` VARCHAR(255) NOT NULL,
+                                             `link_type_id` VARCHAR(255) NULL,
+                                             `link_type_name` VARCHAR(255) NULL,
+                                             `link_type_inward` VARCHAR(255) NULL,
+                                             `link_type_outward` VARCHAR(255) NULL,
+                                             `raw_payload` JSON NOT NULL,
+                                             `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                             KEY `idx_issue_links_source` (`source_issue_id`),
+                                             KEY `idx_issue_links_target` (`target_issue_id`)
+) COMMENT='Canonical view of Jira issue links (one row per relation).';
+
+CREATE TABLE `migration_mapping_issue_relations` (
+                                                    `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
+                                                    `jira_link_id` VARCHAR(255) NOT NULL,
+                                                    `jira_source_issue_id` VARCHAR(255) NOT NULL,
+                                                    `jira_source_issue_key` VARCHAR(255) NOT NULL,
+                                                    `jira_target_issue_id` VARCHAR(255) NOT NULL,
+                                                    `jira_target_issue_key` VARCHAR(255) NOT NULL,
+                                                    `jira_link_type_id` VARCHAR(255) NULL,
+                                                    `jira_link_type_name` VARCHAR(255) NULL,
+                                                    `jira_link_type_inward` VARCHAR(255) NULL,
+                                                    `jira_link_type_outward` VARCHAR(255) NULL,
+                                                    `redmine_issue_from_id` INT NULL,
+                                                    `redmine_issue_to_id` INT NULL,
+                                                    `redmine_relation_id` INT NULL,
+                                                    `proposed_relation_type` VARCHAR(50) NULL,
+                                                    `migration_status` ENUM('PENDING_ANALYSIS', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
+                                                    `notes` TEXT,
+                                                    `automation_hash` CHAR(64) NULL,
+                                                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                    `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                    UNIQUE KEY `uk_jira_issue_relation` (`jira_link_id`)
+) COMMENT='Mapping table for Jira issue links queued for Redmine relation creation.';
+
 -- ================================================================
 -- Table Set 11: Issue Journals (Comments & History)
 -- ================================================================
@@ -616,7 +655,7 @@ CREATE TABLE `staging_jira_attachments` (
                                             `issue_id` VARCHAR(255) NOT NULL,
                                             `filename` VARCHAR(255) NOT NULL,
                                             `author_account_id` VARCHAR(255),
-                                            `created_at` DATETIME NOT NULL,
+                                            `created_at` DATETIME NULL,
                                             `size_bytes` BIGINT NOT NULL,
                                             `mime_type` VARCHAR(255),
                                             `content_url` TEXT NOT NULL,

@@ -136,8 +136,10 @@ The migration must be executed in the following order to respect data dependenci
 | 9     | `09_assign_members.php`        | Project Memberships | Assigns migrated users and groups to migrated projects with the appropriate roles. **Depends on Users, Groups, Roles, Projects.**                         |
 | 10    | `10_migrate_attachments.php`   | Attachments         | Keeps attachment metadata in sync, downloads the selected Jira binaries into `tmp/attachments/jira`, and uploads curated batches to Redmine for token issuance while tagging each file for issue vs. journal association. **Depends on fresh issue staging data.** |
 | 11    | `11_migrate_issues.php`        | Issues              | Creates Redmine issues from staged Jira data, linking pre-uploaded attachment tokens and capturing the resulting Redmine identifiers.                         |
-| 12    | `12_migrate_journals.php`      | Comments & History  | Migrates Jira comments and changelog entries after issues exist, reusing journal-scoped attachment tokens where necessary. **Depends on Issues & Attachments.**                                                                                           |
-| 13    | `13_migrate_tags.php`          | Tags (Labels)       | Extracts all unique labels from Jira issues and creates them as tags in Redmine. **Depends on Issues (Extract phase).**                                   |
+| 12    | `12_migrate_journals.php`      | Comments & History  | Migrates Jira comments and changelog entries after issues exist, reusing journal-scoped attachment tokens where necessary. **Depends on Issues & Attachments.**                                                           |
+| 13    | `13_migrate_subtasks.php`      | Subtasks            | Reconciles Jira parent/child relationships once both issues exist in Redmine and applies the matching `parent_issue_id` updates. **Depends on Issues (Push phase).** |
+| 14    | `14_migrate_issue_relations.php` | Issue Relations    | Maps Jira issue links to Redmine relation types and creates them once both sides exist. **Depends on Issues (Push phase).** |
+| 15    | `15_migrate_tags.php`          | Tags (Labels)       | Extracts all unique labels from Jira issues and creates them as tags in Redmine. **Depends on Issues (Extract phase).**                                   |
 
 
 
@@ -808,4 +810,83 @@ php 12_migrate_journals.php --help
 > **Prerequisites:** run `11_migrate_issues.php --phases=push --confirm-push` to
 > create the parent issues first, and make sure the attachment migration has
 > produced tokens for any binaries referenced by later comments.
+
+## 16. Running `13_migrate_subtasks.php`
+
+Once both parent and child issues exist in Redmine you can replay Jira's
+subtask hierarchy. `13_migrate_subtasks.php` inspects
+`migration_mapping_issues`, resolves the Redmine identifiers for each parent
+issue, and updates the child records via `PUT /issues/:id.json` so their
+`parent_issue_id` mirrors Jira.
+
+```bash
+php 13_migrate_subtasks.php --help
+```
+
+### Available options
+
+| Option            | Description                                                                 |
+|-------------------|-----------------------------------------------------------------------------|
+| `-h`, `--help`    | Print usage information and exit.                                           |
+| `-V`, `--version` | Display the script version (`0.0.1`).                                       |
+| `--phases=<list>` | Comma-separated list of phases to run (default: `analyse,push`).            |
+| `--skip=<list>`   | Comma-separated list of phases to skip.                                     |
+| `--confirm-push`  | Required toggle to update parent assignments in Redmine.                    |
+| `--dry-run`       | Preview the child/parent pairs that would be updated without API calls.     |
+
+### Workflow highlights
+
+1. **Analyse (`analyse`)** – summarises every Jira subtask, flags rows that are
+   still waiting on a parent or child Redmine ID, and skips mapping rows that
+   carry manual overrides (`automation_hash` mismatch).
+2. **Push (`push`)** – applies each ready parent assignment. Dry runs log the
+   affected Jira key and Redmine IDs; confirmed runs call `PUT /issues/:id.json`
+   and persist the new `redmine_parent_issue_id` plus a refreshed
+   `automation_hash` so future transforms remain idempotent.
+
+> **Prerequisites:** run `11_migrate_issues.php --phases=push --confirm-push`
+> so both the parent and child issues exist in Redmine. Re-run the subtask
+> script after large batches of issues complete; it is safe to reapply the
+> relationships because the script skips already-linked records.
+
+## 17. Running `14_migrate_issue_relations.php`
+
+Jira issue links (blocks, relates, duplicates, …) translate to Redmine's issue
+relations. `14_migrate_issue_relations.php` now consumes the canonical link
+snapshot stored in `staging_jira_issue_links`, matches both sides against
+`migration_mapping_issues`, proposes the closest Redmine relation type, and
+optionally creates the relation via `POST /relations.json`.
+
+```bash
+php 14_migrate_issue_relations.php --help
+```
+
+### Available options
+
+| Option            | Description                                                                 |
+|-------------------|-----------------------------------------------------------------------------|
+| `-h`, `--help`    | Print usage information and exit.                                           |
+| `-V`, `--version` | Display the script version (`0.0.1`).                                       |
+| `--phases=<list>` | Comma-separated list of phases to run (default: `transform,push`).          |
+| `--skip=<list>`   | Comma-separated list of phases to skip.                                     |
+| `--confirm-push`  | Required toggle to create relations in Redmine.                             |
+| `--dry-run`       | Preview the Redmine issue pairs and relation types without API calls.       |
+
+### Workflow highlights
+
+1. **Synchronise & transform (`transform`)** – inserts missing rows into
+   `migration_mapping_issue_relations`, joins them with the issue mapping table,
+   and derives `proposed_relation_type` heuristically (blocks, relates,
+   duplicates, precedes/follows, or copied). Rows missing Redmine issue IDs or a
+   confident relation type are flagged as
+   `MANUAL_INTERVENTION_REQUIRED` with helpful notes.
+2. **Push (`push`)** – iterates over rows in `READY_FOR_CREATION`, posting each
+   relation to Redmine. Success updates record the Redmine relation ID and clear
+   any diagnostic notes. Dry-run output mirrors the payload so you can double
+   check directionality before confirming the push.
+
+> **Prerequisites:** rerun `11_migrate_issues.php --phases=push --confirm-push`
+> until every linked Jira issue has a Redmine counterpart. The relation script
+> only acts on canonical link rows, so you can re-run the transform/push cycle
+> as often as needed without creating duplicate relations.
 
