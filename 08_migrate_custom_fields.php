@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.12';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.13';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
     'usage' => 'Analyse Jira custom field usage statistics from staging data.',
@@ -192,6 +192,19 @@ function main(array $config, array $cliOptions): void
             foreach ($transformSummary['status_counts'] as $status => $count) {
                 printf("  - %-32s %d%s", $status, $count, PHP_EOL);
             }
+        }
+
+        if (isset($transformSummary['object_field_stats'])) {
+            $objectStats = $transformSummary['object_field_stats'];
+            printf(
+                "  Object field mapping proposals: %d analysed, %d created, %d updated, %d unchanged, %d missing samples.%s",
+                $objectStats['evaluated'],
+                $objectStats['created'],
+                $objectStats['updated'],
+                $objectStats['unchanged'],
+                $objectStats['missing_samples'],
+                PHP_EOL
+            );
         }
     } else {
         printf(
@@ -2465,6 +2478,8 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
 
     $summary['status_counts'] = fetchCustomFieldMigrationStatusCounts($pdo);
 
+    $summary['object_field_stats'] = updateObjectFieldMappingProposals($pdo);
+
     return $summary;
 }
 
@@ -2571,6 +2586,268 @@ function refreshCustomFieldMetadata(PDO $pdo): void
         $pdo->exec($sql);
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to refresh Jira custom field metadata in migration_mapping_custom_fields: ' . $exception->getMessage(), 0, $exception);
+    }
+}
+
+/**
+ * @return array{evaluated: int, created: int, updated: int, unchanged: int, missing_samples: int}
+ */
+function updateObjectFieldMappingProposals(PDO $pdo): array
+{
+    $definitions = loadObjectFieldDefinitionsForCustomFields($pdo);
+    if ($definitions === []) {
+        return [
+            'evaluated' => 0,
+            'created' => 0,
+            'updated' => 0,
+            'unchanged' => 0,
+            'missing_samples' => 0,
+        ];
+    }
+
+    $statsStatement = $pdo->prepare(<<<SQL
+        SELECT
+            COUNT(*) AS kv_count,
+            COUNT(DISTINCT issue_key) AS issue_count,
+            MAX(ordinal) AS max_ordinal
+        FROM staging_jira_object_kv
+        WHERE field_id = :field_id
+    SQL);
+
+    $pathStatement = $pdo->prepare(<<<SQL
+        SELECT path, COUNT(*) AS path_count, MAX(ordinal) AS max_ordinal
+        FROM staging_jira_object_kv
+        WHERE field_id = :field_id
+        GROUP BY path
+        ORDER BY path_count DESC
+        LIMIT 10
+    SQL);
+
+    $typeStatement = $pdo->prepare(<<<SQL
+        SELECT value_type, COUNT(*) AS type_count
+        FROM staging_jira_object_kv
+        WHERE field_id = :field_id
+        GROUP BY value_type
+        ORDER BY type_count DESC
+        LIMIT 1
+    SQL);
+
+    $existingStatement = $pdo->prepare(<<<SQL
+        SELECT proposal_hash
+        FROM migration_mapping_custom_object
+        WHERE jira_field_id = :field_id AND path IS NULL AND source = 'inferred'
+        LIMIT 1
+    SQL);
+
+    $upsertStatement = $pdo->prepare(<<<SQL
+        INSERT INTO migration_mapping_custom_object (
+            jira_field_id,
+            jira_field_name,
+            jira_schema_custom,
+            path,
+            target_field_name,
+            target_field_format,
+            target_is_multiple,
+            value_source_path,
+            key_source_path,
+            source,
+            notes,
+            proposal_hash,
+            created_at,
+            last_updated_at
+        ) VALUES (
+            :jira_field_id,
+            :jira_field_name,
+            :jira_schema_custom,
+            NULL,
+            :target_field_name,
+            :target_field_format,
+            :target_is_multiple,
+            :value_source_path,
+            :key_source_path,
+            'inferred',
+            :notes,
+            :proposal_hash,
+            NOW(),
+            NOW()
+        )
+        ON DUPLICATE KEY UPDATE
+            jira_field_name = VALUES(jira_field_name),
+            jira_schema_custom = VALUES(jira_schema_custom),
+            target_field_name = VALUES(target_field_name),
+            target_field_format = VALUES(target_field_format),
+            target_is_multiple = VALUES(target_is_multiple),
+            value_source_path = VALUES(value_source_path),
+            key_source_path = VALUES(key_source_path),
+            notes = VALUES(notes),
+            proposal_hash = VALUES(proposal_hash),
+            last_updated_at = VALUES(last_updated_at)
+    SQL);
+
+    foreach ([$statsStatement, $pathStatement, $typeStatement, $existingStatement, $upsertStatement] as $statement) {
+        if ($statement === false) {
+            throw new RuntimeException('Failed to prepare object field mapping statements.');
+        }
+    }
+
+    $summary = [
+        'evaluated' => 0,
+        'created' => 0,
+        'updated' => 0,
+        'unchanged' => 0,
+        'missing_samples' => 0,
+    ];
+
+    foreach ($definitions as $fieldId => $definition) {
+        $summary['evaluated']++;
+
+        $statsStatement->execute(['field_id' => $fieldId]);
+        $statsRow = $statsStatement->fetch(PDO::FETCH_ASSOC) ?: ['kv_count' => 0, 'issue_count' => 0, 'max_ordinal' => 0];
+        $kvCount = (int)$statsRow['kv_count'];
+        $issueCount = (int)$statsRow['issue_count'];
+        $maxOrdinal = (int)($statsRow['max_ordinal'] ?? 0);
+
+        $pathStatement->execute(['field_id' => $fieldId]);
+        $pathRows = $pathStatement->fetchAll(PDO::FETCH_ASSOC);
+        $paths = array_map(static fn(array $row) => (string)$row['path'], $pathRows);
+
+        $typeStatement->execute(['field_id' => $fieldId]);
+        $typeRow = $typeStatement->fetch(PDO::FETCH_ASSOC) ?: ['value_type' => 'string'];
+        $dominantType = isset($typeRow['value_type']) ? (string)$typeRow['value_type'] : 'string';
+
+        $isArray = $maxOrdinal > 0;
+        $enumLike = in_array('id', $paths, true) && in_array('name', $paths, true);
+        $dominantPath = $paths !== [] ? $paths[0] : null;
+
+        if ($kvCount === 0) {
+            $summary['missing_samples']++;
+        }
+
+        if ($enumLike) {
+            $targetFormat = 'key_value_list';
+            $valueSourcePath = 'name';
+            $keySourcePath = 'id';
+        } else {
+            $valueSourcePath = $dominantPath;
+            $keySourcePath = null;
+            $targetFormat = match ($dominantType) {
+                'boolean' => 'bool',
+                'number' => 'int',
+                default => 'text',
+            };
+        }
+
+        $notes = [];
+        $notes[] = sprintf('Samples: %d rows across %d issue(s).', $kvCount, $issueCount);
+        if ($enumLike) {
+            $notes[] = 'Detected id/name object pattern.';
+        }
+        if ($isArray) {
+            $notes[] = 'Appears as an array field (multiple values).';
+        }
+        if ($valueSourcePath === null) {
+            $notes[] = 'No dominant path detected; inspect staging_jira_object_kv manually.';
+        }
+
+        $proposedName = $definition['name'] ?? $fieldId;
+        $proposalHash = computeObjectProposalHash(
+            $fieldId,
+            $definition['schema_custom'] ?? null,
+            $proposedName,
+            $targetFormat,
+            $isArray,
+            $valueSourcePath,
+            $keySourcePath,
+            implode(' ', $notes)
+        );
+
+        $existingStatement->execute(['field_id' => $fieldId]);
+        $existingHash = $existingStatement->fetchColumn();
+
+        $upsertStatement->execute([
+            'jira_field_id' => $fieldId,
+            'jira_field_name' => $definition['name'] ?? null,
+            'jira_schema_custom' => $definition['schema_custom'] ?? null,
+            'target_field_name' => $proposedName,
+            'target_field_format' => $targetFormat,
+            'target_is_multiple' => normalizeBooleanDatabaseValue($isArray),
+            'value_source_path' => $valueSourcePath,
+            'key_source_path' => $keySourcePath,
+            'notes' => implode(' ', $notes),
+            'proposal_hash' => $proposalHash,
+        ]);
+
+        if ($existingHash === false) {
+            $summary['created']++;
+        } elseif ($existingHash === $proposalHash) {
+            $summary['unchanged']++;
+        } else {
+            $summary['updated']++;
+        }
+    }
+
+    return $summary;
+}
+
+/**
+ * @return array<string, array{name: ?string, schema_custom: ?string}>
+ */
+function loadObjectFieldDefinitionsForCustomFields(PDO $pdo): array
+{
+    $sql = <<<SQL
+        SELECT id, name, schema_custom
+        FROM staging_jira_fields
+        WHERE schema_type = 'object'
+    SQL;
+
+    $statement = $pdo->query($sql);
+    if ($statement === false) {
+        return [];
+    }
+
+    /** @var array<int, array{id: string, name?: ?string, schema_custom?: ?string}> $rows */
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+    $definitions = [];
+    foreach ($rows as $row) {
+        $fieldId = (string)$row['id'];
+        if ($fieldId === '') {
+            continue;
+        }
+
+        $definitions[$fieldId] = [
+            'name' => isset($row['name']) ? (string)$row['name'] : null,
+            'schema_custom' => isset($row['schema_custom']) ? (string)$row['schema_custom'] : null,
+        ];
+    }
+
+    return $definitions;
+}
+
+function computeObjectProposalHash(
+    string $fieldId,
+    ?string $schemaCustom,
+    ?string $targetFieldName,
+    string $targetFieldFormat,
+    bool $targetIsMultiple,
+    ?string $valueSourcePath,
+    ?string $keySourcePath,
+    string $notes
+): string {
+    $payload = [
+        'field_id' => $fieldId,
+        'schema_custom' => $schemaCustom,
+        'target_field_name' => $targetFieldName,
+        'target_field_format' => $targetFieldFormat,
+        'target_is_multiple' => $targetIsMultiple,
+        'value_source_path' => $valueSourcePath,
+        'key_source_path' => $keySourcePath,
+        'notes' => $notes,
+    ];
+
+    try {
+        return sha1(json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    } catch (JsonException $exception) {
+        throw new RuntimeException('Failed to compute object proposal hash: ' . $exception->getMessage(), 0, $exception);
     }
 }
 
@@ -2762,6 +3039,30 @@ function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): ar
 
     if ($normalizedType !== null) {
         switch ($normalizedType) {
+            case 'object':
+                $result['field_format'] = 'text';
+                $result['note'] = 'Object-type Jira field; review inferred proposals in migration_mapping_custom_object.';
+                break;
+            case 'team':
+            case 'sd-customerrequesttype':
+                $result['field_format'] = 'list';
+                $result['requires_possible_values'] = true;
+                $result['note'] = 'App/Service Desk selector; will derive option labels from Jira allowed values. Consider a key/value list if you need stable IDs.';
+                break;
+            case 'option':
+            case 'option2':
+                $result['field_format'] = 'list';
+                $result['requires_possible_values'] = true;
+                $result['note'] = 'Single-select option field; populating Redmine list from Jira allowed values.';
+                break;
+            case 'sd-approvals':
+                $result['field_format'] = 'text';
+                $result['note'] = 'Service Desk approvals payload; defaulting to text. Consider manual mapping if approvals must be preserved.';
+                break;
+            case 'any':
+                $result['field_format'] = 'text';
+                $result['note'] = 'Generic "any" schema from Jira; defaulting to text capture.';
+                break;
             case 'string':
                 $result['field_format'] = 'string';
                 break;

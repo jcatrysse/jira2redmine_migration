@@ -367,6 +367,31 @@ CREATE TABLE `staging_jira_field_usage` (
                                            CONSTRAINT `fk_jira_field_usage_field` FOREIGN KEY (`field_id`) REFERENCES `staging_jira_fields` (`id`) ON DELETE CASCADE
 ) COMMENT='Aggregated usage statistics for Jira custom fields across staging entities.';
 
+CREATE TABLE `staging_jira_object_samples` (
+                                                 `sample_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                                                 `field_id` VARCHAR(255) NOT NULL,
+                                                 `issue_key` VARCHAR(255) NOT NULL,
+                                                 `ordinal` INT NOT NULL DEFAULT 0,
+                                                 `is_array` BOOLEAN NOT NULL DEFAULT 0,
+                                                 `raw_json` JSON NOT NULL,
+                                                 `captured_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                 UNIQUE KEY `uk_object_sample_issue` (`field_id`, `issue_key`, `ordinal`),
+                                                 KEY `idx_object_sample_field` (`field_id`)
+) COMMENT='Raw samples for Jira custom fields with schema.type = object.';
+
+CREATE TABLE `staging_jira_object_kv` (
+                                           `kv_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                                           `field_id` VARCHAR(255) NOT NULL,
+                                           `issue_key` VARCHAR(255) NOT NULL,
+                                           `path` VARCHAR(255) NOT NULL,
+                                           `ordinal` INT NOT NULL DEFAULT 0,
+                                           `value_type` VARCHAR(32) NOT NULL,
+                                           `value_text` TEXT NULL,
+                                           `captured_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                           KEY `idx_object_kv_field_path` (`field_id`, `path`),
+                                           KEY `idx_object_kv_issue` (`issue_key`)
+) COMMENT='Flattened key/value pairs extracted from Jira object-type custom fields.';
+
 CREATE TABLE `staging_redmine_custom_fields` (
                                                  `id` INT NOT NULL PRIMARY KEY,
                                                  `name` VARCHAR(255) NOT NULL,
@@ -418,6 +443,25 @@ CREATE TABLE `migration_mapping_custom_fields` (
                                                    `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                                                    UNIQUE KEY `uk_jira_field_context` (`jira_field_id`, `context_scope_hash`)
 ) COMMENT='Mapping and status for Custom Field migration.';
+
+CREATE TABLE `migration_mapping_custom_object` (
+                                                   `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
+                                                   `jira_field_id` VARCHAR(255) NOT NULL,
+                                                   `jira_field_name` VARCHAR(255) NULL,
+                                                   `jira_schema_custom` VARCHAR(255) NULL,
+                                                   `path` VARCHAR(255) NULL,
+                                                   `target_field_name` VARCHAR(255) NULL,
+                                                   `target_field_format` VARCHAR(64) NULL,
+                                                   `target_is_multiple` BOOLEAN NULL,
+                                                   `value_source_path` VARCHAR(255) NULL,
+                                                   `key_source_path` VARCHAR(255) NULL,
+                                                   `source` ENUM('inferred', 'manual') NOT NULL DEFAULT 'inferred',
+                                                   `notes` TEXT NULL,
+                                                   `proposal_hash` CHAR(64) NULL,
+                                                   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                   `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                   UNIQUE KEY `uk_object_mapping` (`jira_field_id`, `path`, `source`)
+) COMMENT='Mapping proposals for Jira object-type custom fields.';
 
 -- ================================================================
 -- Table Set 8: Projects

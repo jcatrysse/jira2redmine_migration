@@ -117,6 +117,91 @@ reporting tools before deciding which custom fields to recreate in Redmine. Run
 `php 11_migrate_issues.php --phases=jira` beforehand to refresh the staged issue
 catalogue when you want to analyse new or updated Jira data.
 
+### Object-type Jira custom fields
+
+Jira Cloud occasionally delivers custom fields with `schema.type = "object"`
+that hold arbitrary JSON from marketplace apps. To normalise those fields the
+issue extractor now snapshots sample values in
+`staging_jira_object_samples` and flattens the leaves into
+`staging_jira_object_kv` (one row per dot-path and array ordinal). The custom
+field transform consumes those shapes and writes inferred proposals into
+`migration_mapping_custom_object`, hinting whether a Redmine Key/Value list,
+dependent list, or plain text field would be appropriate. Review these
+proposals alongside the standard custom field mappings before pushing.
+
+Other Jira schema types that frequently landed in **Manual review** now have
+defaults: `team` and `sd-customerrequesttype` are treated as Redmine lists fed
+from Jira allowed values, `option`/`option2` map to plain lists, while
+`sd-approvals` and the catch-all `any` type fall back to text fields. You can
+override these proposals in `migration_mapping_custom_fields` as needed.
+
+### Recommended cross-script phase order
+
+Some phases depend on data staged by earlier scripts. When you want to split
+work across multiple runs (for example to analyse custom field usage before
+creating fields), use the following minimal ordering:
+
+1. **Custom fields (extract only)** – stage the Jira field catalogue and keep
+   the mapping tables up to date:
+
+   ```bash
+   php 08_migrate_custom_fields.php --phases=jira
+   ```
+
+2. **Issues (extract only)** – stage Jira issues so the usage analysis and
+   object-field shape analysis have data to read:
+
+   ```bash
+   php 11_migrate_issues.php --phases=jira
+   ```
+
+3. **Custom fields (analysis and mapping)** – reuse the staged issue payloads
+   to compute usage statistics, flatten object-field samples, and generate
+   mapping proposals before creating any Redmine fields:
+
+   ```bash
+   php 08_migrate_custom_fields.php --phases=usage,transform --dry-run
+   ```
+
+4. **Custom fields (push)** – once mappings look good, create/update the
+   Redmine fields. Add `--confirm-push` only after reviewing the dry run.
+
+   ```bash
+   php 08_migrate_custom_fields.php --phases=push --use-extended-api --dry-run
+   php 08_migrate_custom_fields.php --phases=push --use-extended-api --confirm-push
+   ```
+
+5. **Issues (transform + push)** – build Redmine issue payloads with the newly
+   created custom fields available and push them, reusing attachment and
+   custom-field mappings:
+
+   ```bash
+   php 11_migrate_issues.php --phases=transform,push --confirm-push
+   ```
+
+This ordering keeps the database-driven analyses deterministic: the custom
+field usage and object-shape transforms only read the already staged issue
+payloads, and the issue push waits until the target custom fields exist in
+Redmine.
+
+### Object-type Jira custom fields
+
+Jira Cloud occasionally delivers custom fields with `schema.type = "object"`
+that hold arbitrary JSON from marketplace apps. To normalise those fields the
+issue extractor now snapshots sample values in
+`staging_jira_object_samples` and flattens the leaves into
+`staging_jira_object_kv` (one row per dot-path and array ordinal). The custom
+field transform consumes those shapes and writes inferred proposals into
+`migration_mapping_custom_object`, hinting whether a Redmine Key/Value list,
+dependent list, or plain text field would be appropriate. Review these
+proposals alongside the standard custom field mappings before pushing.
+
+Other Jira schema types that frequently landed in **Manual review** now have
+defaults: `team` and `sd-customerrequesttype` are treated as Redmine lists fed
+from Jira allowed values, `option`/`option2` map to plain lists, while
+`sd-approvals` and the catch-all `any` type fall back to text fields. You can
+override these proposals in `migration_mapping_custom_fields` as needed.
+
 ---
 
 ## 3. The Migration Process: Step-by-Step

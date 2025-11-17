@@ -11,7 +11,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use League\HTMLToMarkdown\HtmlConverter;
 
-const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.25';
+const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.26';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issues into staging_jira_issues (and related staging tables).',
     'transform' => 'Reconcile Jira issues with Redmine dependencies to populate migration mappings.',
@@ -86,12 +86,14 @@ function main(array $config, array $cliOptions): void
         $attachmentSyncSummary = syncAttachmentMappings($pdo);
 
         printf(
-            "[%s] Completed Jira extraction. Issues: %d (updated %d), Attachments: %d metadata, Labels captured: %d.%s",
+            "[%s] Completed Jira extraction. Issues: %d (updated %d), Attachments: %d metadata, Labels captured: %d, Object samples: %d, Flattened rows: %d.%s",
             formatCurrentTimestamp(),
             $jiraSummary['issues_processed'],
             $jiraSummary['issues_updated'],
             $jiraSummary['attachments_processed'],
             $jiraSummary['labels_processed'],
+            $jiraSummary['object_samples_processed'],
+            $jiraSummary['object_kv_rows'],
             PHP_EOL
         );
 
@@ -166,7 +168,7 @@ function main(array $config, array $cliOptions): void
 }
 /**
  * @param array<string, mixed> $config
- * @return array{issues_processed: int, issues_updated: int, attachments_processed: int, labels_processed: int}
+ * @return array{issues_processed: int, issues_updated: int, attachments_processed: int, labels_processed: int, object_samples_processed: int, object_kv_rows: int}
  * @throws Throwable
  */
 function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
@@ -197,7 +199,71 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
     $totalIssuesUpdated = 0;
     $totalAttachmentsProcessed = 0;
     $totalLabelsProcessed = 0;
+    $totalObjectSamples = 0;
+    $totalObjectKvRows = 0;
     $now = formatCurrentTimestamp('Y-m-d H:i:s');
+
+    $objectFieldDefinitions = loadObjectFieldDefinitions($pdo);
+
+    $deleteObjectSamples = null;
+    $deleteObjectKv = null;
+    $insertObjectSample = null;
+    $insertObjectKv = null;
+
+    if ($objectFieldDefinitions !== []) {
+        $deleteObjectSamples = $pdo->prepare('DELETE FROM staging_jira_object_samples WHERE issue_key = :issue_key');
+        $deleteObjectKv = $pdo->prepare('DELETE FROM staging_jira_object_kv WHERE issue_key = :issue_key');
+
+        $insertObjectSample = $pdo->prepare(<<<SQL
+            INSERT INTO staging_jira_object_samples (
+                field_id,
+                issue_key,
+                ordinal,
+                is_array,
+                raw_json,
+                captured_at
+            ) VALUES (
+                :field_id,
+                :issue_key,
+                :ordinal,
+                :is_array,
+                :raw_json,
+                :captured_at
+            )
+            ON DUPLICATE KEY UPDATE
+                is_array = VALUES(is_array),
+                raw_json = VALUES(raw_json),
+                captured_at = VALUES(captured_at)
+        SQL);
+
+        if ($insertObjectSample === false || $deleteObjectSamples === false) {
+            throw new RuntimeException('Failed to prepare statements for staging_jira_object_samples.');
+        }
+
+        $insertObjectKv = $pdo->prepare(<<<SQL
+            INSERT INTO staging_jira_object_kv (
+                field_id,
+                issue_key,
+                path,
+                ordinal,
+                value_type,
+                value_text,
+                captured_at
+            ) VALUES (
+                :field_id,
+                :issue_key,
+                :path,
+                :ordinal,
+                :value_type,
+                :value_text,
+                :captured_at
+            )
+        SQL);
+
+        if ($insertObjectKv === false || $deleteObjectKv === false) {
+            throw new RuntimeException('Failed to prepare statements for staging_jira_object_kv.');
+        }
+    }
 
     $insertIssueStatement = $pdo->prepare(<<<SQL
         INSERT INTO staging_jira_issues (
@@ -592,6 +658,87 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
                     'extracted_at' => $now,
                 ]);
 
+                if ($objectFieldDefinitions !== []) {
+                    $deleteObjectSamples->execute(['issue_key' => $issueKey]);
+                    $deleteObjectKv->execute(['issue_key' => $issueKey]);
+
+                    foreach ($objectFieldDefinitions as $fieldId => $fieldMeta) {
+                        if (!array_key_exists($fieldId, $fields)) {
+                            continue;
+                        }
+
+                        $objectValue = $fields[$fieldId];
+                        if ($objectValue === null) {
+                            continue;
+                        }
+
+                        $isArray = isListArray($objectValue);
+                        $capturedAt = $now;
+
+                        if ($isArray) {
+                            foreach ($objectValue as $ordinal => $itemValue) {
+                                $rawJson = encodeJsonIfNotNull($itemValue);
+                                if ($rawJson === null) {
+                                    $rawJson = 'null';
+                                }
+
+                                $insertObjectSample->execute([
+                                    'field_id' => $fieldId,
+                                    'issue_key' => $issueKey,
+                                    'ordinal' => (int)$ordinal,
+                                    'is_array' => 1,
+                                    'raw_json' => $rawJson,
+                                    'captured_at' => $capturedAt,
+                                ]);
+                                $totalObjectSamples++;
+
+                                $flatRows = flattenObject($itemValue, '', [], (int)$ordinal);
+                                foreach ($flatRows as $flatRow) {
+                                    $insertObjectKv->execute([
+                                        'field_id' => $fieldId,
+                                        'issue_key' => $issueKey,
+                                        'path' => $flatRow['path'],
+                                        'ordinal' => $flatRow['ordinal'],
+                                        'value_type' => $flatRow['valueType'],
+                                        'value_text' => $flatRow['value'],
+                                        'captured_at' => $capturedAt,
+                                    ]);
+                                    $totalObjectKvRows++;
+                                }
+                            }
+                        } else {
+                            $rawJson = encodeJsonIfNotNull($objectValue);
+                            if ($rawJson === null) {
+                                $rawJson = 'null';
+                            }
+
+                            $insertObjectSample->execute([
+                                'field_id' => $fieldId,
+                                'issue_key' => $issueKey,
+                                'ordinal' => 0,
+                                'is_array' => is_array($objectValue) ? 1 : 0,
+                                'raw_json' => $rawJson,
+                                'captured_at' => $capturedAt,
+                            ]);
+                            $totalObjectSamples++;
+
+                            $flatRows = flattenObject($objectValue, '', [], 0);
+                            foreach ($flatRows as $flatRow) {
+                                $insertObjectKv->execute([
+                                    'field_id' => $fieldId,
+                                    'issue_key' => $issueKey,
+                                    'path' => $flatRow['path'],
+                                    'ordinal' => $flatRow['ordinal'],
+                                    'value_type' => $flatRow['valueType'],
+                                    'value_text' => $flatRow['value'],
+                                    'captured_at' => $capturedAt,
+                                ]);
+                                $totalObjectKvRows++;
+                            }
+                        }
+                    }
+                }
+
                 $rowCount = $insertIssueStatement->rowCount();
                 if ($rowCount === 1) {
                     $totalIssuesProcessed++;
@@ -730,7 +877,133 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
         'issues_updated' => $totalIssuesUpdated,
         'attachments_processed' => $totalAttachmentsProcessed,
         'labels_processed' => $totalLabelsProcessed,
+        'object_samples_processed' => $totalObjectSamples,
+        'object_kv_rows' => $totalObjectKvRows,
     ];
+}
+
+/**
+ * @return array<string, array{name: ?string, schema_custom: ?string}>
+ */
+function loadObjectFieldDefinitions(PDO $pdo): array
+{
+    $sql = <<<SQL
+        SELECT id, name, schema_custom
+        FROM staging_jira_fields
+        WHERE schema_type = 'object'
+    SQL;
+
+    $statement = $pdo->query($sql);
+    if ($statement === false) {
+        return [];
+    }
+
+    $definitions = [];
+    /** @var array<int, array{id: string, name?: ?string, schema_custom?: ?string}> $rows */
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($rows as $row) {
+        $fieldId = (string)$row['id'];
+        if ($fieldId === '') {
+            continue;
+        }
+
+        $definitions[$fieldId] = [
+            'name' => isset($row['name']) ? (string)$row['name'] : null,
+            'schema_custom' => isset($row['schema_custom']) ? (string)$row['schema_custom'] : null,
+        ];
+    }
+
+    return $definitions;
+}
+
+/**
+ * @param mixed $data
+ * @param string $prefix
+ * @param array<int, array{path: string, ordinal: int, value: string|null, valueType: string}> $out
+ * @param int $ordinal
+ * @return array<int, array{path: string, ordinal: int, value: string|null, valueType: string}>
+ */
+function flattenObject(mixed $data, string $prefix = '', array $out = [], int $ordinal = 0): array
+{
+    if (is_array($data)) {
+        $isAssoc = !isListArray($data);
+        if ($isAssoc) {
+            foreach ($data as $key => $value) {
+                $keyPath = ltrim(($prefix !== '' ? $prefix . '.' : '') . (string)$key, '.');
+                $out = flattenObject($value, $keyPath, $out, $ordinal);
+            }
+        } else {
+            foreach ($data as $index => $value) {
+                $out = flattenObject($value, $prefix, $out, (int)$index);
+            }
+        }
+    } else {
+        $valueType = determineValueType($data);
+        $path = $prefix !== '' ? $prefix : 'value';
+        $out[] = [
+            'path' => $path,
+            'ordinal' => $ordinal,
+            'value' => stringifyScalar($data),
+            'valueType' => $valueType,
+        ];
+    }
+
+    return $out;
+}
+
+/**
+ * @param mixed $value
+ */
+function determineValueType(mixed $value): string
+{
+    return match (true) {
+        is_bool($value) => 'boolean',
+        is_int($value), is_float($value) => 'number',
+        is_array($value) => 'array',
+        $value === null => 'null',
+        default => 'string',
+    };
+}
+
+/**
+ * @param mixed $value
+ * @return string|null
+ */
+function stringifyScalar(mixed $value): ?string
+{
+    if (is_bool($value)) {
+        return $value ? 'true' : 'false';
+    }
+
+    if (is_int($value) || is_float($value)) {
+        return (string)$value;
+    }
+
+    if ($value === null) {
+        return null;
+    }
+
+    if (is_scalar($value)) {
+        return trim((string)$value);
+    }
+
+    return null;
+}
+
+/**
+ * @param mixed $value
+ */
+function isListArray(mixed $value): bool
+{
+    if (!is_array($value)) {
+        return false;
+    }
+
+    if ($value === []) {
+        return true;
+    }
+
+    return array_keys($value) === range(0, count($value) - 1);
 }
 
 /**

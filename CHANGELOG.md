@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
 - Extend the custom field transform so it reads the latest usage snapshot,
   auto-ignores Jira custom fields that never appear in staged issues, and
   surfaces the usage statistics in the mapping notes to aid manual reviews.
+- First attempt to handle unsupported field types.
 - Surface an `Ignored (unused)` counter in the transform summary and bump the
   custom field CLI version to `0.0.12`.
 
