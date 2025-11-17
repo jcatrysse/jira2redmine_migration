@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [TODO]
 
 - Migrate trackers script: link trackers to projects in Redmine.
+- Migrate custom fields script: link custom fields to projects and trackers in Redmine
 - Migrate custom fields script: add support for datetime fields in redmine using https://github.com/jcatrysse/redmine_datetime_custom_field and the https://github.com/jcatrysse/redmine_extended_api for API access.
 - Migrate custom fields script: investigate unsupported field types (any, team, option, option-with-child, option2, sd-customerrequesttype, object, sd-approvals, ...)
 - Migrate custom fields script: investigate cascading fields and how to match them with https://github.com/jcatrysse/redmine_depending_custom_fields
@@ -15,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - Migrate issues script: on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
 - Create the missing scripts.
 - Validate we can push authors and creation timestamps to Redmine.
+- Migrate workflows to redmine workflows and custom workflows (https://github.com/anteo/redmine_custom_workflows)
 
 ## [0.0.28] - 2025-11-30
 
