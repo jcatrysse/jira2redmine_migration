@@ -8,9 +8,10 @@ declare(strict_types=1);
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
+use GuzzleHttp\Pool;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.15';
+const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.17';
 const AVAILABLE_PHASES = [
     'jira' => 'Synchronise Jira attachment metadata with the migration mapping table.',
     'pull' => 'Download Jira attachment binaries into the working directory.',
@@ -76,6 +77,16 @@ function main(array $config, array $cliOptions): void
     $pdo = createDatabaseConnection($databaseConfig);
 
     if (in_array('jira', $phasesToRun, true)) {
+        printf("[%s] Refreshing staged attachment metadata from staged issues...%s", formatCurrentTimestamp(), PHP_EOL);
+        $harvestSummary = stageAttachmentsFromStagedIssues($pdo);
+        printf(
+            "[%s] Attachment staging complete. Issues scanned: %d, Attachments indexed: %d.%s",
+            formatCurrentTimestamp(),
+            $harvestSummary['issues_scanned'],
+            $harvestSummary['attachments_indexed'],
+            PHP_EOL
+        );
+
         printf("[%s] Synchronising attachment mappings...%s", formatCurrentTimestamp(), PHP_EOL);
         $summary = syncAttachmentMappings($pdo);
         printf(
@@ -275,6 +286,152 @@ function summariseAttachmentStatuses(PDO $pdo): array
 }
 
 /**
+ * @return array{issues_scanned: int, attachments_indexed: int}
+ */
+function stageAttachmentsFromStagedIssues(PDO $pdo): array
+{
+    $selectSql = 'SELECT id, issue_key, raw_payload, created_at FROM staging_jira_issues ORDER BY id LIMIT :limit OFFSET :offset';
+    $selectStatement = $pdo->prepare($selectSql);
+    if ($selectStatement === false) {
+        throw new RuntimeException('Failed to prepare issue scan statement for attachment staging.');
+    }
+
+    $insertStatement = $pdo->prepare(<<<SQL
+        INSERT INTO staging_jira_attachments (
+            id,
+            issue_id,
+            filename,
+            author_account_id,
+            created_at,
+            size_bytes,
+            mime_type,
+            content_url,
+            raw_payload,
+            extracted_at
+        ) VALUES (
+            :id,
+            :issue_id,
+            :filename,
+            :author_account_id,
+            :created_at,
+            :size_bytes,
+            :mime_type,
+            :content_url,
+            :raw_payload,
+            :extracted_at
+        )
+        ON DUPLICATE KEY UPDATE
+            issue_id = VALUES(issue_id),
+            filename = VALUES(filename),
+            author_account_id = VALUES(author_account_id),
+            created_at = VALUES(created_at),
+            size_bytes = VALUES(size_bytes),
+            mime_type = VALUES(mime_type),
+            content_url = VALUES(content_url),
+            raw_payload = VALUES(raw_payload),
+            extracted_at = VALUES(extracted_at)
+    SQL);
+
+    if ($insertStatement === false) {
+        throw new RuntimeException('Failed to prepare attachment staging statement.');
+    }
+
+    $batchSize = 250;
+    $offset = 0;
+    $issuesScanned = 0;
+    $attachmentsIndexed = 0;
+    $now = formatCurrentTimestamp();
+
+    while (true) {
+        $selectStatement->bindValue(':limit', $batchSize, PDO::PARAM_INT);
+        $selectStatement->bindValue(':offset', $offset, PDO::PARAM_INT);
+
+        $executed = $selectStatement->execute();
+        if ($executed === false) {
+            throw new RuntimeException('Failed to scan staged issues for attachments.');
+        }
+
+        $rows = $selectStatement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $selectStatement->closeCursor();
+
+        if ($rows === []) {
+            break;
+        }
+
+        foreach ($rows as $row) {
+            $issuesScanned++;
+            $issueId = isset($row['id']) ? (string)$row['id'] : '';
+            $issuePayloadJson = isset($row['raw_payload']) ? (string)$row['raw_payload'] : '';
+            $issueCreatedAt = isset($row['created_at']) ? (string)$row['created_at'] : null;
+
+            if ($issuePayloadJson === '') {
+                continue;
+            }
+
+            try {
+                /** @var array<string, mixed> $issuePayload */
+                $issuePayload = json_decode($issuePayloadJson, true, 512, JSON_THROW_ON_ERROR);
+            } catch (JsonException) {
+                continue;
+            }
+
+            $fields = isset($issuePayload['fields']) && is_array($issuePayload['fields']) ? $issuePayload['fields'] : [];
+            $attachments = isset($fields['attachment']) && is_array($fields['attachment']) ? $fields['attachment'] : [];
+
+            foreach ($attachments as $attachment) {
+                if (!is_array($attachment) || !isset($attachment['id'])) {
+                    continue;
+                }
+
+                $attachmentId = (string)$attachment['id'];
+                $attachmentFilename = isset($attachment['filename']) ? (string)$attachment['filename'] : ('attachment-' . $attachmentId);
+                $attachmentAuthor = isset($attachment['author']['accountId']) ? (string)$attachment['author']['accountId'] : null;
+                $attachmentCreated = isset($attachment['created']) ? normalizeDateTimeString($attachment['created']) : null;
+                $attachmentSize = isset($attachment['size']) ? normalizeInteger($attachment['size'], 0) : null;
+                $attachmentMime = isset($attachment['mimeType']) ? (string)$attachment['mimeType'] : null;
+                $attachmentUrl = isset($attachment['content']) ? (string)$attachment['content'] : null;
+
+                if ($attachmentCreated === null) {
+                    $attachmentCreated = normalizeDateTimeString($issueCreatedAt);
+                }
+
+                try {
+                    $attachmentPayload = json_encode($attachment, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                } catch (JsonException) {
+                    continue;
+                }
+
+                $insertStatement->execute([
+                    'id' => $attachmentId,
+                    'issue_id' => $issueId,
+                    'filename' => $attachmentFilename,
+                    'author_account_id' => $attachmentAuthor,
+                    'created_at' => $attachmentCreated,
+                    'size_bytes' => $attachmentSize,
+                    'mime_type' => $attachmentMime,
+                    'content_url' => $attachmentUrl,
+                    'raw_payload' => $attachmentPayload,
+                    'extracted_at' => $now,
+                ]);
+
+                $attachmentsIndexed++;
+            }
+        }
+
+        if (count($rows) < $batchSize) {
+            break;
+        }
+
+        $offset += $batchSize;
+    }
+
+    return [
+        'issues_scanned' => $issuesScanned,
+        'attachments_indexed' => $attachmentsIndexed,
+    ];
+}
+
+/**
  * @return array{new_mappings: int, relinked: int}
  */
 function syncAttachmentMappings(PDO $pdo): array
@@ -382,6 +539,7 @@ function downloadPendingJiraAttachments(Client $client, PDO $pdo, array $config,
     }
 
     $attachmentDirectory = resolveAttachmentWorkingDirectory($config);
+    $downloadConcurrency = max(1, (int)($config['attachments']['download_concurrency'] ?? 1));
 
     $updateStatement = $pdo->prepare(<<<SQL
         UPDATE migration_mapping_attachments
@@ -400,106 +558,210 @@ function downloadPendingJiraAttachments(Client $client, PDO $pdo, array $config,
     $downloaded = 0;
     $failed = 0;
 
-    foreach ($rows as $row) {
-        $mappingId = (int)$row['mapping_id'];
-        $attachmentId = (string)$row['jira_attachment_id'];
-        $filename = isset($row['filename']) ? (string)$row['filename'] : '';
-        $contentUrl = isset($row['content_url']) ? (string)$row['content_url'] : '';
+    if ($downloadConcurrency <= 1) {
+        $processed = 0;
+        foreach ($rows as $row) {
+            $mappingId = (int)$row['mapping_id'];
+            $attachmentId = (string)$row['jira_attachment_id'];
+            $filename = isset($row['filename']) ? (string)$row['filename'] : '';
+            $contentUrl = isset($row['content_url']) ? (string)$row['content_url'] : '';
 
-        if ($contentUrl === '') {
-            $updateStatement->execute([
-                'migration_status' => 'FAILED',
-                'local_filepath' => null,
-                'notes' => 'Missing Jira attachment content URL.',
-                'mapping_id' => $mappingId,
-            ]);
-            $failed++;
-            continue;
-        }
-
-        $sanitizedFilename = sanitizeAttachmentFileName($filename !== '' ? $filename : ('attachment-' . $attachmentId));
-        $targetPath = $attachmentDirectory . DIRECTORY_SEPARATOR . $attachmentId . '__' . $sanitizedFilename;
-
-        $handle = null;
-
-        try {
-            $response = $client->get($contentUrl, [
-                'headers' => ['Accept' => '*/*'],
-                'stream' => true,
-            ]);
-
-            $stream = $response->getBody();
-            $handle = fopen($targetPath, 'wb');
-            if ($handle === false) {
-                throw new RuntimeException(sprintf('Unable to open attachment path for writing: %s', $targetPath));
+            if ($contentUrl === '') {
+                $updateStatement->execute([
+                    'migration_status' => 'FAILED',
+                    'local_filepath' => null,
+                    'notes' => 'Missing Jira attachment content URL.',
+                    'mapping_id' => $mappingId,
+                ]);
+                $failed++;
+                $processed++;
+                printAttachmentProgress($processed, $queued);
+                continue;
             }
 
-            while (!$stream->eof()) {
-                $chunk = $stream->read(8192);
-                if ($chunk === '') {
-                    continue;
-                }
+            $sanitizedFilename = sanitizeAttachmentFileName($filename !== '' ? $filename : ('attachment-' . $attachmentId));
+            $targetPath = $attachmentDirectory . DIRECTORY_SEPARATOR . $attachmentId . '__' . $sanitizedFilename;
 
-                if (fwrite($handle, $chunk) === false) {
-                    throw new RuntimeException(sprintf('Failed to write attachment data to %s', $targetPath));
-                }
-            }
-
-            fclose($handle);
             $handle = null;
 
-            $resolvedPath = realpath($targetPath) ?: $targetPath;
+            try {
+                $response = $client->get($contentUrl, [
+                    'headers' => ['Accept' => '*/*'],
+                    'stream' => true,
+                ]);
 
-            $updateStatement->execute([
-                'migration_status' => 'PENDING_UPLOAD',
-                'local_filepath' => $resolvedPath,
-                'notes' => null,
-                'mapping_id' => $mappingId,
-            ]);
+                $stream = $response->getBody();
+                $handle = fopen($targetPath, 'wb');
+                if ($handle === false) {
+                    throw new RuntimeException(sprintf('Unable to open attachment path for writing: %s', $targetPath));
+                }
 
-            $downloaded++;
-        } catch (BadResponseException $exception) {
-            $response = $exception->getResponse();
-            $message = 'Failed to download attachment from Jira';
-            if ($response instanceof ResponseInterface) {
-                $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
-                $message .= ': ' . extractErrorBody($response);
-            } else {
-                $message .= ': ' . $exception->getMessage();
-            }
+                while (!$stream->eof()) {
+                    $chunk = $stream->read(8192);
+                    if ($chunk === '') {
+                        continue;
+                    }
 
-            if (is_resource($handle)) {
+                    if (fwrite($handle, $chunk) === false) {
+                        throw new RuntimeException(sprintf('Failed to write attachment data to %s', $targetPath));
+                    }
+                }
+
                 fclose($handle);
-            }
-            if (is_file($targetPath)) {
-                @unlink($targetPath);
+                $handle = null;
+
+                $resolvedPath = realpath($targetPath) ?: $targetPath;
+
+                $updateStatement->execute([
+                    'migration_status' => 'PENDING_UPLOAD',
+                    'local_filepath' => $resolvedPath,
+                    'notes' => null,
+                    'mapping_id' => $mappingId,
+                ]);
+
+                $downloaded++;
+            } catch (BadResponseException $exception) {
+                $response = $exception->getResponse();
+                $message = 'Failed to download attachment from Jira';
+                if ($response instanceof ResponseInterface) {
+                    $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+                    $message .= ': ' . extractErrorBody($response);
+                } else {
+                    $message .= ': ' . $exception->getMessage();
+                }
+
+                if (is_resource($handle)) {
+                    fclose($handle);
+                }
+                if (is_file($targetPath)) {
+                    @unlink($targetPath);
+                }
+
+                $updateStatement->execute([
+                    'migration_status' => 'FAILED',
+                    'local_filepath' => null,
+                    'notes' => $message,
+                    'mapping_id' => $mappingId,
+                ]);
+
+                $failed++;
+            } catch (GuzzleException | RuntimeException $exception) {
+                if (is_resource($handle)) {
+                    fclose($handle);
+                }
+                if (is_file($targetPath)) {
+                    @unlink($targetPath);
+                }
+
+                $updateStatement->execute([
+                    'migration_status' => 'FAILED',
+                    'local_filepath' => null,
+                    'notes' => 'Failed to download attachment: ' . $exception->getMessage(),
+                    'mapping_id' => $mappingId,
+                ]);
+
+                $failed++;
             }
 
-            $updateStatement->execute([
-                'migration_status' => 'FAILED',
-                'local_filepath' => null,
-                'notes' => $message,
-                'mapping_id' => $mappingId,
-            ]);
-
-            $failed++;
-        } catch (GuzzleException | RuntimeException $exception) {
-            if (is_resource($handle)) {
-                fclose($handle);
-            }
-            if (is_file($targetPath)) {
-                @unlink($targetPath);
-            }
-
-            $updateStatement->execute([
-                'migration_status' => 'FAILED',
-                'local_filepath' => null,
-                'notes' => 'Failed to download attachment: ' . $exception->getMessage(),
-                'mapping_id' => $mappingId,
-            ]);
-
-            $failed++;
+            $processed++;
+            printAttachmentProgress($processed, $queued);
         }
+    } else {
+        $targetPaths = [];
+        foreach ($rows as $index => $row) {
+            $attachmentId = (string)$row['jira_attachment_id'];
+            $filename = isset($row['filename']) ? (string)$row['filename'] : '';
+            $sanitizedFilename = sanitizeAttachmentFileName($filename !== '' ? $filename : ('attachment-' . $attachmentId));
+            $targetPaths[$index] = $attachmentDirectory . DIRECTORY_SEPARATOR . $attachmentId . '__' . $sanitizedFilename;
+        }
+
+        $processed = 0;
+        $pool = new Pool($client, (function () use ($rows, $targetPaths) {
+            foreach ($rows as $index => $row) {
+                $contentUrl = isset($row['content_url']) ? (string)$row['content_url'] : '';
+                $targetPath = $targetPaths[$index];
+
+                yield function () use ($contentUrl, $targetPath) {
+                    if ($contentUrl === '') {
+                        throw new RuntimeException('Missing Jira attachment content URL.');
+                    }
+
+                    return $this->getAsync($contentUrl, [
+                        'headers' => ['Accept' => '*/*'],
+                        'sink' => $targetPath,
+                    ]);
+                };
+            }
+        })->call($client), [
+            'concurrency' => $downloadConcurrency,
+            'fulfilled' => function ($response, int $index) use (
+                &$downloaded,
+                &$processed,
+                $rows,
+                $targetPaths,
+                $updateStatement,
+                $queued
+            ) {
+                $row = $rows[$index];
+                $mappingId = (int)$row['mapping_id'];
+                $targetPath = $targetPaths[$index];
+
+                $resolvedPath = realpath($targetPath) ?: $targetPath;
+                $updateStatement->execute([
+                    'migration_status' => 'PENDING_UPLOAD',
+                    'local_filepath' => $resolvedPath,
+                    'notes' => null,
+                    'mapping_id' => $mappingId,
+                ]);
+
+                $downloaded++;
+                $processed++;
+                printAttachmentProgress($processed, $queued);
+            },
+            'rejected' => function ($reason, int $index) use (
+                &$failed,
+                &$processed,
+                $rows,
+                $targetPaths,
+                $updateStatement,
+                $queued
+            ) {
+                $row = $rows[$index];
+                $mappingId = (int)$row['mapping_id'];
+                $targetPath = $targetPaths[$index];
+
+                $message = 'Failed to download attachment';
+                if ($reason instanceof BadResponseException) {
+                    $response = $reason->getResponse();
+                    if ($response instanceof ResponseInterface) {
+                        $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+                        $message .= ': ' . extractErrorBody($response);
+                    } else {
+                        $message .= ': ' . $reason->getMessage();
+                    }
+                } elseif ($reason instanceof Throwable) {
+                    $message .= ': ' . $reason->getMessage();
+                }
+
+                if (is_file($targetPath)) {
+                    @unlink($targetPath);
+                }
+
+                $updateStatement->execute([
+                    'migration_status' => 'FAILED',
+                    'local_filepath' => null,
+                    'notes' => $message,
+                    'mapping_id' => $mappingId,
+                ]);
+
+                $failed++;
+                $processed++;
+                printAttachmentProgress($processed, $queued);
+            },
+        ]);
+
+        $promise = $pool->promise();
+        $promise->wait();
     }
 
     return [
@@ -698,7 +960,7 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
 function resolveAttachmentWorkingDirectory(array $config): string
 {
     $paths = $config['paths'] ?? [];
-    $tmpBase = isset($paths['tmp']) ? (string)$paths['tmp'] : (dirname(__DIR__) . '/tmp');
+    $tmpBase = resolveBasePath(isset($paths['tmp']) ? (string)$paths['tmp'] : (dirname(__DIR__) . '/tmp'));
     $directory = rtrim($tmpBase, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'attachments' . DIRECTORY_SEPARATOR . 'jira';
 
     if (!is_dir($directory)) {
@@ -709,6 +971,31 @@ function resolveAttachmentWorkingDirectory(array $config): string
     }
 
     return $directory;
+}
+
+function resolveBasePath(string $path): string
+{
+    if ($path === '') {
+        throw new RuntimeException('Empty path provided for temporary directory.');
+    }
+
+    if (isAbsolutePath($path)) {
+        return $path;
+    }
+
+    $projectRoot = dirname(__DIR__);
+    return $projectRoot . DIRECTORY_SEPARATOR . ltrim($path, DIRECTORY_SEPARATOR);
+}
+
+function isAbsolutePath(string $path): bool
+{
+    return str_starts_with($path, DIRECTORY_SEPARATOR)
+        || preg_match('/^[A-Za-z]:\\\\|^[A-Za-z]:\//', $path) === 1;
+}
+
+function printAttachmentProgress(int $processed, int $total): void
+{
+    printf("  Progress: %d/%d attachments processed%s", $processed, $total, PHP_EOL);
 }
 
 function sanitizeAttachmentFileName(string $filename): string
@@ -952,6 +1239,51 @@ function parsePositiveIntOption(string $value, string $optionName): int
     $intValue = (int)$trimmed;
     if ($intValue <= 0) {
         throw new RuntimeException(sprintf('%s expects a positive integer.', $optionName));
+    }
+
+    return $intValue;
+}
+
+function normalizeDateTimeString(mixed $value): ?string
+{
+    if (!is_string($value)) {
+        return null;
+    }
+
+    $trimmed = trim($value);
+    if ($trimmed === '') {
+        return null;
+    }
+
+    try {
+        $dateTime = new DateTimeImmutable($trimmed);
+    } catch (Exception) {
+        return null;
+    }
+
+    return $dateTime->format('Y-m-d H:i:s');
+}
+
+function normalizeInteger(mixed $value, int $min = PHP_INT_MIN, ?int $max = null): ?int
+{
+    if ($value === null) {
+        return null;
+    }
+
+    if (is_int($value)) {
+        $intValue = $value;
+    } elseif (is_string($value) && preg_match('/^-?\d+$/', trim($value)) === 1) {
+        $intValue = (int)trim($value);
+    } else {
+        return null;
+    }
+
+    if ($intValue < $min) {
+        return $min;
+    }
+
+    if ($max !== null && $intValue > $max) {
+        return $max;
     }
 
     return $intValue;

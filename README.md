@@ -117,24 +117,6 @@ reporting tools before deciding which custom fields to recreate in Redmine. Run
 `php 11_migrate_issues.php --phases=jira` beforehand to refresh the staged issue
 catalogue when you want to analyse new or updated Jira data.
 
-### Object-type Jira custom fields
-
-Jira Cloud occasionally delivers custom fields with `schema.type = "object"`
-that hold arbitrary JSON from marketplace apps. To normalise those fields the
-issue extractor now snapshots sample values in
-`staging_jira_object_samples` and flattens the leaves into
-`staging_jira_object_kv` (one row per dot-path and array ordinal). The custom
-field transform consumes those shapes and writes inferred proposals into
-`migration_mapping_custom_object`, hinting whether a Redmine Key/Value list,
-dependent list, or plain text field would be appropriate. Review these
-proposals alongside the standard custom field mappings before pushing.
-
-Other Jira schema types that frequently landed in **Manual review** now have
-defaults: `team` and `sd-customerrequesttype` are treated as Redmine lists fed
-from Jira allowed values, `option`/`option2` map to plain lists, while
-`sd-approvals` and the catch-all `any` type fall back to text fields. You can
-override these proposals in `migration_mapping_custom_fields` as needed.
-
 ### Recommended cross-script phase order
 
 Some phases depend on data staged by earlier scripts. When you want to split
@@ -153,6 +135,14 @@ creating fields), use the following minimal ordering:
 
    ```bash
    php 11_migrate_issues.php --phases=jira
+   ```
+
+   If you plan to migrate attachments, run the attachment script's Jira phase
+   after this issue extract to harvest the attachment metadata without hitting
+   Jira again:
+
+   ```bash
+   php 10_migrate_attachments.php --phases=jira
    ```
 
 3. **Custom fields (analysis and mapping)** – reuse the staged issue payloads
@@ -219,7 +209,7 @@ The migration must be executed in the following order to respect data dependenci
 | 7     | `07_migrate_trackers.php`      | Trackers            | Migrates Jira "Issue Types" to Redmine "Trackers".                                                                                                        |
 | 8     | `08_migrate_custom_fields.php` | Custom Fields       | Migrates custom fields. This can be complex and may require manual mapping decisions.                                                                     |
 | 9     | `09_assign_members.php`        | Project Memberships | Assigns migrated users and groups to migrated projects with the appropriate roles. **Depends on Users, Groups, Roles, Projects.**                         |
-| 10    | `10_migrate_attachments.php`   | Attachments         | Keeps attachment metadata in sync, downloads the selected Jira binaries into `tmp/attachments/jira`, and uploads curated batches to Redmine for token issuance while tagging each file for issue vs. journal association. **Depends on fresh issue staging data.** |
+| 10    | `10_migrate_attachments.php`   | Attachments         | Rehydrates attachment metadata from the staged Jira issues, keeps `migration_mapping_attachments` in sync, downloads the selected Jira binaries into `tmp/attachments/jira` (or an absolute directory such as `/tmp/attachments/jira` when configured), and uploads curated batches to Redmine for token issuance while tagging each file for issue vs. journal association. **Depends on fresh issue staging data.** |
 | 11    | `11_migrate_issues.php`        | Issues              | Creates Redmine issues from staged Jira data, linking pre-uploaded attachment tokens and capturing the resulting Redmine identifiers.                         |
 | 12    | `12_migrate_journals.php`      | Comments & History  | Migrates Jira comments and changelog entries after issues exist, reusing journal-scoped attachment tokens where necessary. **Depends on Issues & Attachments.**                                                           |
 | 13    | `13_migrate_subtasks.php`      | Subtasks            | Reconciles Jira parent/child relationships once both issues exist in Redmine and applies the matching `parent_issue_id` updates. **Depends on Issues (Push phase).** |
@@ -693,7 +683,8 @@ Jira attachments often dwarf the textual payload of an issue, so the migration
 handles binaries in a dedicated step. `10_migrate_attachments.php` keeps the
 `migration_mapping_attachments` table in sync (including each attachment's file
 size), downloads operator-selected files into the configured temporary
-directory, and uploads them to Redmine ahead of the issue and journal pushes.
+directory (absolute paths are honoured; relative paths are resolved against the
+project root), and uploads them to Redmine ahead of the issue and journal pushes.
 The script also labels every attachment with an association hint (`ISSUE` or
 `JOURNAL`) so downstream steps know whether to include the resulting upload
 token in the issue payload or in a follow-up comment/journal. Use the
@@ -709,7 +700,7 @@ php 10_migrate_attachments.php --help
 | Option              | Description                                                                     |
 |---------------------|---------------------------------------------------------------------------------|
 | `-h`, `--help`      | Print usage information and exit.                                               |
-| `-V`, `--version`   | Display the script version (`0.0.15`).                                           |
+| `-V`, `--version`   | Display the script version (`0.0.17`).                                           |
 | `--phases=<list>`   | Comma-separated list of phases to run (default: `jira,pull,transform,push`).     |
 | `--skip=<list>`     | Comma-separated list of phases to skip.                                         |
 | `--confirm-pull`    | Required toggle to download from Jira during the pull phase.                    |
@@ -718,18 +709,27 @@ php 10_migrate_attachments.php --help
 | `--upload-limit`    | Positive integer limiting how many attachments are uploaded per push run.       |
 | `--dry-run`         | Summarise the download/upload queue without contacting Jira or Redmine.        |
 
+Configuration tips:
+
+* `paths.tmp` accepts absolute paths (e.g. `/tmp`) or paths relative to the project root and hosts the `attachments/jira`
+  working directory. Each downloaded filename is prefixed with the Jira attachment ID to avoid collisions even when the same
+  name appears across issues.
+* `attachments.download_concurrency` controls how many parallel download workers the pull phase uses. Start with the default
+  `1` and increase carefully if your network and Jira throttling settings allow parallelism.
+
 ### Workflow highlights
 
-1. **Jira sync (`jira`)** – refreshes `migration_mapping_attachments` with every
-   attachment referenced in `staging_jira_attachments`, updating the
-   association hint based on the attachment timestamp versus the issue creation
-   time and capturing the `size_bytes` column as `jira_filesize`. Run
-   `11_migrate_issues.php --phases=jira` beforehand so the staging tables
-   contain up-to-date metadata.
+1. **Jira sync (`jira`)** – reads the staged Jira issue payloads to repopulate
+   `staging_jira_attachments`, then refreshes `migration_mapping_attachments`
+   with every attachment reference. The phase also updates the association hint
+   based on the attachment timestamp versus the issue creation time and captures
+   the `size_bytes` column as `jira_filesize`. Run
+   `11_migrate_issues.php --phases=jira` beforehand so the staging tables contain
+   up-to-date metadata to harvest.
 2. **Pull (`pull`)** – when `--confirm-pull` is present the script downloads
    `PENDING_DOWNLOAD` rows (filtered by `download_enabled = 1`) into
-   `tmp/attachments/jira`. Use `--download-limit` to test with a smaller batch
-   without clearing the queue.
+   `tmp/attachments/jira` (or your configured absolute directory). Use
+   `--download-limit` to test with a smaller batch without clearing the queue.
 3. **Transform (`transform`)** – resets previously failed downloads/uploads back
    to `PENDING_DOWNLOAD`, clears stale notes, and prints a status breakdown so
    you can inspect the queue before moving binaries.

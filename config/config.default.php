@@ -34,7 +34,7 @@ return [
     ],
     'paths' => [
         // Directory used to store temporary files such as API exports or attachments.
-        // Defaults to ./tmp relative to the project root.
+        // Absolute paths are respected (e.g. /tmp), otherwise paths are resolved relative to the project root.
         'tmp' => dirname(__DIR__) . '/tmp',
     ],
     'migration' => [
@@ -72,5 +72,9 @@ return [
             // When set, overrides the privacy flag proposed during the transform phase (true/false/null).
             'default_is_private' => null,
         ],
+    ],
+    'attachments' => [
+        // Number of concurrent download workers for Jira attachments; increase to speed up pulls if network allows.
+        'download_concurrency' => 1,
     ],
 ];

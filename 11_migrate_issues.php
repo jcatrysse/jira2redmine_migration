@@ -11,7 +11,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use League\HTMLToMarkdown\HtmlConverter;
 
-const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.26';
+const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.27';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issues into staging_jira_issues (and related staging tables).',
     'transform' => 'Reconcile Jira issues with Redmine dependencies to populate migration mappings.',
@@ -83,28 +83,16 @@ function main(array $config, array $cliOptions): void
 
         $jiraSummary = fetchAndStoreJiraIssues($jiraClient, $pdo, $config);
 
-        $attachmentSyncSummary = syncAttachmentMappings($pdo);
-
         printf(
-            "[%s] Completed Jira extraction. Issues: %d (updated %d), Attachments: %d metadata, Labels captured: %d, Object samples: %d, Flattened rows: %d.%s",
+            "[%s] Completed Jira extraction. Issues: %d (updated %d), Labels captured: %d, Object samples: %d, Flattened rows: %d.%s",
             formatCurrentTimestamp(),
             $jiraSummary['issues_processed'],
             $jiraSummary['issues_updated'],
-            $jiraSummary['attachments_processed'],
             $jiraSummary['labels_processed'],
             $jiraSummary['object_samples_processed'],
             $jiraSummary['object_kv_rows'],
             PHP_EOL
         );
-
-        if ($attachmentSyncSummary['new_mappings'] > 0) {
-            printf(
-                "[%s] Added %d new attachment mapping row(s).%s",
-                formatCurrentTimestamp(),
-                $attachmentSyncSummary['new_mappings'],
-                PHP_EOL
-            );
-        }
     } else {
         printf(
             "[%s] Skipping Jira issue extraction (disabled via CLI option).%s",
@@ -168,7 +156,7 @@ function main(array $config, array $cliOptions): void
 }
 /**
  * @param array<string, mixed> $config
- * @return array{issues_processed: int, issues_updated: int, attachments_processed: int, labels_processed: int, object_samples_processed: int, object_kv_rows: int}
+ * @return array{issues_processed: int, issues_updated: int, labels_processed: int, object_samples_processed: int, object_kv_rows: int}
  * @throws Throwable
  */
 function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
@@ -197,7 +185,6 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
 
     $totalIssuesProcessed = 0;
     $totalIssuesUpdated = 0;
-    $totalAttachmentsProcessed = 0;
     $totalLabelsProcessed = 0;
     $totalObjectSamples = 0;
     $totalObjectKvRows = 0;
@@ -350,46 +337,6 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
     $insertLabelStatement = $pdo->prepare('INSERT INTO staging_jira_labels (label_name) VALUES (:label_name) ON DUPLICATE KEY UPDATE label_name = VALUES(label_name)');
     if ($insertLabelStatement === false) {
         throw new RuntimeException('Failed to prepare insert statement for staging_jira_labels.');
-    }
-
-    $insertAttachmentStatement = $pdo->prepare(<<<SQL
-        INSERT INTO staging_jira_attachments (
-            id,
-            issue_id,
-            filename,
-            author_account_id,
-            created_at,
-            size_bytes,
-            mime_type,
-            content_url,
-            raw_payload,
-            extracted_at
-        ) VALUES (
-            :id,
-            :issue_id,
-            :filename,
-            :author_account_id,
-            :created_at,
-            :size_bytes,
-            :mime_type,
-            :content_url,
-            :raw_payload,
-            :extracted_at
-        )
-        ON DUPLICATE KEY UPDATE
-            issue_id = VALUES(issue_id),
-            filename = VALUES(filename),
-            author_account_id = VALUES(author_account_id),
-            created_at = VALUES(created_at),
-            size_bytes = VALUES(size_bytes),
-            mime_type = VALUES(mime_type),
-            content_url = VALUES(content_url),
-            raw_payload = VALUES(raw_payload),
-            extracted_at = VALUES(extracted_at)
-    SQL);
-
-    if ($insertAttachmentStatement === false) {
-        throw new RuntimeException('Failed to prepare insert statement for staging_jira_attachments.');
     }
 
     $insertIssueLinkStatement = $pdo->prepare(<<<SQL
@@ -747,47 +694,6 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
                     $totalIssuesUpdated++;
                 }
 
-                if (isset($fields['attachment']) && is_array($fields['attachment'])) {
-                    foreach ($fields['attachment'] as $attachment) {
-                        if (!is_array($attachment) || !isset($attachment['id'])) {
-                            continue;
-                        }
-
-                        $attachmentId = (string)$attachment['id'];
-                        $attachmentFilename = isset($attachment['filename']) ? (string)$attachment['filename'] : ('attachment-' . $attachmentId);
-                        $attachmentAuthor = isset($attachment['author']['accountId']) ? (string)$attachment['author']['accountId'] : null;
-                        $attachmentCreated = isset($attachment['created']) ? normalizeDateTimeString($attachment['created']) : null;
-                        $attachmentSize = isset($attachment['size']) ? normalizeInteger($attachment['size'], 0) : null;
-                        $attachmentMime = isset($attachment['mimeType']) ? (string)$attachment['mimeType'] : null;
-                        $attachmentUrl = isset($attachment['content']) ? (string)$attachment['content'] : null;
-
-                        if ($attachmentCreated === null) {
-                            $attachmentCreated = $createdAt;
-                        }
-
-                        try {
-                            $attachmentPayload = json_encode($attachment, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-                        } catch (JsonException $exception) {
-                            throw new RuntimeException('Failed to encode Jira attachment payload: ' . $exception->getMessage(), 0, $exception);
-                        }
-
-                        $insertAttachmentStatement->execute([
-                            'id' => $attachmentId,
-                            'issue_id' => $issueId,
-                            'filename' => $attachmentFilename,
-                            'author_account_id' => $attachmentAuthor,
-                            'created_at' => $attachmentCreated,
-                            'size_bytes' => $attachmentSize,
-                            'mime_type' => $attachmentMime,
-                            'content_url' => $attachmentUrl,
-                            'raw_payload' => $attachmentPayload,
-                            'extracted_at' => $now,
-                        ]);
-
-                        $totalAttachmentsProcessed++;
-                    }
-                }
-
                 if (isset($fields['issuelinks']) && is_array($fields['issuelinks'])) {
                     foreach ($fields['issuelinks'] as $issueLink) {
                         if (!is_array($issueLink) || !isset($issueLink['id'])) {
@@ -875,7 +781,6 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
     return [
         'issues_processed' => $totalIssuesProcessed,
         'issues_updated' => $totalIssuesUpdated,
-        'attachments_processed' => $totalAttachmentsProcessed,
         'labels_processed' => $totalLabelsProcessed,
         'object_samples_processed' => $totalObjectSamples,
         'object_kv_rows' => $totalObjectKvRows,
@@ -1012,7 +917,6 @@ function isListArray(mixed $value): bool
 function runIssueTransformationPhase(PDO $pdo, array $config): array
 {
     syncIssueMappings($pdo);
-    syncAttachmentMappings($pdo);
 
     $projectLookup = buildProjectLookup($pdo);
     $trackerLookup = buildTrackerLookup($pdo);
@@ -1299,8 +1203,6 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
  */
 function runIssuePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig): void
 {
-    syncAttachmentMappings($pdo);
-
     $candidateStatement = $pdo->prepare(<<<SQL
         SELECT *
         FROM migration_mapping_issues
@@ -1499,58 +1401,6 @@ function runIssuePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $r
             finalizeIssueAttachmentAssociations($client, $pdo, $jiraIssueId, $redmineIssueId, $preparedAttachments);
         }
     }
-}
-
-/**
- * @return array{new_mappings: int, relinked: int}
- */
-function syncAttachmentMappings(PDO $pdo): array
-{
-    $insertSql = <<<SQL
-        INSERT INTO migration_mapping_attachments (jira_attachment_id, jira_issue_id)
-        SELECT att.id, att.issue_id
-        FROM staging_jira_attachments att
-        LEFT JOIN migration_mapping_attachments map ON map.jira_attachment_id = att.id
-        WHERE map.jira_attachment_id IS NULL
-    SQL;
-
-    try {
-        $inserted = $pdo->exec($insertSql);
-    } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to synchronise migration_mapping_attachments: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    if ($inserted === false) {
-        $inserted = 0;
-    }
-
-    $updateSql = <<<SQL
-        UPDATE migration_mapping_attachments map
-        JOIN staging_jira_attachments att ON att.id = map.jira_attachment_id
-        LEFT JOIN staging_jira_issues issue ON issue.id = att.issue_id
-        SET
-            map.jira_issue_id = att.issue_id,
-            map.association_hint = CASE
-                WHEN issue.created_at IS NULL OR att.created_at IS NULL THEN map.association_hint
-                WHEN att.created_at <= DATE_ADD(issue.created_at, INTERVAL 60 SECOND) THEN 'ISSUE'
-                ELSE 'JOURNAL'
-            END
-    SQL;
-
-    try {
-        $relinked = $pdo->exec($updateSql);
-    } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to refresh attachment mappings: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    if ($relinked === false) {
-        $relinked = 0;
-    }
-
-    return [
-        'new_mappings' => (int)$inserted,
-        'relinked' => (int)$relinked,
-    ];
 }
 
 function countAttachmentsAwaitingAssociation(PDO $pdo): int
