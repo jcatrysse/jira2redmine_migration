@@ -4,7 +4,6 @@ All notable changes to this project will be documented in this file.
 
 ## [TODO]
 
-- Migrate trackers script: link trackers to projects in Redmine.
 - Migrate custom fields script: link custom fields to projects and trackers in Redmine
 - Migrate custom fields script: add support for datetime fields in redmine using https://github.com/jcatrysse/redmine_datetime_custom_field and the https://github.com/jcatrysse/redmine_extended_api for API access.
 - Migrate custom fields script: investigate unsupported field types (any, team, option, option-with-child, option2, sd-customerrequesttype, object, sd-approvals, ...)
@@ -16,7 +15,64 @@ All notable changes to this project will be documented in this file.
 - Migrate issues script: on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
 - Create the missing scripts.
 - Validate we can push authors and creation timestamps to Redmine.
-- Migrate workflows to redmine workflows and custom workflows (https://github.com/anteo/redmine_custom_workflows)
+
+## [0.0.33] - 2025-12-05
+
+- Capture Jira issue type usage per project by expanding `/rest/api/3/project/search` and store the associations in
+  `staging_jira_issue_type_projects`, defaulting missing scopes to `GLOBAL` so mappings clearly distinguish project-scoped and
+  global issue types.
+- Derive proposed Redmine project links from the recorded Jira usage, preserving the associations in
+  `migration_mapping_trackers.proposed_redmine_project_ids` for both project-scoped and global issue types and marking matched
+  trackers as `READY_FOR_UPDATE` when they are missing from the target projects.
+- Allow the project-link push plan to use the recorded project lists regardless of Jira scope so existing Redmine trackers are
+  added to every mapped project, and bump the tracker CLI version to `0.0.16` with refreshed README guidance.
+
+## [0.0.34] - 2025-12-06
+
+- Add an update path for custom field associations by extending `migration_mapping_custom_fields.migration_status` with
+  `READY_FOR_UPDATE`, detecting missing project/tracker links during transform, and persisting the desired associations in the
+  proposed columns.
+- Collect an association update plan from staging snapshots and apply the merged project/tracker lists to existing Redmine
+  custom fields (including cascading parents) through the extended API, updating automation hashes and statuses after
+  successful synchronisation.
+- Surface the planned association changes in manual mode when the extended API is disabled and bump the custom field migration
+  script version to `0.0.14` with refreshed documentation.
+
+## [0.0.32] - 2025-12-04
+
+- Capture Jira issue type scope and project IDs by fetching detailed payloads
+  when the list response omits scope metadata, ensuring
+  `staging_jira_issue_types.scope_type` and `scope_project_id` are populated.
+- Mark matched trackers that need new project associations as
+  `READY_FOR_UPDATE` and link them during the push phase instead of treating
+  them as creations. Mapped project IDs now feed both the transform and project
+  update plan.
+- Bump the tracker CLI version to `0.0.15`.
+
+## [0.0.31] - 2025-12-03
+
+- Refresh the tracker snapshot via the extended API when available so project
+  links, custom fields, and other tracker attributes are captured in
+  `staging_redmine_trackers`, with safe fallbacks and warnings when the plugin
+  is unreachable.
+- Bump the tracker CLI version to `0.0.14`.
+
+## [0.0.30] - 2025-12-02
+
+- Record the mapped Redmine project IDs for project-scoped trackers in
+  `migration_mapping_trackers.proposed_redmine_project_ids` so they can be
+  reviewed or overridden before linking.
+- Use the recorded project list when planning tracker-to-project updates and
+  surface warnings if mappings are missing from the database snapshot.
+- Bump the tracker CLI version to `0.0.13`.
+
+## [0.0.29] - 2025-12-01
+
+- Link trackers to their mapped Redmine projects during the push phase, adding
+  missing associations for project-scoped Jira issue types after tracker
+  creation or when existing trackers already exist. The tracker CLI now reports
+  version `0.0.12` and previews the planned project updates during `--dry-run`
+  or confirmed runs.
 
 ## [0.0.28] - 2025-11-30
 

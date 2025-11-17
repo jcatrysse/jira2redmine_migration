@@ -279,7 +279,7 @@ php 01_migrate_projects.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.11`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.15`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Required toggle to allow the push phase to create projects in Redmine.                |
@@ -323,7 +323,7 @@ php 02_migrate_users.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.11`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.15`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Required toggle to allow the push phase to create users in Redmine.                   |
@@ -381,7 +381,7 @@ php 03_migrate_groups.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.11`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.15`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Required toggle to allow the push phase to create groups in Redmine.                  |
@@ -455,7 +455,7 @@ php 04_migrate_roles.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.11`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.15`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Marks assignments as recorded after you manually action them in Redmine.              |
@@ -582,7 +582,7 @@ php 07_migrate_trackers.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.11`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.16`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Acknowledge manual tracker creation or confirm the extended API run.                  |
@@ -590,8 +590,9 @@ php 07_migrate_trackers.php --help
 
 ### Workflow highlights
 
-1. **Jira extraction (`jira`)** – calls `/rest/api/3/issuetype`, storing the label, description, sub-task flag,
-   and scope information in `staging_jira_issue_types`.
+1. **Jira extraction (`jira`)** – calls `/rest/api/3/issuetype` and paginates `/rest/api/3/project/search?expand=issueTypes`
+   to store the label, description, sub-task flag, scope (defaulting to `GLOBAL` when absent), and the per-project usage in
+   `staging_jira_issue_types` and `staging_jira_issue_type_projects`.
 2. **Redmine snapshot (`redmine`)** – truncates and repopulates `staging_redmine_trackers` via `GET /trackers.json`,
    capturing the default status identifier for each tracker.
 3. **Transform (`transform`)** – synchronises `migration_mapping_trackers`, matching Jira and Redmine tracker names
@@ -601,6 +602,9 @@ php 07_migrate_trackers.php --help
 4. **Push (`push`)** – with `--use-extended-api`, the script creates missing trackers via the plugin and records the
    results in the mapping table. Without the plugin it prints a detailed checklist so you can create the trackers
    manually before marking them as complete.
+5. **Project linkage** – once tracker IDs are available, the transform phase records the mapped Redmine project IDs from Jira
+   usage in `migration_mapping_trackers.proposed_redmine_project_ids`. The push phase then aligns both project-scoped and
+   global issue types with those recorded projects, adding any missing tracker associations via the standard Redmine API.
 
 > **Configuration tip:** set `migration.trackers.default_redmine_status_id` when every new tracker should share the
 > same default Redmine status. Otherwise the transform phase falls back to the first open status discovered in the
@@ -624,7 +628,7 @@ php 08_migrate_custom_fields.php --help
 | Option              | Description                                                                           |
 |---------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`      | Print usage information and exit.                                                     |
-| `-V`, `--version`   | Display the script version (`0.0.11`).                                                |
+| `-V`, `--version`   | Display the script version (`0.0.14`).                                                |
 | `--phases=<list>`   | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`     | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`    | Acknowledge manual creations or confirm extended API operations.                      |

@@ -296,6 +296,15 @@ CREATE TABLE `staging_jira_issue_types` (
                                             `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) COMMENT='Raw extraction of Jira Issue Types.';
 
+CREATE TABLE `staging_jira_issue_type_projects` (
+                                                    `jira_issue_type_id` VARCHAR(255) NOT NULL,
+                                                    `jira_project_id` VARCHAR(255) NOT NULL,
+                                                    `jira_project_key` VARCHAR(255) NULL,
+                                                    `jira_project_name` VARCHAR(255) NULL,
+                                                    `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                    PRIMARY KEY (`jira_issue_type_id`, `jira_project_id`)
+) COMMENT='Association table to capture which Jira projects use a given issue type.';
+
 CREATE TABLE `staging_redmine_trackers` (
                                             `id` INT NOT NULL PRIMARY KEY,
                                             `name` VARCHAR(255) NOT NULL,
@@ -315,10 +324,11 @@ CREATE TABLE `migration_mapping_trackers` (
                                               `jira_scope_type` VARCHAR(50) NULL,
                                               `jira_scope_project_id` VARCHAR(255) NULL,
                                               `redmine_tracker_id` INT NULL,
+                                              `proposed_redmine_project_ids` JSON NULL,
                                               `proposed_redmine_name` VARCHAR(255) NULL,
                                               `proposed_redmine_description` TEXT NULL,
                                               `proposed_default_status_id` INT NULL,
-                                              `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
+                                              `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'READY_FOR_UPDATE', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
                                               `notes` TEXT,
                                               `automation_hash` CHAR(64) NULL,
                                               `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -436,7 +446,7 @@ CREATE TABLE `migration_mapping_custom_fields` (
                                                    `proposed_tracker_ids` JSON NULL,
                                                    `proposed_role_ids` JSON NULL,
                                                    `proposed_project_ids` JSON NULL,
-                                                   `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
+                                                   `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'READY_FOR_UPDATE', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
                                                    `notes` TEXT,
                                                    `automation_hash` CHAR(64) NULL,
                                                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -569,7 +579,7 @@ CREATE TABLE `staging_jira_issues` (
 ) COMMENT='Raw extraction of Jira Issues.';
 
 -- Issues intentionally skip a `staging_redmine_*` snapshot: all Jira records are
--- created fresh in Redmine and the mapping table below tracks the resulting
+-- created fresh in Redmine, and the mapping table below tracks the resulting
 -- identifiers and migration status across reruns.
 CREATE TABLE `migration_mapping_issues` (
                                             `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,

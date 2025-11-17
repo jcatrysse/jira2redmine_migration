@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.13';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.14';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
     'usage' => 'Analyse Jira custom field usage statistics from staging data.',
@@ -225,6 +225,20 @@ function main(array $config, array $cliOptions): void
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
             formatCurrentTimestamp(),
+            PHP_EOL
+        );
+    }
+
+    $planResult = collectCustomFieldUpdatePlan($pdo);
+    foreach ($planResult['warnings'] as $warning) {
+        printf("  [warning] %s%s", $warning, PHP_EOL);
+    }
+
+    renderCustomFieldUpdatePlan($planResult['plan'], false);
+
+    if ($planResult['plan'] !== []) {
+        printf(
+            "  Apply the above project/tracker associations manually or rerun with --use-extended-api to push them automatically.%s",
             PHP_EOL
         );
     }
@@ -1990,7 +2004,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
 
     foreach ($mappings as $row) {
         $currentStatus = (string)$row['migration_status'];
-        $allowedStatuses = ['PENDING_ANALYSIS', 'READY_FOR_CREATION', 'MATCH_FOUND', 'CREATION_FAILED'];
+        $allowedStatuses = ['PENDING_ANALYSIS', 'READY_FOR_CREATION', 'READY_FOR_UPDATE', 'MATCH_FOUND', 'CREATION_FAILED'];
         if (!in_array($currentStatus, $allowedStatuses, true)) {
             $summary['skipped']++;
             continue;
@@ -2319,6 +2333,9 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         $newStatus = $currentStatus;
         $newRedmineId = $currentRedmineId;
 
+        $existingProjectIds = [];
+        $existingTrackerIds = [];
+
         if ($matchedRedmine !== null) {
             $newStatus = 'MATCH_FOUND';
             $newRedmineId = (int)$matchedRedmine['id'];
@@ -2340,7 +2357,8 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
 
             $matchedTrackerIds = decodeJsonColumn($matchedRedmine['tracker_ids'] ?? null);
             if (is_array($matchedTrackerIds)) {
-                $proposedTrackerIds = array_values(array_map('intval', $matchedTrackerIds));
+                $existingTrackerIds = array_values(array_map('intval', $matchedTrackerIds));
+                $proposedTrackerIds = array_values($existingTrackerIds);
             }
 
             $matchedRoleIds = decodeJsonColumn($matchedRedmine['role_ids'] ?? null);
@@ -2350,7 +2368,8 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
 
             $matchedProjectIds = decodeJsonColumn($matchedRedmine['project_ids'] ?? null);
             if (is_array($matchedProjectIds)) {
-                $proposedProjectIds = array_values(array_map('intval', $matchedProjectIds));
+                $existingProjectIds = array_values(array_map('intval', $matchedProjectIds));
+                $proposedProjectIds = array_values($existingProjectIds);
             }
         }
 
@@ -2392,6 +2411,38 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
 
         if ($missingIssueTypes !== []) {
             $manualReasons[] = sprintf('Missing Redmine tracker mapping for Jira issue type IDs: %s', implode(', ', $missingIssueTypes));
+        }
+
+        if ($matchedRedmine !== null && $manualReasons === []) {
+            $desiredProjects = $proposedProjectIds ?? [];
+            $desiredTrackers = $proposedTrackerIds ?? [];
+
+            $missingProjects = array_diff($desiredProjects, $existingProjectIds);
+            $missingTrackers = array_diff($desiredTrackers, $existingTrackerIds);
+
+            if ($missingProjects !== []) {
+                $infoNotes[] = sprintf(
+                    'Missing %s project link(s) on Redmine custom field #%d; they will be added during the push.',
+                    count($missingProjects),
+                    $newRedmineId
+                );
+            }
+
+            if ($missingTrackers !== []) {
+                $infoNotes[] = sprintf(
+                    'Missing %s tracker link(s) on Redmine custom field #%d; they will be added during the push.',
+                    count($missingTrackers),
+                    $newRedmineId
+                );
+            }
+
+            if ($missingProjects !== [] || $missingTrackers !== []) {
+                $newStatus = 'READY_FOR_UPDATE';
+            }
+        }
+
+        if ($proposedProjectIds !== null && $proposedProjectIds !== []) {
+            $proposedIsForAll = false;
         }
 
         if ($hasMultipleGroups) {
@@ -3186,6 +3237,271 @@ function fetchCustomFieldMigrationStatusCounts(PDO $pdo): array
 
     return $results;
 }
+
+/**
+ * @return array<int, array{name: string, project_ids: array<int, int>, tracker_ids: array<int, int>}>
+ */
+function loadRedmineCustomFieldAssociationSnapshot(PDO $pdo): array
+{
+    $sql = 'SELECT id, name, project_ids, tracker_ids FROM staging_redmine_custom_fields';
+
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to load Redmine custom field associations: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement === false) {
+        return [];
+    }
+
+    /** @var array<int, array<string, mixed>> $rows */
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $snapshot = [];
+
+    foreach ($rows as $row) {
+        $id = normalizeInteger($row['id'] ?? null);
+        if ($id === null) {
+            continue;
+        }
+
+        $snapshot[$id] = [
+            'name' => isset($row['name']) ? (string)$row['name'] : sprintf('Custom field #%d', $id),
+            'project_ids' => normalizeIntegerListColumn($row['project_ids'] ?? null),
+            'tracker_ids' => normalizeIntegerListColumn($row['tracker_ids'] ?? null),
+        ];
+    }
+
+    return $snapshot;
+}
+
+/**
+ * @return array<int, int>
+ */
+function normalizeIntegerListColumn(mixed $value): array
+{
+    $decoded = decodeJsonColumn($value);
+    if (!is_array($decoded)) {
+        return [];
+    }
+
+    $ids = [];
+    foreach ($decoded as $item) {
+        $normalized = normalizeInteger($item);
+        if ($normalized !== null) {
+            $ids[] = $normalized;
+        }
+    }
+
+    $ids = array_values(array_unique($ids));
+    sort($ids);
+
+    return $ids;
+}
+
+/**
+ * @param array<int, int> ...$lists
+ * @return array<int, int>
+ */
+function mergeIntegerLists(array ...$lists): array
+{
+    $merged = [];
+    foreach ($lists as $list) {
+        foreach ($list as $value) {
+            $merged[] = (int)$value;
+        }
+    }
+
+    $merged = array_values(array_unique($merged));
+    sort($merged);
+
+    return $merged;
+}
+
+/**
+ * @return array{plan: array<int, array<string, mixed>>, warnings: array<int, string>}
+ */
+function collectCustomFieldUpdatePlan(PDO $pdo): array
+{
+    $snapshot = loadRedmineCustomFieldAssociationSnapshot($pdo);
+
+    $sql = <<<SQL
+        SELECT
+            mapping_id,
+            jira_field_id,
+            jira_field_name,
+            redmine_custom_field_id,
+            redmine_parent_custom_field_id,
+            proposed_redmine_name,
+            proposed_field_format,
+            proposed_is_required,
+            proposed_is_filter,
+            proposed_is_for_all,
+            proposed_is_multiple,
+            proposed_possible_values,
+            proposed_default_value,
+            proposed_tracker_ids,
+            proposed_role_ids,
+            proposed_project_ids,
+            migration_status,
+            notes
+        FROM migration_mapping_custom_fields
+        WHERE
+            redmine_custom_field_id IS NOT NULL
+            AND migration_status IN ('READY_FOR_UPDATE', 'CREATION_SUCCESS')
+    SQL;
+
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to collect the custom field update plan: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement === false) {
+        return ['plan' => [], 'warnings' => []];
+    }
+
+    /** @var array<int, array<string, mixed>> $rows */
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $plan = [];
+    $warnings = [];
+
+    foreach ($rows as $row) {
+        $redmineId = normalizeInteger($row['redmine_custom_field_id'] ?? null);
+        $parentId = normalizeInteger($row['redmine_parent_custom_field_id'] ?? null);
+
+        if ($redmineId === null) {
+            continue;
+        }
+
+        if (!isset($snapshot[$redmineId])) {
+            $warnings[] = sprintf('Missing Redmine snapshot entry for custom field #%d; re-run the redmine phase.', $redmineId);
+            continue;
+        }
+
+        $proposedProjects = normalizeIntegerListColumn($row['proposed_project_ids'] ?? null);
+        $proposedTrackers = normalizeIntegerListColumn($row['proposed_tracker_ids'] ?? null);
+
+        $existingProjects = $snapshot[$redmineId]['project_ids'];
+        $existingTrackers = $snapshot[$redmineId]['tracker_ids'];
+
+        $mergedProjects = mergeIntegerLists($existingProjects, $proposedProjects);
+        $mergedTrackers = mergeIntegerLists($existingTrackers, $proposedTrackers);
+
+        $missingProjects = array_diff($mergedProjects, $existingProjects);
+        $missingTrackers = array_diff($mergedTrackers, $existingTrackers);
+
+        $parentProjects = [];
+        $parentTrackers = [];
+        $parentMissingProjects = [];
+        $parentMissingTrackers = [];
+
+        if ($parentId !== null) {
+            if (!isset($snapshot[$parentId])) {
+                $warnings[] = sprintf(
+                    'Missing Redmine snapshot entry for parent custom field #%d; re-run the redmine phase.',
+                    $parentId
+                );
+                continue;
+            }
+
+            $parentProjects = mergeIntegerLists($snapshot[$parentId]['project_ids'], $mergedProjects);
+            $parentTrackers = mergeIntegerLists($snapshot[$parentId]['tracker_ids'], $mergedTrackers);
+            $parentMissingProjects = array_diff($parentProjects, $snapshot[$parentId]['project_ids']);
+            $parentMissingTrackers = array_diff($parentTrackers, $snapshot[$parentId]['tracker_ids']);
+        }
+
+        if ($missingProjects === [] && $missingTrackers === [] && $parentMissingProjects === [] && $parentMissingTrackers === []) {
+            continue;
+        }
+
+        $plan[] = [
+            'mapping_id' => (int)$row['mapping_id'],
+            'jira_field_id' => (string)$row['jira_field_id'],
+            'jira_field_name' => $row['jira_field_name'] ?? null,
+            'redmine_custom_field_id' => $redmineId,
+            'redmine_parent_custom_field_id' => $parentId,
+            'proposed_redmine_name' => $row['proposed_redmine_name'] ?? null,
+            'proposed_field_format' => $row['proposed_field_format'] ?? null,
+            'proposed_is_required' => normalizeBooleanFlag($row['proposed_is_required'] ?? null),
+            'proposed_is_filter' => normalizeBooleanFlag($row['proposed_is_filter'] ?? null),
+            'proposed_is_for_all' => normalizeBooleanFlag($row['proposed_is_for_all'] ?? null),
+            'proposed_is_multiple' => normalizeBooleanFlag($row['proposed_is_multiple'] ?? null),
+            'proposed_possible_values' => $row['proposed_possible_values'] ?? null,
+            'proposed_default_value' => $row['proposed_default_value'] ?? null,
+            'proposed_role_ids' => $row['proposed_role_ids'] ?? null,
+            'target_project_ids' => $mergedProjects,
+            'target_tracker_ids' => $mergedTrackers,
+            'parent_project_ids' => $parentProjects,
+            'parent_tracker_ids' => $parentTrackers,
+            'missing_projects' => $missingProjects,
+            'missing_trackers' => $missingTrackers,
+            'parent_missing_projects' => $parentMissingProjects,
+            'parent_missing_trackers' => $parentMissingTrackers,
+            'current_status' => (string)$row['migration_status'],
+            'notes' => $row['notes'] ?? null,
+        ];
+    }
+
+    return ['plan' => $plan, 'warnings' => $warnings];
+}
+
+/**
+ * @param array<int, array<string, mixed>> $plan
+ */
+function renderCustomFieldUpdatePlan(array $plan, bool $useExtendedApi): void
+{
+    if ($plan === []) {
+        printf("  No existing Redmine custom fields require association updates.%s", PHP_EOL);
+        return;
+    }
+
+    printf(
+        '  %d custom field(s) %s project/tracker association updates.%s',
+        count($plan),
+        $useExtendedApi ? 'will receive' : 'require',
+        PHP_EOL
+    );
+
+    foreach ($plan as $item) {
+        $label = $item['jira_field_name'] ?? $item['jira_field_id'];
+        $projectText = $item['target_project_ids'] === [] ? '[none]' : json_encode($item['target_project_ids']);
+        $trackerText = $item['target_tracker_ids'] === [] ? '[none]' : json_encode($item['target_tracker_ids']);
+        $missingProjects = $item['missing_projects'] ?? [];
+        $missingTrackers = $item['missing_trackers'] ?? [];
+
+        printf(
+            '  - Jira custom field %s (Redmine #%d): projects %s; trackers %s%s',
+            $label ?? '[unknown]',
+            $item['redmine_custom_field_id'],
+            $projectText,
+            $trackerText,
+            PHP_EOL
+        );
+
+        if ($missingProjects !== [] || $missingTrackers !== []) {
+            if ($missingProjects !== []) {
+                printf('    Missing projects to add: %s%s', json_encode(array_values($missingProjects)), PHP_EOL);
+            }
+            if ($missingTrackers !== []) {
+                printf('    Missing trackers to add: %s%s', json_encode(array_values($missingTrackers)), PHP_EOL);
+            }
+        }
+
+        if (isset($item['redmine_parent_custom_field_id']) && $item['redmine_parent_custom_field_id'] !== null) {
+            $parentProjects = $item['parent_project_ids'] === [] ? '[none]' : json_encode($item['parent_project_ids']);
+            $parentTrackers = $item['parent_tracker_ids'] === [] ? '[none]' : json_encode($item['parent_tracker_ids']);
+            printf(
+                '    Parent custom field #%d: projects %s; trackers %s%s',
+                $item['redmine_parent_custom_field_id'],
+                $parentProjects,
+                $parentTrackers,
+                PHP_EOL
+            );
+        }
+    }
+}
 function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi): void
 {
     $pendingFields = fetchCustomFieldsReadyForCreation($pdo);
@@ -3202,7 +3518,6 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             if ($confirmPush) {
                 printf("  --confirm-push provided but there is nothing to process.%s", PHP_EOL);
             }
-            return;
         }
 
         $redmineClient = createRedmineClient($redmineConfig);
@@ -3291,13 +3606,9 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
 
         if (!$confirmPush) {
             printf("  --confirm-push missing: reviewed payloads only, no data was sent to Redmine.%s", PHP_EOL);
-            return;
-        }
-
-        if ($isDryRun) {
+        } elseif ($isDryRun) {
             printf("  --dry-run enabled: skipping API calls after previewing the payloads.%s", PHP_EOL);
-            return;
-        }
+        } else {
 
         $updateStatement = $pdo->prepare(<<<SQL
             UPDATE migration_mapping_custom_fields
@@ -3851,6 +4162,25 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             PHP_EOL
         );
 
+        }
+
+        $planResult = collectCustomFieldUpdatePlan($pdo);
+        foreach ($planResult['warnings'] as $warning) {
+            printf("  [warning] %s%s", $warning, PHP_EOL);
+        }
+
+        renderCustomFieldUpdatePlan($planResult['plan'], true);
+
+        if ($planResult['plan'] !== []) {
+            if ($isDryRun) {
+                printf("  --dry-run enabled: skipping extended API calls for association updates.%s", PHP_EOL);
+            } elseif (!$confirmPush) {
+                printf("  Provide --confirm-push to update custom field associations via the extended API.%s", PHP_EOL);
+            } else {
+                synchronizeCustomFieldAssociations($pdo, $redmineClient, $extendedApiPrefix, $planResult['plan'], false);
+            }
+        }
+
         return;
     }
 
@@ -3866,7 +4196,6 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
         } else {
             printf("  Provide --confirm-push after manually creating any outstanding custom fields in Redmine.%s", PHP_EOL);
         }
-        return;
     }
 
     printf("  %d custom field(s) require manual creation in Redmine.%s", $pendingCount, PHP_EOL);
@@ -3949,59 +4278,55 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
 
     if (!$confirmPush) {
         printf("  Supply --confirm-push after completing the manual Redmine updates to acknowledge the checklist.%s", PHP_EOL);
-        return;
-    }
-
-    if ($isDryRun) {
+    } elseif ($isDryRun) {
         printf("  --dry-run enabled: skipping migration status updates after the manual review.%s", PHP_EOL);
-        return;
+    } else {
+        $updateStatement = $pdo->prepare(<<<SQL
+            UPDATE migration_mapping_custom_fields
+            SET
+                migration_status = 'CREATION_SUCCESS',
+                notes = NULL,
+                automation_hash = :automation_hash
+            WHERE mapping_id = :mapping_id
+        SQL);
+
+        if ($updateStatement === false) {
+            throw new RuntimeException('Failed to prepare manual acknowledgement update for migration_mapping_custom_fields.');
+        }
+
+        foreach ($pendingFields as $field) {
+            $mappingId = (int)$field['mapping_id'];
+            $jiraId = (string)$field['jira_field_id'];
+            $jiraName = $field['jira_field_name'] ?? null;
+
+            $automationHash = computeCustomFieldAutomationStateHash(
+                null,
+                'CREATION_SUCCESS',
+                $field['proposed_redmine_name'] ?? ($jiraName ?? $jiraId),
+                $field['proposed_field_format'] ?? 'string',
+                normalizeBooleanFlag($field['proposed_is_required'] ?? null) ?? false,
+                normalizeBooleanFlag($field['proposed_is_filter'] ?? null) ?? true,
+                normalizeBooleanFlag($field['proposed_is_for_all'] ?? null) ?? true,
+                normalizeBooleanFlag($field['proposed_is_multiple'] ?? null) ?? false,
+                $field['proposed_possible_values'] ?? null,
+                $field['proposed_default_value'] ?? null,
+                $field['proposed_tracker_ids'] ?? null,
+                $field['proposed_role_ids'] ?? null,
+                $field['proposed_project_ids'] ?? null,
+                null,
+                isset($field['redmine_parent_custom_field_id']) && trim((string)$field['redmine_parent_custom_field_id']) !== ''
+                    ? (int)$field['redmine_parent_custom_field_id']
+                    : null
+            );
+
+            $updateStatement->execute([
+                'automation_hash' => $automationHash,
+                'mapping_id' => $mappingId,
+            ]);
+        }
+
+        printf("  Marked %d custom field(s) as acknowledged after manual creation.%s", $pendingCount, PHP_EOL);
     }
-
-    $updateStatement = $pdo->prepare(<<<SQL
-        UPDATE migration_mapping_custom_fields
-        SET
-            migration_status = 'CREATION_SUCCESS',
-            notes = NULL,
-            automation_hash = :automation_hash
-        WHERE mapping_id = :mapping_id
-    SQL);
-
-    if ($updateStatement === false) {
-        throw new RuntimeException('Failed to prepare manual acknowledgement update for migration_mapping_custom_fields.');
-    }
-
-    foreach ($pendingFields as $field) {
-        $mappingId = (int)$field['mapping_id'];
-        $jiraId = (string)$field['jira_field_id'];
-        $jiraName = $field['jira_field_name'] ?? null;
-
-        $automationHash = computeCustomFieldAutomationStateHash(
-            null,
-            'CREATION_SUCCESS',
-            $field['proposed_redmine_name'] ?? ($jiraName ?? $jiraId),
-            $field['proposed_field_format'] ?? 'string',
-            normalizeBooleanFlag($field['proposed_is_required'] ?? null) ?? false,
-            normalizeBooleanFlag($field['proposed_is_filter'] ?? null) ?? true,
-            normalizeBooleanFlag($field['proposed_is_for_all'] ?? null) ?? true,
-            normalizeBooleanFlag($field['proposed_is_multiple'] ?? null) ?? false,
-            $field['proposed_possible_values'] ?? null,
-            $field['proposed_default_value'] ?? null,
-            $field['proposed_tracker_ids'] ?? null,
-            $field['proposed_role_ids'] ?? null,
-            $field['proposed_project_ids'] ?? null,
-            null,
-            isset($field['redmine_parent_custom_field_id']) && trim((string)$field['redmine_parent_custom_field_id']) !== ''
-                ? (int)$field['redmine_parent_custom_field_id']
-                : null
-        );
-
-        $updateStatement->execute([
-            'automation_hash' => $automationHash,
-            'mapping_id' => $mappingId,
-        ]);
-    }
-
-    printf("  Marked %d custom field(s) as acknowledged after manual creation.%s", $pendingCount, PHP_EOL);
 }
 
 /**
@@ -4046,21 +4371,198 @@ function fetchCustomFieldsReadyForCreation(PDO $pdo): array
     return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
 
-function extractCreatedCustomFieldId(mixed $decoded): int
+/**
+ * @param array<int, array<string, mixed>> $plan
+ */
+function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $extendedPrefix, array $plan, bool $isDryRun): void
 {
-    if (is_array($decoded)) {
-        if (isset($decoded['custom_field']) && is_array($decoded['custom_field']) && isset($decoded['custom_field']['id'])) {
-            return (int)$decoded['custom_field']['id'];
-        }
-
-        if (isset($decoded['id'])) {
-            return (int)$decoded['id'];
-        }
+    if ($plan === []) {
+        printf("  No association updates are pending.%s", PHP_EOL);
+        return;
     }
 
-    throw new RuntimeException('Unable to determine the new Redmine custom field ID from the extended API response.');
+    $updateStatement = $pdo->prepare(<<<SQL
+        UPDATE migration_mapping_custom_fields
+        SET
+            migration_status = :migration_status,
+            notes = :notes,
+            proposed_tracker_ids = :proposed_tracker_ids,
+            proposed_project_ids = :proposed_project_ids,
+            automation_hash = :automation_hash
+        WHERE mapping_id = :mapping_id
+    SQL);
+
+    if ($updateStatement === false) {
+        throw new RuntimeException('Failed to prepare custom field association update statement.');
+    }
+
+    foreach ($plan as $item) {
+        $mappingId = (int)$item['mapping_id'];
+        $redmineId = (int)$item['redmine_custom_field_id'];
+        $parentId = isset($item['redmine_parent_custom_field_id']) && $item['redmine_parent_custom_field_id'] !== null
+            ? (int)$item['redmine_parent_custom_field_id']
+            : null;
+        $projects = $item['target_project_ids'] ?? [];
+        $trackers = $item['target_tracker_ids'] ?? [];
+        $currentStatus = $item['current_status'] ?? 'MATCH_FOUND';
+        $nextStatus = $currentStatus === 'READY_FOR_UPDATE' ? 'MATCH_FOUND' : $currentStatus;
+        $format = $item['proposed_field_format'] ?? null;
+
+        $payload = ['custom_field' => []];
+        if ($projects !== []) {
+            $payload['custom_field']['project_ids'] = $projects;
+        }
+        if ($trackers !== []) {
+            $payload['custom_field']['tracker_ids'] = $trackers;
+        }
+
+        $path = buildExtendedApiPath($extendedPrefix, sprintf('custom_fields/%d.json', $redmineId));
+        $isDependingField = strtolower((string)$format) === 'depending_list';
+
+        if ($isDependingField) {
+            verifyDependingCustomFieldsApi($client);
+            $path = sprintf('/depending_custom_fields/%d.json', $redmineId);
+        }
+
+        if ($parentId !== null) {
+            $parentPayload = ['custom_field' => []];
+            if ($projects !== []) {
+                $parentPayload['custom_field']['project_ids'] = $projects;
+            }
+            if ($trackers !== []) {
+                $parentPayload['custom_field']['tracker_ids'] = $trackers;
+            }
+
+            printf(
+                "  [plan] Updating parent custom field #%d projects %s, trackers %s%s",
+                $parentId,
+                $projects === [] ? '[none]' : json_encode($projects),
+                $trackers === [] ? '[none]' : json_encode($trackers),
+                PHP_EOL
+            );
+
+            if (!$isDryRun) {
+                try {
+                    $parentPath = buildExtendedApiPath($extendedPrefix, sprintf('custom_fields/%d.json', $parentId));
+                    $client->put($parentPath, ['json' => $parentPayload]);
+                } catch (Throwable $exception) {
+                    $errorMessage = summarizeExtendedApiError($exception);
+                    $automationHash = computeCustomFieldAutomationStateHash(
+                        $redmineId,
+                        'CREATION_FAILED',
+                        $item['proposed_redmine_name'] ?? $item['jira_field_id'],
+                        $format,
+                        $item['proposed_is_required'] ?? null,
+                        $item['proposed_is_filter'] ?? null,
+                        $item['proposed_is_for_all'] ?? null,
+                        $item['proposed_is_multiple'] ?? null,
+                        $item['proposed_possible_values'] ?? null,
+                        $item['proposed_default_value'] ?? null,
+                        encodeJsonColumn($trackers),
+                        $item['proposed_role_ids'] ?? null,
+                        encodeJsonColumn($projects),
+                        $errorMessage,
+                        $parentId
+                    );
+
+                    $updateStatement->execute([
+                        'migration_status' => 'CREATION_FAILED',
+                        'notes' => $errorMessage,
+                        'proposed_tracker_ids' => encodeJsonColumn($trackers),
+                        'proposed_project_ids' => encodeJsonColumn($projects),
+                        'automation_hash' => $automationHash,
+                        'mapping_id' => $mappingId,
+                    ]);
+
+                    printf("  [failed] Parent update for custom field #%d: %s%s", $parentId, $errorMessage, PHP_EOL);
+                    continue;
+                }
+            }
+        }
+
+        printf(
+            "  [plan] Updating Redmine custom field #%d projects %s, trackers %s%s",
+            $redmineId,
+            $projects === [] ? '[none]' : json_encode($projects),
+            $trackers === [] ? '[none]' : json_encode($trackers),
+            PHP_EOL
+        );
+
+        if ($isDryRun) {
+            continue;
+        }
+
+        try {
+            $client->put($path, ['json' => $payload]);
+
+            $automationHash = computeCustomFieldAutomationStateHash(
+                $redmineId,
+                $nextStatus,
+                $item['proposed_redmine_name'] ?? ($item['jira_field_name'] ?? $item['jira_field_id']),
+                $format,
+                $item['proposed_is_required'] ?? null,
+                $item['proposed_is_filter'] ?? null,
+                $item['proposed_is_for_all'] ?? null,
+                $item['proposed_is_multiple'] ?? null,
+                $item['proposed_possible_values'] ?? null,
+                $item['proposed_default_value'] ?? null,
+                encodeJsonColumn($trackers),
+                $item['proposed_role_ids'] ?? null,
+                encodeJsonColumn($projects),
+                null,
+                $parentId
+            );
+
+            $updateStatement->execute([
+                'migration_status' => $nextStatus,
+                'notes' => null,
+                'proposed_tracker_ids' => encodeJsonColumn($trackers),
+                'proposed_project_ids' => encodeJsonColumn($projects),
+                'automation_hash' => $automationHash,
+                'mapping_id' => $mappingId,
+            ]);
+        } catch (Throwable $exception) {
+            $errorMessage = summarizeExtendedApiError($exception);
+            $automationHash = computeCustomFieldAutomationStateHash(
+                $redmineId,
+                'CREATION_FAILED',
+                $item['proposed_redmine_name'] ?? ($item['jira_field_name'] ?? $item['jira_field_id']),
+                $format,
+                $item['proposed_is_required'] ?? null,
+                $item['proposed_is_filter'] ?? null,
+                $item['proposed_is_for_all'] ?? null,
+                $item['proposed_is_multiple'] ?? null,
+                $item['proposed_possible_values'] ?? null,
+                $item['proposed_default_value'] ?? null,
+                encodeJsonColumn($trackers),
+                $item['proposed_role_ids'] ?? null,
+                encodeJsonColumn($projects),
+                $errorMessage,
+                $parentId
+            );
+
+            $updateStatement->execute([
+                'migration_status' => 'CREATION_FAILED',
+                'notes' => $errorMessage,
+                'proposed_tracker_ids' => encodeJsonColumn($trackers),
+                'proposed_project_ids' => encodeJsonColumn($projects),
+                'automation_hash' => $automationHash,
+                'mapping_id' => $mappingId,
+            ]);
+
+            printf(
+                "  [failed] Association update for Redmine custom field #%d: %s%s",
+                $redmineId,
+                $errorMessage,
+                PHP_EOL
+            );
+        }
+    }
 }
 
+/**
+ * @param array<int, array<string, mixed>> $plan
+ */
 function decodeJsonColumn(mixed $value): array|string|null
 {
     if ($value === null) {
@@ -4334,6 +4836,33 @@ function summarizeExtendedApiError(Throwable $exception): string
     }
 
     return $exception->getMessage();
+}
+
+function extractCreatedCustomFieldId(mixed $decoded): int
+{
+    if (is_array($decoded)) {
+        if (
+            isset($decoded['custom_field'])
+            && is_array($decoded['custom_field'])
+            && isset($decoded['custom_field']['id'])
+        ) {
+            return (int)$decoded['custom_field']['id'];
+        }
+
+        if (
+            isset($decoded['depending_custom_field'])
+            && is_array($decoded['depending_custom_field'])
+            && isset($decoded['depending_custom_field']['id'])
+        ) {
+            return (int)$decoded['depending_custom_field']['id'];
+        }
+
+        if (isset($decoded['id'])) {
+            return (int)$decoded['id'];
+        }
+    }
+
+    throw new RuntimeException('Unable to determine the new Redmine custom field ID from the extended API response.');
 }
 
 function extractExtendedApiErrorDetails(ResponseInterface $response): ?string
