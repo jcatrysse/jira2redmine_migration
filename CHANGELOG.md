@@ -5,16 +5,213 @@ All notable changes to this project will be documented in this file.
 ## [TODO]
 
 - Migrate custom fields script: link custom fields to projects and trackers in Redmine
+    - table migration_mapping_custom_fields: jira_project_ids, jira_issue_type_ids, jira_allowed_values, ... stay empty
+    - table migration_mapping_custom_fields: proposed_possible_values, proposed_tracker_ids, proposed_project_ids, proposed_role_ids, proposed_is_required, ... stay empty
+    - table staging_jira_project_issue_type_fields: allowed_values_json, ... needs to be validated
+    - Examples: 
+        - Error: [manual] Jira custom field Survey Data Type: List-style Jira field requires allowed option values; Jira metadata exposes no allowedValues payload. Usage snapshot (2025-11-19 10:12:48): non-empty values in 48/3230 issues (values present in 48/3230).
+        - Error: [manual] Jira custom field Survey Hardware: Unable to parse cascading Jira custom field options for dependent field creation. Usage snapshot (2025-11-19 10:12:48): non-empty values in 793/3230 issues (values present in 793/3230). Requires the redmine_depending_custom_fields plugin to migrate cascading selects.
+    - Example payloads for schema_type en raw_field:
+      - INSERT INTO `staging_jira_project_issue_type_fields` VALUES('array', '{\"key\": \"versions\", \"name\": \"Betreft versies\", \"schema\": {\"type\": \"array\", \"items\": \"version\", \"system\": \"versions\"}, \"fieldId\": \"versions\", \"required\": false, \"operations\": [\"set\", \"add\", \"remove\"], \"allowedValues\": [], \"hasDefaultValue\": false}');
+      - INSERT INTO `staging_jira_project_issue_type_fields` VALUES('option', '{\"key\": \"customfield_10358\", \"name\": \"Vehicle type\", \"schema\": {\"type\": \"option\", \"custom\": \"com.atlassian.jira.plugin.system.customfieldtypes:select\", \"customId\": 10358}, \"fieldId\": \"customfield_10358\", \"required\": true, \"operations\": [\"set\"], \"allowedValues\": [{\"id\": \"11352\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/11352\", \"value\": \"AUV\"}, {\"id\": \"11353\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/11353\", \"value\": \"VROV\"}, {\"id\": \"11354\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/11354\", \"value\": \"WC-ROV\"}], \"hasDefaultValue\": false}');
+      - INSERT INTO `staging_jira_project_issue_type_fields` VALUES('string', '{\"key\": \"summary\", \"name\": \"Samenvatting\", \"schema\": {\"type\": \"string\", \"system\": \"summary\"}, \"fieldId\": \"summary\", \"required\": true, \"operations\": [\"set\"], \"hasDefaultValue\": false}');
+      - INSERT INTO `staging_jira_project_issue_type_fields` VALUES('object', '{\"key\": \"label-manager-for-jira__f2b135ef-0fa6-4d1a-a418-056675b4981f\", \"name\": \"Offshore Vessel\", \"schema\": {\"type\": \"object\", \"custom\": \"ari:cloud:ecosystem::extension/639553fa-ee05-4cc8-98f1-cf5b46518814/37f393d5-e134-4d8a-831b-be8f4f66c882/static/label-manager-for-jira\", \"customId\": 10033, \"configuration\": {\"readOnly\": false, \"environment\": \"PRODUCTION\", \"customRenderer\": true}}, \"fieldId\": \"customfield_10033\", \"required\": false, \"operations\": [\"add\", \"set\", \"edit\", \"remove\"], \"hasDefaultValue\": false}');
+      - INSERT INTO `staging_jira_project_issue_type_fields` VALUES('issuetype', '{\"key\": \"issuetype\", \"name\": \"Issuetype\", \"schema\": {\"type\": \"issuetype\", \"system\": \"issuetype\"}, \"fieldId\": \"issuetype\", \"required\": true, \"operations\": [], \"allowedValues\": [{\"id\": \"10133\", \"name\": \"Milestone\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/issuetype/10133\", \"iconUrl\": \"https://geoxyz.atlassian.net/rest/api/2/universal_avatar/view/type/issuetype/avatar/10308?size=medium\", \"subtask\": false, \"avatarId\": 10308, \"description\": \"\", \"hierarchyLevel\": 0}], \"hasDefaultValue\": false}');
+      - INSERT INTO `staging_jira_project_issue_type_fields` VALUES('issuelink', '{\"key\": \"parent\", \"name\": \"Bovenliggende\", \"schema\": {\"type\": \"issuelink\", \"system\": \"parent\"}, \"fieldId\": \"parent\", \"required\": true, \"operations\": [\"set\"], \"hasDefaultValue\": false}');
+      - INSERT INTO `staging_jira_project_issue_type_fields` VALUES('priority', '{\"key\": \"priority\", \"name\": \"Prioriteit\", \"schema\": {\"type\": \"priority\", \"system\": \"priority\"}, \"fieldId\": \"priority\", \"required\": false, \"operations\": [\"set\"], \"defaultValue\": {\"id\": \"3\", \"name\": \"Medium\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/priority/3\", \"iconUrl\": \"https://geoxyz.atlassian.net/images/icons/priorities/medium_new.svg\"}, \"allowedValues\": [{\"id\": \"10000\", \"name\": \"Showstopper\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/priority/10000\", \"iconUrl\": \"https://geoxyz.atlassian.net/rest/api/3/universal_avatar/view/type/priority/avatar/10558?size=medium\", \"avatarId\": 10558}, {\"id\": \"2\", \"name\": \"High\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/priority/2\", \"iconUrl\": \"https://geoxyz.atlassian.net/images/icons/priorities/high_new.svg\"}, {\"id\": \"3\", \"name\": \"Medium\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/priority/3\", \"iconUrl\": \"https://geoxyz.atlassian.net/images/icons/priorities/medium_new.svg\"}, {\"id\": \"4\", \"name\": \"Low\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/priority/4\", \"iconUrl\": \"https://geoxyz.atlassian.net/images/icons/priorities/low_new.svg\"}], \"hasDefaultValue\": true}');
+      - INSERT INTO `staging_jira_project_issue_type_fields` VALUES('project', '{\"key\": \"project\", \"name\": \"Project\", \"schema\": {\"type\": \"project\", \"system\": \"project\"}, \"fieldId\": \"project\", \"required\": true, \"operations\": [\"set\"], \"allowedValues\": [{\"id\": \"10210\", \"key\": \"GSPP\", \"name\": \"GeoS Project Planning\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/project/10210\", \"avatarUrls\": {\"16x16\": \"https://geoxyz.atlassian.net/rest/api/3/universal_avatar/view/type/project/avatar/10406?size=xsmall\", \"24x24\": \"https://geoxyz.atlassian.net/rest/api/3/universal_avatar/view/type/project/avatar/10406?size=small\", \"32x32\": \"https://geoxyz.atlassian.net/rest/api/3/universal_avatar/view/type/project/avatar/10406?size=medium\", \"48x48\": \"https://geoxyz.atlassian.net/rest/api/3/universal_avatar/view/type/project/avatar/10406\"}, \"simplified\": false, \"projectTypeKey\": \"software\"}], \"hasDefaultValue\": false}');
+      - INSERT INTO `staging_jira_project_issue_type_fields` VALUES('user', '{\"key\": \"reporter\", \"name\": \"Melder\", \"schema\": {\"type\": \"user\", \"system\": \"reporter\"}, \"fieldId\": \"reporter\", \"required\": true, \"operations\": [\"set\"], \"autoCompleteUrl\": \"https://geoxyz.atlassian.net/rest/api/3/user/recommend?context=Reporter&issueKey=\", \"hasDefaultValue\": true}');
+      - INSERT INTO `staging_jira_project_issue_type_fields` VALUES('option-with-child', '{\"key\": \"customfield_10129\", \"name\": \"SeaSoils Hardware\", \"schema\": {\"type\": \"option-with-child\", \"custom\": \"com.atlassian.jira.plugin.system.customfieldtypes:cascadingselect\", \"customId\": 10129}, \"fieldId\": \"customfield_10129\", \"required\": false, \"operations\": [\"set\"], \"allowedValues\": [{\"id\": \"10925\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10925\", \"value\": \"CPT Container\"}, {\"id\": \"10923\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10923\", \"value\": \"CPT Unit\", \"children\": [{\"id\": \"10930\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10930\", \"value\": \"Manta 200\"}]}, {\"id\": \"10924\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10924\", \"value\": \"CPT Winch\", \"children\": [{\"id\": \"10931\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10931\", \"value\": \"Umbilical\"}, {\"id\": \"10932\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10932\", \"value\": \"Rod Wire\"}]}, {\"id\": \"10990\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10990\", \"value\": \"Day Grab\", \"children\": [{\"id\": \"10991\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10991\", \"value\": \"2.5L\"}, {\"id\": \"10992\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10992\", \"value\": \"5L\"}]}, {\"id\": \"10929\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10929\", \"value\": \"Offshore Lab Container 20ft\", \"children\": [{\"id\": \"10935\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10935\", \"value\": \"Lab/Office\"}, {\"id\": \"10936\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10936\", \"value\": \"Lab/Sample Storage\"}]}, {\"id\": \"10989\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10989\", \"value\": \"Piston Corer\"}, {\"id\": \"10928\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10928\", \"value\": \"VC Container\"}, {\"id\": \"10926\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10926\", \"value\": \"VC Unit\", \"children\": [{\"id\": \"10933\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10933\", \"value\": \"Geo Corer 6000\"}]}, {\"id\": \"10927\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10927\", \"value\": \"VC Winch\", \"children\": [{\"id\": \"10934\", \"self\": \"https://geoxyz.atlassian.net/rest/api/3/customFieldOption/10934\", \"value\": \"Umbilical\"}]}], \"hasDefaultValue\": false}');
+      - INSERT INTO `staging_jira_project_issue_type_fields` VALUES('date', '{\"key\": \"duedate\", \"name\": \"Einddatum\", \"schema\": {\"type\": \"date\", \"system\": \"duedate\"}, \"fieldId\": \"duedate\", \"required\": false, \"operations\": [\"set\"], \"hasDefaultValue\": false}');
+      - INSERT INTO `staging_jira_project_issue_type_fields` VALUES('timetracking', '{\"key\": \"timetracking\", \"name\": \"Tijdregistratie\", \"schema\": {\"type\": \"timetracking\", \"system\": \"timetracking\"}, \"fieldId\": \"timetracking\", \"required\": false, \"operations\": [\"set\", \"edit\"], \"hasDefaultValue\": false}');
+      - INSERT INTO `staging_jira_project_issue_type_fields` VALUES('team', '{\"key\": \"customfield_10001\", \"name\": \"Team\", \"schema\": {\"type\": \"team\", \"custom\": \"com.atlassian.jira.plugin.system.customfieldtypes:atlassian-team\", \"customId\": 10001, \"configuration\": {\"com.atlassian.jira.plugin.system.customfieldtypes:atlassian-team\": true}}, \"fieldId\": \"customfield_10001\", \"required\": false, \"operations\": [\"set\"], \"autoCompleteUrl\": \"https://geoxyz.atlassian.net/gateway/api/v1/recommendations\", \"hasDefaultValue\": false}');
+
+- Verify if all automation hashes align with the latest database schemas.
+- Migrate custom fields script: retrieve object information, or create them manually as enumeration, check if issue contains readable values.
 - Migrate custom fields script: add support for datetime fields in redmine using https://github.com/jcatrysse/redmine_datetime_custom_field and the https://github.com/jcatrysse/redmine_extended_api for API access.
 - Migrate custom fields script: investigate unsupported field types (any, team, option, option-with-child, option2, sd-customerrequesttype, object, sd-approvals, ...)
-- Migrate custom fields script: investigate cascading fields and how to match them with https://github.com/jcatrysse/redmine_depending_custom_fields
-- Add a migration script for watchers.
+- Migrate custom fields script: investigate cascading fields (option-with-child) and how to match them with https://github.com/jcatrysse/redmine_depending_custom_fields
 - Migrate custom fields script: investigate and validate the transformation from Jira Context to separate custom fields in Redmine.
+- Migrate custom fields script: in table migration_mapping_custom_fields, when jira_project_ids or jira_issue_type_ids is empty, set migration_status to IGNORED.
+- Migrate trackers script: in the transform phase, the system seems to match the redmine projects or other information with the staging_redmine tables, while the relevant information about redmine values should come from the mapping tables, they are up to date after a push. 
+- Migrate trackers script: in the transform phase, jira_scope_project_id should be set with the jira project id's, same logic as for proposed_redmine_project_ids, but with the Jira is's.
+- Migrate trackers script: in the transform phase, trackers who have no proposed_redmine_project_ids should be set to IGNORED.
+- Migrate trackers script: seems to call the Redmine projects endpoint to link the tracker to the projects, while the tracker should be linked to the projects in the extended_api tracker endpoint, or use the project endpoint if the extended_api is not available.
+  - Payload on the standard Redmine API for projects: {
+    "project":{
+    "name":"Example name",
+    "identifier":"example_name",
+    "description":"Description of exapmple project",
+    "is_public":false,
+    "parent_id":1,
+    "inherit_members":false,
+    "tracker_ids":[
+    1,
+    2,
+    3,
+    4,
+    5
+    ],
+    "enabled_module_names":[
+    "issue_tracking"
+    ],
+    "custom_field_values":{
+    "1":"VALUE"
+    }
+    }
+    }
 - Fine-tune the attachments, issues, and journals scripts.
 - Migrate issues script: on a rerun, newer issues should be fetched.
 - Migrate issues script: on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
-- Create the missing scripts.
+- Create the missing scripts: labels, (document) categories, milestones, watchers, ...
 - Validate we can push authors and creation timestamps to Redmine.
+- Check if cascading fields are one value, or a value for every member of the family.
+- Prefer moving to Redmine Enumerations and not lists, watchout to map the ID's of the enumerations for easy mapping between issue values.
+
+## [0.0.46] - 2025-12-15
+
+- Pass the mapped Redmine project IDs to the extended API tracker payloads so
+  freshly created trackers are associated with their projects immediately.
+- Revert the project-tracker snapshot back to `staging_redmine_projects` so the
+  push phase only updates associations that exist in the latest Redmine
+  snapshot, preventing erroneous updates against missing project endpoints.
+- Bump `07_migrate_trackers.php` to version `0.0.19` and refresh the README
+  references.
+
+## [0.0.45] - 2025-12-14
+
+- Treat `migration_mapping_trackers` and `migration_mapping_projects` as the
+  primary Redmine sources during the tracker transform so newly created
+  trackers and projects remain matched without waiting for a fresh
+  `staging_redmine_*` snapshot. The lookup now overlays mapping-table metadata
+  on top of any available Redmine snapshots.
+- Seed the project tracker snapshot from `migration_mapping_projects`, only
+  using `staging_redmine_projects` payloads to enrich the tracker list so push
+  operations still know which associations already exist.
+- Bump `07_migrate_trackers.php` to version `0.0.18` and update the README
+  references.
+
+## [0.0.43] - 2025-12-12
+
+- Persist `allowed_values_json` for every Jira field that exposes
+  `allowedValues`, including system types such as project, issue type,
+  priority, and user pickers, so `migration_mapping_custom_fields` finally
+  receives the project/issue scopes and option payloads it needs to populate
+  `jira_project_ids`, `jira_issue_type_ids`, and `jira_allowed_values`.
+- Capture the Jira project display name when recording
+  `staging_jira_project_issue_type_fields` entries so reviewers can see the key
+  and friendly name side-by-side while auditing mappings.
+- Bump the custom field migration script version to `0.0.24` and align the
+  README to reflect the new capability.
+
+## [0.0.42] - 2025-12-11
+
+- Ensure the Jira create-metadata extractor always requests expanded field
+  definitions so project/issue-type rows capture allowed values, even for
+  system fields, and store those option payloads in the staging table. This
+  keeps `migration_mapping_custom_fields` populated with Jira project/issue
+  scopes and allowed values so the transform phase can propose matching
+  Redmine project/tracker links. Bump the custom field migration script to
+  version `0.0.23` and align the README reference.
+
+## [0.0.41] - 2025-12-10
+
+- Remove the unused Jira field context extraction tables and logic in favour of
+  the project/issue-type create metadata flow, trimming the schema accordingly.
+- Drop the unused Jira searcher key columns from the staging and mapping tables.
+- Add CLI logging that summarises how many custom fields are mapped, how many
+  are list-like or cascading, and how many carry allowed values.
+- Bump the custom field migration script version to `0.0.21` and align the
+  README with the simplified extraction scope.
+
+## [0.0.41] - 2025-12-10
+
+- Remove the unused Jira field context extraction tables and logic in favour of
+  the project/issue-type create metadata flow, trimming the schema accordingly.
+- Drop the legacy `context_scope_*` and `jira_context_ids` columns from
+  `migration_mapping_custom_fields` now that contexts are no longer staged, and
+  keep the mapping rows scoped via the aggregated project/issue usage plus
+  allowed values.
+- Drop the unused Jira searcher key columns from the staging and mapping tables.
+- Add CLI logging that summarises how many custom fields are mapped, how many
+  are list-like or cascading, and how many carry allowed values.
+- Bump the custom field migration script version to `0.0.22` and align the
+  README with the simplified extraction scope.
+
+## [0.0.35] - 2025-12-07
+
+- Iterate over staged Jira projects and their issue types via `/rest/api/3/issue/createmeta` to capture the fields exposed on
+  each create screen in `staging_jira_project_issue_type_fields`, including required flags.
+- Blend the project/issue-type visibility into context grouping so Redmine proposals include tracker and project scopes even
+  when Jira contexts are global.
+- Bump the custom field migration script version to `0.0.16` and refresh the README with the new extraction step.
+
+## [0.0.35] - 2025-12-07
+
+- Iterate over staged Jira projects and their issue types via `/rest/api/3/issue/createmeta` to capture the fields exposed on
+  each create screen in `staging_jira_project_issue_type_fields`, including required flags.
+- Blend the project/issue-type visibility into context grouping so Redmine proposals include tracker and project scopes even
+  when Jira contexts are global.
+- Bump the custom field migration script version to `0.0.16` and refresh the README with the new extraction step.
+
+## [0.0.36] - 2025-12-08
+
+- Switch the Jira create-metadata extraction to the scoped endpoints (`/issue/createmeta/{project}/issuetypes[/ {id}]`) so
+  `staging_jira_project_issue_type_fields` reliably captures per-project issue type fields on Jira Cloud.
+- Add logging around project/issue-type discovery for easier debugging when create permissions or API responses are empty.
+- Bump the custom field migration script version to `0.0.17` and refresh the README references.
+
+## [0.0.35] - 2025-12-07
+
+- Iterate over staged Jira projects and their issue types via `/rest/api/3/issue/createmeta` to capture the fields exposed on
+  each create screen in `staging_jira_project_issue_type_fields`, including required flags.
+- Blend the project/issue-type visibility into context grouping so Redmine proposals include tracker and project scopes even
+  when Jira contexts are global.
+- Bump the custom field migration script version to `0.0.16` and refresh the README with the new extraction step.
+
+## [0.0.36] - 2025-12-08
+
+- Switch the Jira create-metadata extraction to the scoped endpoints (`/issue/createmeta/{project}/issuetypes[/ {id}]`) so
+  `staging_jira_project_issue_type_fields` reliably captures per-project issue type fields on Jira Cloud.
+- Add logging around project/issue-type discovery for easier debugging when create permissions or API responses are empty.
+- Bump the custom field migration script version to `0.0.17` and refresh the README references.
+
+## [0.0.37] - 2025-12-09
+
+- Capture Jira field schema hints and normalised allowed values in `staging_jira_project_issue_type_fields`, including
+  `schema_type`, `schema_custom`, and `allowed_values_json`, so the transform phase can reason about select-like fields
+  without rehydrating raw payloads.
+- Classify Jira fields as `system`, `jira_custom`, or `app_custom` in both `staging_jira_fields` and
+  `staging_jira_project_issue_type_fields`, filtering `app_custom` entries out of the custom-field mapping pipeline and
+  improving downstream Redmine decisions.
+- Harden custom field detection to avoid PHP version quirks, bump the custom field migration script version to `0.0.18`, and
+  align the README references.
+
+## [0.0.35] - 2025-12-07
+
+- Iterate over staged Jira projects and their issue types via `/rest/api/3/issue/createmeta` to capture the fields exposed on
+  each create screen in `staging_jira_project_issue_type_fields`, including required flags.
+- Blend the project/issue-type visibility into context grouping so Redmine proposals include tracker and project scopes even
+  when Jira contexts are global.
+- Bump the custom field migration script version to `0.0.16` and refresh the README with the new extraction step.
+
+## [0.0.36] - 2025-12-08
+
+- Switch the Jira create-metadata extraction to the scoped endpoints (`/issue/createmeta/{project}/issuetypes[/ {id}]`) so
+  `staging_jira_project_issue_type_fields` reliably captures per-project issue type fields on Jira Cloud.
+- Add logging around project/issue-type discovery for easier debugging when create permissions or API responses are empty.
+- Bump the custom field migration script version to `0.0.17` and refresh the README references.
+
+## [0.0.37] - 2025-12-09
+
+- Capture Jira field schema hints and normalised allowed values in `staging_jira_project_issue_type_fields`, including
+  `schema_type`, `schema_custom`, and `allowed_values_json`, so the transform phase can reason about select-like fields
+  without rehydrating raw payloads.
+- Classify Jira fields as `system`, `jira_custom`, or `app_custom` in both `staging_jira_fields` and
+  `staging_jira_project_issue_type_fields`, filtering `app_custom` entries out of the custom-field mapping pipeline and
+  improving downstream Redmine decisions.
+- Harden custom field detection to avoid PHP version quirks, bump the custom field migration script version to `0.0.18`, and
+  align the README references.
 
 ## [0.0.33] - 2025-12-05
 

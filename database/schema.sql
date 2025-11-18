@@ -345,26 +345,30 @@ CREATE TABLE `staging_jira_fields` (
                                        `is_custom` BOOLEAN NOT NULL,
                                        `schema_type` VARCHAR(255),
                                        `schema_custom` VARCHAR(255) NULL,
-                                       `searcher_key` VARCHAR(255) NULL,
+                                       `field_category` VARCHAR(32) NULL,
                                        `raw_payload` JSON NOT NULL,
                                        `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) COMMENT='Raw extraction of Jira Fields (system and custom).';
 
-CREATE TABLE `staging_jira_field_contexts` (
-                                               `field_id` VARCHAR(255) NOT NULL,
-                                               `context_id` BIGINT NOT NULL,
-                                               `name` VARCHAR(255) NULL,
-                                               `is_global` BOOLEAN NULL,
-                                               `is_any_issue_type` BOOLEAN NULL,
-                                               `project_ids` JSON NULL,
-                                               `issue_type_ids` JSON NULL,
-                                               `options` JSON NULL,
-                                               `raw_context` JSON NOT NULL,
-                                               `raw_options` JSON NULL,
-                                               `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                               PRIMARY KEY (`field_id`, `context_id`),
-                                               KEY `idx_jira_field_context_field` (`field_id`)
-) COMMENT='Raw extraction of Jira custom field contexts and allowed values.';
+CREATE TABLE `staging_jira_project_issue_type_fields` (
+                                                         `jira_project_id` VARCHAR(255) NOT NULL,
+                                                         `jira_project_key` VARCHAR(255) NULL,
+                                                         `jira_project_name` VARCHAR(255) NULL,
+                                                         `jira_issue_type_id` VARCHAR(255) NOT NULL,
+                                                         `jira_field_id` VARCHAR(255) NOT NULL,
+                                                         `jira_field_name` VARCHAR(255) NOT NULL,
+                                                         `is_custom` BOOLEAN NOT NULL,
+                                                         `is_required` BOOLEAN NOT NULL,
+                                                         `has_default_value` BOOLEAN NULL,
+                                                         `schema_type` VARCHAR(255) NULL,
+                                                         `schema_custom` VARCHAR(255) NULL,
+                                                         `field_category` VARCHAR(32) NULL,
+                                                         `allowed_values_json` JSON NULL,
+                                                         `raw_field` JSON NOT NULL,
+                                                         `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                         PRIMARY KEY (`jira_project_id`, `jira_issue_type_id`, `jira_field_id`),
+                                                         KEY `idx_jira_issue_type_field` (`jira_field_id`)
+) COMMENT='Fields exposed on the create screen per Jira project and issue type.';
 
 CREATE TABLE `staging_jira_field_usage` (
                                            `field_id` VARCHAR(255) NOT NULL,
@@ -426,10 +430,6 @@ CREATE TABLE `migration_mapping_custom_fields` (
                                                    `jira_field_name` VARCHAR(255) NULL,
                                                    `jira_schema_type` VARCHAR(255) NULL,
                                                    `jira_schema_custom` VARCHAR(255) NULL,
-                                                   `jira_searcher_key` VARCHAR(255) NULL,
-                                                   `context_scope_hash` VARCHAR(64) NOT NULL,
-                                                   `context_scope_label` VARCHAR(255) NULL,
-                                                   `jira_context_ids` JSON NULL,
                                                    `jira_project_ids` JSON NULL,
                                                    `jira_issue_type_ids` JSON NULL,
                                                    `jira_allowed_values` JSON NULL,
@@ -451,7 +451,7 @@ CREATE TABLE `migration_mapping_custom_fields` (
                                                    `automation_hash` CHAR(64) NULL,
                                                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                                    `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                                                   UNIQUE KEY `uk_jira_field_context` (`jira_field_id`, `context_scope_hash`)
+                                                   UNIQUE KEY `uk_jira_field_id` (`jira_field_id`)
 ) COMMENT='Mapping and status for Custom Field migration.';
 
 CREATE TABLE `migration_mapping_custom_object` (

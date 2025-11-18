@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.14';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.25';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
     'usage' => 'Analyse Jira custom field usage statistics from staging data.',
@@ -78,6 +78,8 @@ function main(array $config, array $cliOptions): void
 
     /** @var array<string, mixed>|null $redmineConfig */
     $redmineConfig = null;
+    $redmineUseExtendedApi = null;
+    $redmineExtendedApiPrefix = null;
 
     if (in_array('jira', $phasesToRun, true)) {
         $jiraConfig = extractArrayConfig($config, 'jira');
@@ -149,11 +151,18 @@ function main(array $config, array $cliOptions): void
 
     if (in_array('redmine', $phasesToRun, true)) {
         $redmineConfig ??= extractArrayConfig($config, 'redmine');
+        $redmineUseExtendedApi ??= shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $redmineExtendedApiPrefix ??= $redmineUseExtendedApi ? resolveExtendedApiPrefix($redmineConfig) : null;
         $redmineClient = createRedmineClient($redmineConfig);
 
         printf("[%s] Starting Redmine custom field snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
 
-        $totalRedmineProcessed = fetchAndStoreRedmineCustomFields($redmineClient, $pdo);
+        $totalRedmineProcessed = fetchAndStoreRedmineCustomFields(
+            $redmineClient,
+            $pdo,
+            $redmineUseExtendedApi,
+            $redmineExtendedApiPrefix
+        );
 
         printf(
             "[%s] Completed Redmine snapshot. %d custom field records processed.%s",
@@ -218,9 +227,9 @@ function main(array $config, array $cliOptions): void
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         $redmineConfig ??= extractArrayConfig($config, 'redmine');
-        $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $redmineUseExtendedApi ??= shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
 
-        runCustomFieldPushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi);
+        runCustomFieldPushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $redmineUseExtendedApi);
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
@@ -249,14 +258,14 @@ function main(array $config, array $cliOptions): void
 function fetchAndStoreJiraCustomFields(Client $client, PDO $pdo): int
 {
     $insertStatement = $pdo->prepare(<<<SQL
-        INSERT INTO staging_jira_fields (id, name, is_custom, schema_type, schema_custom, searcher_key, raw_payload, extracted_at)
-        VALUES (:id, :name, :is_custom, :schema_type, :schema_custom, :searcher_key, :raw_payload, :extracted_at)
+        INSERT INTO staging_jira_fields (id, name, is_custom, schema_type, schema_custom, field_category, raw_payload, extracted_at)
+        VALUES (:id, :name, :is_custom, :schema_type, :schema_custom, :field_category, :raw_payload, :extracted_at)
         ON DUPLICATE KEY UPDATE
             name = VALUES(name),
             is_custom = VALUES(is_custom),
             schema_type = VALUES(schema_type),
             schema_custom = VALUES(schema_custom),
-            searcher_key = VALUES(searcher_key),
+            field_category = VALUES(field_category),
             raw_payload = VALUES(raw_payload),
             extracted_at = VALUES(extracted_at)
     SQL);
@@ -304,7 +313,7 @@ function fetchAndStoreJiraCustomFields(Client $client, PDO $pdo): int
         $schema = isset($field['schema']) && is_array($field['schema']) ? $field['schema'] : [];
         $schemaType = isset($schema['type']) ? trim((string)$schema['type']) : null;
         $schemaCustom = isset($schema['custom']) ? trim((string)$schema['custom']) : null;
-        $searcherKey = isset($field['searcherKey']) ? trim((string)$field['searcherKey']) : null;
+        $fieldCategory = classifyJiraFieldCategory($fieldId, $schemaCustom, $isCustom === 1);
 
         try {
             $rawPayload = json_encode($field, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -322,7 +331,7 @@ function fetchAndStoreJiraCustomFields(Client $client, PDO $pdo): int
             'is_custom' => $isCustom,
             'schema_type' => $schemaType,
             'schema_custom' => $schemaCustom,
-            'searcher_key' => $searcherKey,
+            'field_category' => $fieldCategory,
             'raw_payload' => $rawPayload,
             'extracted_at' => $now,
         ]);
@@ -336,304 +345,417 @@ function fetchAndStoreJiraCustomFields(Client $client, PDO $pdo): int
 
     printf("  Captured %d Jira field records.%s", $processed, PHP_EOL);
 
-    if ($customFieldIds !== []) {
-        refreshJiraFieldContexts($client, $pdo, array_values(array_unique($customFieldIds)));
-    } else {
-        printf("  No Jira custom fields detected; skipping context refresh.%s", PHP_EOL);
-    }
+    refreshJiraProjectIssueTypeFields($client, $pdo);
 
     return $processed;
 }
 
-function refreshJiraFieldContexts(Client $client, PDO $pdo, array $customFieldIds): void
+function refreshJiraProjectIssueTypeFields(Client $client, PDO $pdo): void
 {
-    printf("  Refreshing Jira custom field contexts and allowed values...%s", PHP_EOL);
+    printf("  Refreshing Jira field availability per project and issue type...%s", PHP_EOL);
+
+    $projects = loadJiraProjectsForMetadata($pdo);
+    if ($projects === []) {
+        printf("  No Jira projects staged; skipping project/issue-type field refresh.%s", PHP_EOL);
+        return;
+    }
 
     try {
-        $pdo->exec('TRUNCATE TABLE staging_jira_field_contexts');
+        $pdo->exec('TRUNCATE TABLE staging_jira_project_issue_type_fields');
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to truncate staging_jira_field_contexts: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException('Failed to truncate staging_jira_project_issue_type_fields: ' . $exception->getMessage(), 0, $exception);
     }
 
     $insertStatement = $pdo->prepare(<<<SQL
-        INSERT INTO staging_jira_field_contexts (
-            field_id,
-            context_id,
-            name,
-            is_global,
-            is_any_issue_type,
-            project_ids,
-            issue_type_ids,
-            options,
-            raw_context,
-            raw_options,
+        INSERT INTO staging_jira_project_issue_type_fields (
+            jira_project_id,
+            jira_project_key,
+            jira_project_name,
+            jira_issue_type_id,
+            jira_field_id,
+            jira_field_name,
+            is_custom,
+            is_required,
+            has_default_value,
+            schema_type,
+            schema_custom,
+            field_category,
+            allowed_values_json,
+            raw_field,
             extracted_at
         ) VALUES (
-            :field_id,
-            :context_id,
-            :name,
-            :is_global,
-            :is_any_issue_type,
-            :project_ids,
-            :issue_type_ids,
-            :options,
-            :raw_context,
-            :raw_options,
+            :jira_project_id,
+            :jira_project_key,
+            :jira_project_name,
+            :jira_issue_type_id,
+            :jira_field_id,
+            :jira_field_name,
+            :is_custom,
+            :is_required,
+            :has_default_value,
+            :schema_type,
+            :schema_custom,
+            :field_category,
+            :allowed_values_json,
+            :raw_field,
             :extracted_at
         )
     SQL);
 
     if ($insertStatement === false) {
-        throw new RuntimeException('Failed to prepare insert statement for staging_jira_field_contexts.');
+        throw new RuntimeException('Failed to prepare insert statement for staging_jira_project_issue_type_fields.');
     }
 
     $extractedAt = formatCurrentTimestamp('Y-m-d H:i:s');
-    $fieldsWithContexts = 0;
+    $totalAssignments = 0;
 
-    foreach ($customFieldIds as $fieldId) {
-        $fieldId = trim((string)$fieldId);
-        if ($fieldId === '') {
+    foreach ($projects as $project) {
+        $projectId = $project['id'];
+        $projectKey = $project['key'];
+        $projectName = trim((string)($project['name'] ?? ''));
+        if ($projectName === '') {
+            $projectName = null;
+        }
+
+        $issueTypeFieldSets = fetchJiraProjectIssueTypeFields($client, $projectKey);
+        if ($issueTypeFieldSets === []) {
+            printf("  [warn] Jira project %s (%s) returned no issue types for create metadata.%s", $projectKey, $projectId, PHP_EOL);
             continue;
         }
 
-        $contexts = fetchJiraFieldContextsFromApi($client, $fieldId);
-        if ($contexts === []) {
-            continue;
-        }
+        printf("  Project %s (%s): processing %d issue types.%s", $projectKey, $projectId, count($issueTypeFieldSets), PHP_EOL);
 
-        $contextIds = [];
-        foreach ($contexts as $context) {
-            if (!isset($context['id'])) {
+        foreach ($issueTypeFieldSets as $issueTypeData) {
+            if (!isset($issueTypeData['issueTypeId'], $issueTypeData['fields']) || !is_array($issueTypeData['fields'])) {
                 continue;
             }
 
-            $contextIds[] = (string)$context['id'];
-        }
-
-        $optionsByContext = [];
-        if ($contextIds !== []) {
-            $optionsByContext = fetchJiraFieldContextOptionsFromApi($client, $fieldId, $contextIds);
-        }
-
-        foreach ($contexts as $context) {
-            if (!is_array($context) || !isset($context['id'])) {
+            $issueTypeId = trim((string)$issueTypeData['issueTypeId']);
+            if ($issueTypeId === '') {
                 continue;
             }
 
-            $contextId = (int)$context['id'];
-            $contextName = isset($context['name']) ? trim((string)$context['name']) : null;
-            $isGlobal = normalizeBooleanDatabaseValue($context['isGlobalContext'] ?? null);
-            $isAnyIssueType = normalizeBooleanDatabaseValue($context['isAnyIssueType'] ?? null);
-
-            $projectIds = [];
-            if (isset($context['projectIds']) && is_array($context['projectIds'])) {
-                foreach ($context['projectIds'] as $projectId) {
-                    $projectIdString = trim((string)$projectId);
-                    if ($projectIdString !== '') {
-                        $projectIds[] = $projectIdString;
-                    }
+            foreach ($issueTypeData['fields'] as $fieldKey => $fieldData) {
+                if (!is_array($fieldData)) {
+                    continue;
                 }
-            }
 
-            $issueTypeIds = [];
-            if (isset($context['issueTypeIds']) && is_array($context['issueTypeIds'])) {
-                foreach ($context['issueTypeIds'] as $issueTypeId) {
-                    $issueTypeIdString = trim((string)$issueTypeId);
-                    if ($issueTypeIdString !== '') {
-                        $issueTypeIds[] = $issueTypeIdString;
-                    }
+                // Prefer the explicit field id from Jira
+                $rawFieldId = $fieldData['fieldId']
+                    ?? $fieldData['key']
+                    ?? $fieldKey;
+
+                $fieldId = trim((string)$rawFieldId);
+                if ($fieldId === '') {
+                    continue;
                 }
+
+                $fieldName = isset($fieldData['name'])
+                    ? trim((string)$fieldData['name'])
+                    : $fieldId;
+
+                $schemaType   = $fieldData['schema']['type']   ?? null;
+                $schemaCustom = $fieldData['schema']['custom'] ?? null;
+                $schemaItems  = $fieldData['schema']['items']  ?? null;
+
+                $isCustom = str_starts_with($fieldId, 'customfield_') ? 1 : 0;
+
+                if ($isCustom === 0) {
+                    $fieldCategory = 'system';
+                } elseif (is_string($schemaCustom)
+                    && str_starts_with($schemaCustom, 'com.atlassian.jira.plugin.system.customfieldtypes:')
+                ) {
+                    $fieldCategory = 'jira_custom';
+                } else {
+                    $fieldCategory = 'app_custom';
+                }
+
+                $isRequired = normalizeBooleanDatabaseValue($fieldData['required'] ?? null) ?? 0;
+                $hasDefault = normalizeBooleanDatabaseValue($fieldData['hasDefaultValue'] ?? null);
+
+                try {
+                    $rawField = json_encode($fieldData, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                } catch (JsonException $exception) {
+                    throw new RuntimeException(sprintf('Failed to encode Jira project field payload for %s: %s', $fieldId, $exception->getMessage()), 0, $exception);
+                }
+
+                $allowedValuesDescriptor = extractAllowedValuesDescriptorFromField(
+                    is_array($fieldData) ? $fieldData : [],
+                    is_string($schemaType) ? $schemaType : null,
+                    is_string($schemaCustom) ? $schemaCustom : null
+                );
+
+                $allowedValuesJson = $allowedValuesDescriptor !== null
+                    ? encodeJsonColumn($allowedValuesDescriptor)
+                    : null;
+
+                $insertStatement->execute([
+                    'jira_project_id' => $projectId,
+                    'jira_project_key' => $projectKey,
+                    'jira_project_name' => $projectName,
+                    'jira_issue_type_id' => $issueTypeId,
+                    'jira_field_id' => $fieldId,
+                    'jira_field_name' => $fieldName,
+                    'is_custom' => $isCustom,
+                    'is_required' => $isRequired,
+                    'has_default_value' => $hasDefault,
+                    'schema_type' => $schemaType,
+                    'schema_custom' => $schemaCustom,
+                    'field_category' => $fieldCategory,
+                    'allowed_values_json' => $allowedValuesJson,
+                    'raw_field' => $rawField,
+                    'extracted_at' => $extractedAt,
+                ]);
+
+                $totalAssignments++;
             }
-
-            $normalizedOptions = $optionsByContext[(string)$context['id']] ?? [];
-            $rawOptions = $optionsByContext[(string)$context['id'] . '_raw'] ?? null;
-
-            try {
-                $rawContextJson = json_encode($context, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            } catch (JsonException $exception) {
-                throw new RuntimeException(sprintf('Failed to encode Jira context payload for field %s: %s', $fieldId, $exception->getMessage()), 0, $exception);
-            }
-
-            $insertStatement->execute([
-                'field_id' => $fieldId,
-                'context_id' => $contextId,
-                'name' => $contextName,
-                'is_global' => $isGlobal,
-                'is_any_issue_type' => $isAnyIssueType,
-                'project_ids' => encodeJsonColumn($projectIds),
-                'issue_type_ids' => encodeJsonColumn($issueTypeIds),
-                'options' => encodeJsonColumn($normalizedOptions),
-                'raw_context' => $rawContextJson,
-                'raw_options' => encodeJsonColumn($rawOptions),
-                'extracted_at' => $extractedAt,
-            ]);
         }
-
-        $fieldsWithContexts++;
     }
 
-    printf("  Captured context metadata for %d Jira custom fields.%s", $fieldsWithContexts, PHP_EOL);
+    printf("  Captured %d project/issue-type field assignments.%s", $totalAssignments, PHP_EOL);
 }
 
-function fetchJiraFieldContextsFromApi(Client $client, string $fieldId): array
+/**
+ * @return array<int, array{id: string, key: string}>
+ */
+function loadJiraProjectsForMetadata(PDO $pdo): array
 {
-    $contexts = [];
-    $startAt = 0;
-    $maxResults = 50;
+    $sql = <<<SQL
+        SELECT id, project_key, name
+        FROM staging_jira_projects
+        ORDER BY project_key
+    SQL;
 
-    do {
-        $query = http_build_query([
-            'startAt' => $startAt,
-            'maxResults' => $maxResults,
-        ], '', '&', PHP_QUERY_RFC3986);
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to load Jira projects for metadata extraction: ' . $exception->getMessage(), 0, $exception);
+    }
 
-        $endpoint = sprintf('/rest/api/3/field/%s/context?%s', rawurlencode($fieldId), $query);
+    if ($statement === false) {
+        return [];
+    }
+
+    $projects = [];
+    while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+        if (!isset($row['id']) || !isset($row['project_key'])) {
+            continue;
+        }
+
+        $projectId = trim((string)$row['id']);
+        $projectKey = trim((string)$row['project_key']);
+        $projectName = isset($row['name']) ? trim((string)$row['name']) : '';
+
+        if ($projectId === '') {
+            continue;
+        }
+
+        $projects[] = [
+            'id' => $projectId,
+            'key' => $projectKey,
+            'name' => $projectName,
+        ];
+    }
+
+    return $projects;
+}
+
+function fetchJiraProjectIssueTypeFields(Client $client, string $projectKeyOrId): array
+{
+    $issueTypesEndpoint = sprintf(
+        '/rest/api/3/issue/createmeta/%s/issuetypes?expand=fields',
+        rawurlencode($projectKeyOrId)
+    );
+
+    try {
+        $issueTypesResponse = $client->get($issueTypesEndpoint);
+    } catch (BadResponseException $exception) {
+        $response = $exception->getResponse();
+        $status = $response !== null ? $response->getStatusCode() : null;
+        if ($status === 404) {
+            printf(
+                "  [warn] Jira project %s is not accessible for create metadata (HTTP 404). Skipping.%s",
+                $projectKeyOrId,
+                PHP_EOL
+            );
+            return [];
+        }
+
+        $message = sprintf('Failed to fetch create metadata issue types for Jira project %s', $projectKeyOrId);
+        if ($status !== null) {
+            $message .= sprintf(' (HTTP %d)', $status);
+        }
+
+        throw new RuntimeException($message, 0, $exception);
+    } catch (GuzzleException $exception) {
+        throw new RuntimeException(sprintf('Failed to fetch create metadata issue types for Jira project %s: %s', $projectKeyOrId, $exception->getMessage()), 0, $exception);
+    }
+
+    $decodedIssueTypes = decodeJsonResponse($issueTypesResponse);
+    if (!is_array($decodedIssueTypes)) {
+        throw new RuntimeException(sprintf('Unexpected Jira create metadata payload for project %s.', $projectKeyOrId));
+    }
+
+    $issueTypes = isset($decodedIssueTypes['issueTypes']) && is_array($decodedIssueTypes['issueTypes'])
+        ? $decodedIssueTypes['issueTypes']
+        : [];
+
+    if ($issueTypes === []) {
+        printf("  [warn] Jira project %s returned no issue types from create metadata.%s", $projectKeyOrId, PHP_EOL);
+        return [];
+    }
+
+    $issueTypeFieldSets = [];
+    foreach ($issueTypes as $issueType) {
+        if (!is_array($issueType) || !isset($issueType['id'])) {
+            continue;
+        }
+
+        $issueTypeId = trim((string)$issueType['id']);
+        if ($issueTypeId === '') {
+            continue;
+        }
+
+        $fieldsEndpoint = sprintf(
+            '/rest/api/3/issue/createmeta/%s/issuetypes/%s?expand=fields',
+            rawurlencode($projectKeyOrId),
+            rawurlencode($issueTypeId)
+        );
 
         try {
-            $response = $client->get($endpoint);
+            $fieldsResponse = $client->get($fieldsEndpoint);
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
-            $message = sprintf('Failed to fetch contexts for Jira field %s', $fieldId);
-            if ($response !== null) {
-                $status = $response->getStatusCode();
-                if ($status === 404) {
-                    printf("  [warn] Jira field %s has no context endpoint (HTTP 404).%s", $fieldId, PHP_EOL);
-                    return [];
-                }
+            $status = $response !== null ? $response->getStatusCode() : null;
+            if ($status === 404) {
+                printf(
+                    "  [warn] Jira project %s issue type %s is not accessible for create metadata (HTTP 404). Skipping.%s",
+                    $projectKeyOrId,
+                    $issueTypeId,
+                    PHP_EOL
+                );
+                continue;
+            }
 
+            $message = sprintf(
+                'Failed to fetch create metadata fields for Jira project %s issue type %s',
+                $projectKeyOrId,
+                $issueTypeId
+            );
+            if ($status !== null) {
                 $message .= sprintf(' (HTTP %d)', $status);
             }
 
             throw new RuntimeException($message, 0, $exception);
         } catch (GuzzleException $exception) {
-            throw new RuntimeException(sprintf('Failed to fetch contexts for Jira field %s: %s', $fieldId, $exception->getMessage()), 0, $exception);
+            throw new RuntimeException(
+                sprintf(
+                    'Failed to fetch create metadata fields for Jira project %s issue type %s: %s',
+                    $projectKeyOrId,
+                    $issueTypeId,
+                    $exception->getMessage()
+                ),
+                0,
+                $exception
+            );
         }
 
-        $decoded = decodeJsonResponse($response);
-        if (!is_array($decoded)) {
-            throw new RuntimeException(sprintf('Unexpected Jira context payload for field %s.', $fieldId));
-        }
-
-        $values = isset($decoded['values']) && is_array($decoded['values']) ? $decoded['values'] : [];
-        foreach ($values as $value) {
-            if (is_array($value)) {
-                $contexts[] = $value;
-            }
-        }
-
-        $isLast = false;
-        if (isset($decoded['isLast'])) {
-            $isLast = (bool)$decoded['isLast'];
-        } elseif (isset($decoded['total']) && isset($decoded['maxResults'])) {
-            $total = (int)$decoded['total'];
-            $max = (int)$decoded['maxResults'];
-            $isLast = ($startAt + $max) >= $total;
-        } else {
-            $isLast = count($values) < $maxResults;
-        }
-
-        $startAt += count($values);
-    } while (!$isLast);
-
-    return $contexts;
-}
-
-function fetchJiraFieldContextOptionsFromApi(Client $client, string $fieldId, array $contextIds): array
-{
-    $optionsByContext = [];
-
-    foreach ($contextIds as $contextId) {
-        $contextId = trim((string)$contextId);
-        if ($contextId === '') {
+        $decodedFields = decodeJsonResponse($fieldsResponse);
+        if (!is_array($decodedFields)) {
+            printf(
+                "  [warn] Unexpected Jira fields payload for project %s issue type %s.%s",
+                $projectKeyOrId,
+                $issueTypeId,
+                PHP_EOL
+            );
             continue;
         }
 
-        $startAt = 0;
-        $maxResults = 50;
-        $collectedOptions = [];
-        $rawOptions = [];
-
-        do {
-            $query = http_build_query([
-                'startAt' => $startAt,
-                'maxResults' => $maxResults,
-            ], '', '&', PHP_QUERY_RFC3986);
-
-            $endpoint = sprintf(
-                '/rest/api/3/field/%s/context/%s/option?%s',
-                rawurlencode($fieldId),
-                rawurlencode($contextId),
-                $query
+        $fields = isset($decodedFields['fields']) && is_array($decodedFields['fields']) ? $decodedFields['fields'] : [];
+        if ($fields === []) {
+            printf(
+                "  [warn] Jira project %s issue type %s returned no fields in create metadata.%s",
+                $projectKeyOrId,
+                $issueTypeId,
+                PHP_EOL
             );
-
-            try {
-                $response = $client->get($endpoint);
-            } catch (BadResponseException $exception) {
-                $response = $exception->getResponse();
-                if ($response !== null && in_array($response->getStatusCode(), [400, 404], true)) {
-                    // The field either does not support options or the context has none.
-                    $collectedOptions = [];
-                    $rawOptions = [];
-                    break;
-                }
-
-                $message = sprintf('Failed to fetch options for Jira field %s context %s', $fieldId, $contextId);
-                if ($response !== null) {
-                    $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
-                }
-
-                throw new RuntimeException($message, 0, $exception);
-            } catch (GuzzleException $exception) {
-                throw new RuntimeException(sprintf('Failed to fetch options for Jira field %s context %s: %s', $fieldId, $contextId, $exception->getMessage()), 0, $exception);
-            }
-
-            $decoded = decodeJsonResponse($response);
-            if (!is_array($decoded)) {
-                throw new RuntimeException(sprintf('Unexpected Jira context option payload for field %s.', $fieldId));
-            }
-
-            $values = isset($decoded['values']) && is_array($decoded['values']) ? $decoded['values'] : [];
-            foreach ($values as $value) {
-                if (!is_array($value)) {
-                    continue;
-                }
-
-                $rawOptions[] = $value;
-                $normalized = normalizeJiraOption($value);
-                if ($normalized === null) {
-                    continue;
-                }
-
-                $collectedOptions[] = $normalized;
-            }
-
-            $isLast = false;
-            if (isset($decoded['isLast'])) {
-                $isLast = (bool)$decoded['isLast'];
-            } elseif (isset($decoded['total']) && isset($decoded['maxResults'])) {
-                $total = (int)$decoded['total'];
-                $max = (int)$decoded['maxResults'];
-                $isLast = ($startAt + $max) >= $total;
-            } else {
-                $isLast = count($values) < $maxResults;
-            }
-
-            $startAt += count($values);
-        } while (!$isLast);
-
-        if ($collectedOptions !== []) {
-            usort($collectedOptions, static function (array $left, array $right): int {
-                return strcmp((string)$left['value'], (string)$right['value']);
-            });
+            continue;
         }
 
-        $optionsByContext[$contextId] = $collectedOptions;
-        if ($rawOptions !== []) {
-            $optionsByContext[$contextId . '_raw'] = $rawOptions;
+        $issueTypeFieldSets[] = [
+            'issueTypeId' => $issueTypeId,
+            'fields' => $fields,
+        ];
+    }
+
+    return $issueTypeFieldSets;
+}
+
+function classifyJiraFieldCategory(string $fieldId, ?string $schemaCustom, bool $isCustom): string
+{
+    if ($isCustom === false) {
+        return 'system';
+    }
+
+    $schemaCustom = $schemaCustom !== null ? trim($schemaCustom) : '';
+    $schemaCustomLower = strtolower($schemaCustom);
+
+    if ($schemaCustomLower === '') {
+        return 'jira_custom';
+    }
+
+    if (str_starts_with($schemaCustomLower, 'ari:')) {
+        return 'app_custom';
+    }
+
+    if (str_starts_with($schemaCustomLower, 'com.atlassian.jira.plugin.system.customfieldtypes:')) {
+        return 'jira_custom';
+    }
+
+    return 'app_custom';
+}
+
+function normalizeJiraAllowedValues(mixed $allowedValues): ?array
+{
+    if (!is_array($allowedValues) || $allowedValues === []) {
+        return null;
+    }
+
+    $normalized = [];
+
+    foreach ($allowedValues as $allowedValue) {
+        if (is_array($allowedValue)) {
+            $id = isset($allowedValue['id']) ? trim((string)$allowedValue['id']) : null;
+            $id = $id === '' ? null : $id;
+
+            $valueText = null;
+            foreach (['value', 'name', 'label', 'title'] as $key) {
+                if (isset($allowedValue[$key]) && trim((string)$allowedValue[$key]) !== '') {
+                    $valueText = trim((string)$allowedValue[$key]);
+                    break;
+                }
+            }
+
+            if ($id === null && $valueText === null) {
+                continue;
+            }
+
+            $normalized[] = [
+                'id' => $id,
+                'value' => $valueText,
+            ];
+            continue;
+        }
+
+        if (is_string($allowedValue) || is_numeric($allowedValue)) {
+            $normalized[] = [
+                'id' => null,
+                'value' => trim((string)$allowedValue),
+            ];
         }
     }
 
-    return $optionsByContext;
+    return $normalized === [] ? null : $normalized;
 }
 
 function normalizeJiraOption(array $option): ?array
@@ -788,67 +910,498 @@ function normalizeOptionsWithChildren(array $options, array $rawOptions): array
     return $normalizedValues;
 }
 
+function normalizeAllowedValuesPayload($payload): array
+{
+    if (!is_array($payload)) {
+        return [];
+    }
+
+    $mode = $payload['mode'] ?? null;
+    if ($mode === 'flat') {
+        $values = [];
+        if (isset($payload['values']) && is_array($payload['values'])) {
+            foreach ($payload['values'] as $value) {
+                if (!is_array($value)) {
+                    continue;
+                }
+
+                $label = isset($value['value']) ? trim((string)$value['value']) : '';
+                if ($label === '') {
+                    continue;
+                }
+
+                $values[$label] = [
+                    'id' => isset($value['id']) && trim((string)$value['id']) !== '' ? trim((string)$value['id']) : null,
+                    'value' => $label,
+                ];
+            }
+        }
+
+        ksort($values);
+
+        return ['mode' => 'flat', 'values' => array_values($values)];
+    }
+
+    if ($mode === 'cascading') {
+        $parents = [];
+        $dependencies = [];
+
+        if (isset($payload['parents']) && is_array($payload['parents'])) {
+            foreach ($payload['parents'] as $parent) {
+                if (!is_array($parent)) {
+                    continue;
+                }
+
+                $value = isset($parent['value']) ? trim((string)$parent['value']) : '';
+                if ($value === '') {
+                    continue;
+                }
+
+                $parents[$value] = [
+                    'id' => isset($parent['id']) && trim((string)$parent['id']) !== '' ? trim((string)$parent['id']) : null,
+                    'value' => $value,
+                ];
+            }
+        }
+
+        if (isset($payload['dependencies']) && is_array($payload['dependencies'])) {
+            foreach ($payload['dependencies'] as $parentValue => $children) {
+                $parentKey = trim((string)$parentValue);
+                if ($parentKey === '') {
+                    continue;
+                }
+
+                $normalizedChildren = [];
+                if (is_array($children)) {
+                    foreach ($children as $child) {
+                        if (!is_array($child)) {
+                            continue;
+                        }
+
+                        $childValue = isset($child['value']) ? trim((string)$child['value']) : '';
+                        if ($childValue === '') {
+                            continue;
+                        }
+
+                        $normalizedChildren[$childValue] = [
+                            'id' => isset($child['id']) && trim((string)$child['id']) !== '' ? trim((string)$child['id']) : null,
+                            'value' => $childValue,
+                        ];
+                    }
+                }
+
+                ksort($normalizedChildren);
+                $dependencies[$parentKey] = array_values($normalizedChildren);
+            }
+        }
+
+        ksort($parents);
+        ksort($dependencies);
+
+        foreach (array_keys($parents) as $parentValue) {
+            if (!isset($dependencies[$parentValue])) {
+                $dependencies[$parentValue] = [];
+            }
+        }
+
+        ksort($dependencies);
+
+        return [
+            'mode' => 'cascading',
+            'parents' => array_values($parents),
+            'dependencies' => $dependencies,
+        ];
+    }
+
+    return [];
+}
+
+function mergeAllowedValuesPayloads(array $existing, array $incoming): array
+{
+    $base = normalizeAllowedValuesPayload($existing);
+    $candidate = normalizeAllowedValuesPayload($incoming);
+
+    if ($candidate === []) {
+        return $base;
+    }
+
+    if ($base === []) {
+        return $candidate;
+    }
+
+    $mode = $base['mode'] ?? null;
+    if ($mode !== ($candidate['mode'] ?? null)) {
+        return $base;
+    }
+
+    if ($mode === 'flat') {
+        $values = [];
+
+        foreach ($base['values'] as $value) {
+            if (!is_array($value)) {
+                continue;
+            }
+
+            $label = isset($value['value']) ? trim((string)$value['value']) : '';
+            if ($label === '') {
+                continue;
+            }
+
+            $values[$label] = [
+                'id' => isset($value['id']) && trim((string)$value['id']) !== '' ? trim((string)$value['id']) : null,
+                'value' => $label,
+            ];
+        }
+
+        foreach ($candidate['values'] as $value) {
+            if (!is_array($value)) {
+                continue;
+            }
+
+            $label = isset($value['value']) ? trim((string)$value['value']) : '';
+            if ($label === '') {
+                continue;
+            }
+
+            if (!isset($values[$label]) || $values[$label]['id'] === null) {
+                $values[$label] = [
+                    'id' => isset($value['id']) && trim((string)$value['id']) !== '' ? trim((string)$value['id']) : null,
+                    'value' => $label,
+                ];
+            }
+        }
+
+        ksort($values);
+
+        return ['mode' => 'flat', 'values' => array_values($values)];
+    }
+
+    if ($mode === 'cascading') {
+        $parents = [];
+        if (isset($base['parents']) && is_array($base['parents'])) {
+            foreach ($base['parents'] as $parent) {
+                if (!is_array($parent)) {
+                    continue;
+                }
+
+                $label = isset($parent['value']) ? trim((string)$parent['value']) : '';
+                if ($label === '') {
+                    continue;
+                }
+
+                $parents[$label] = [
+                    'id' => isset($parent['id']) && trim((string)$parent['id']) !== '' ? trim((string)$parent['id']) : null,
+                    'value' => $label,
+                ];
+            }
+        }
+
+        if (isset($candidate['parents']) && is_array($candidate['parents'])) {
+            foreach ($candidate['parents'] as $parent) {
+                if (!is_array($parent)) {
+                    continue;
+                }
+
+                $label = isset($parent['value']) ? trim((string)$parent['value']) : '';
+                if ($label === '') {
+                    continue;
+                }
+
+                if (!isset($parents[$label]) || $parents[$label]['id'] === null) {
+                    $parents[$label] = [
+                        'id' => isset($parent['id']) && trim((string)$parent['id']) !== '' ? trim((string)$parent['id']) : null,
+                        'value' => $label,
+                    ];
+                }
+            }
+        }
+
+        $dependencies = [];
+        if (isset($base['dependencies']) && is_array($base['dependencies'])) {
+            foreach ($base['dependencies'] as $parentValue => $children) {
+                $parentKey = trim((string)$parentValue);
+                if ($parentKey === '') {
+                    continue;
+                }
+
+                $normalizedChildren = [];
+                if (is_array($children)) {
+                    foreach ($children as $child) {
+                        if (!is_array($child)) {
+                            continue;
+                        }
+
+                        $childValue = isset($child['value']) ? trim((string)$child['value']) : '';
+                        if ($childValue === '') {
+                            continue;
+                        }
+
+                        $normalizedChildren[$childValue] = [
+                            'id' => isset($child['id']) && trim((string)$child['id']) !== '' ? trim((string)$child['id']) : null,
+                            'value' => $childValue,
+                        ];
+                    }
+                }
+
+                $dependencies[$parentKey] = $normalizedChildren;
+            }
+        }
+
+        if (isset($candidate['dependencies']) && is_array($candidate['dependencies'])) {
+            foreach ($candidate['dependencies'] as $parentValue => $children) {
+                $parentKey = trim((string)$parentValue);
+                if ($parentKey === '') {
+                    continue;
+                }
+
+                if (!isset($dependencies[$parentKey])) {
+                    $dependencies[$parentKey] = [];
+                }
+
+                if (is_array($children)) {
+                    foreach ($children as $child) {
+                        if (!is_array($child)) {
+                            continue;
+                        }
+
+                        $childValue = isset($child['value']) ? trim((string)$child['value']) : '';
+                        if ($childValue === '') {
+                            continue;
+                        }
+
+                        if (!isset($dependencies[$parentKey][$childValue]) || $dependencies[$parentKey][$childValue]['id'] === null) {
+                            $dependencies[$parentKey][$childValue] = [
+                                'id' => isset($child['id']) && trim((string)$child['id']) !== '' ? trim((string)$child['id']) : null,
+                                'value' => $childValue,
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+
+        ksort($parents);
+        foreach ($dependencies as $parentValue => $children) {
+            ksort($dependencies[$parentValue]);
+            $dependencies[$parentValue] = array_values($dependencies[$parentValue]);
+        }
+
+        foreach (array_keys($parents) as $parentValue) {
+            if (!isset($dependencies[$parentValue])) {
+                $dependencies[$parentValue] = [];
+            }
+        }
+
+        ksort($dependencies);
+
+        return [
+            'mode' => 'cascading',
+            'parents' => array_values($parents),
+            'dependencies' => $dependencies,
+        ];
+    }
+
+    return $base;
+}
+
+function extractAllowedValuesDescriptorFromField(array $fieldData, ?string $schemaType, ?string $schemaCustom): ?array
+{
+    $allowedValues = locateAllowedValuesArray($fieldData);
+    if (!is_array($allowedValues) || $allowedValues === []) {
+        return null;
+    }
+
+    if (isCascadingJiraField($schemaType, $schemaCustom)) {
+        $normalizedOptions = normalizeOptionsWithChildren($allowedValues, $allowedValues);
+        if ($normalizedOptions === []) {
+            return null;
+        }
+
+        $parents = [];
+        $dependencies = [];
+
+        foreach ($normalizedOptions as $option) {
+            if (!is_array($option)) {
+                continue;
+            }
+
+            $parentValue = isset($option['value']) ? trim((string)$option['value']) : '';
+            if ($parentValue === '') {
+                continue;
+            }
+
+            if (!isset($parents[$parentValue])) {
+                $parents[$parentValue] = [
+                    'id' => isset($option['id']) && trim((string)$option['id']) !== '' ? trim((string)$option['id']) : null,
+                    'value' => $parentValue,
+                ];
+            }
+
+            if (!isset($dependencies[$parentValue])) {
+                $dependencies[$parentValue] = [];
+            }
+
+            if (isset($option['children']) && is_array($option['children'])) {
+                foreach ($option['children'] as $child) {
+                    if (!is_array($child)) {
+                        continue;
+                    }
+
+                    $childValue = isset($child['value']) ? trim((string)$child['value']) : '';
+                    if ($childValue === '') {
+                        continue;
+                    }
+
+                    if (!isset($dependencies[$parentValue][$childValue]) || $dependencies[$parentValue][$childValue]['id'] === null) {
+                        $dependencies[$parentValue][$childValue] = [
+                            'id' => isset($child['id']) && trim((string)$child['id']) !== '' ? trim((string)$child['id']) : null,
+                            'value' => $childValue,
+                        ];
+                    }
+                }
+            }
+        }
+
+        if ($parents === []) {
+            return null;
+        }
+
+        ksort($parents);
+        foreach ($dependencies as $parentValue => $children) {
+            ksort($dependencies[$parentValue]);
+            $dependencies[$parentValue] = array_values($dependencies[$parentValue]);
+        }
+
+        foreach (array_keys($parents) as $parentValue) {
+            if (!isset($dependencies[$parentValue])) {
+                $dependencies[$parentValue] = [];
+            }
+        }
+
+        ksort($dependencies);
+
+        return [
+            'mode' => 'cascading',
+            'parents' => array_values($parents),
+            'dependencies' => $dependencies,
+        ];
+    }
+
+    $normalizedAllowedValues = normalizeJiraAllowedValues($allowedValues);
+    if ($normalizedAllowedValues === null) {
+        return null;
+    }
+
+    return [
+        'mode' => 'flat',
+        'values' => $normalizedAllowedValues,
+    ];
+}
+
+function locateAllowedValuesArray(array $fieldData): ?array
+{
+    if (isset($fieldData['allowedValues']) && is_array($fieldData['allowedValues']) && $fieldData['allowedValues'] !== []) {
+        return $fieldData['allowedValues'];
+    }
+
+    if (isset($fieldData['configuration']) && is_array($fieldData['configuration'])) {
+        foreach (['allowedValues', 'options', 'values'] as $key) {
+            if (isset($fieldData['configuration'][$key])
+                && is_array($fieldData['configuration'][$key])
+                && $fieldData['configuration'][$key] !== []
+            ) {
+                return $fieldData['configuration'][$key];
+            }
+        }
+    }
+
+    return null;
+}
+
+function isCascadingJiraField(?string $schemaType, ?string $schemaCustom): bool
+{
+    $schemaType = $schemaType !== null ? strtolower($schemaType) : null;
+    $schemaCustom = $schemaCustom !== null ? strtolower($schemaCustom) : null;
+
+    if ($schemaType === 'option-with-child') {
+        return true;
+    }
+
+    if ($schemaCustom !== null && str_contains($schemaCustom, ':cascadingselect')) {
+        return true;
+    }
+
+    return false;
+}
+
 /**
- * @return array<int, string>
+ * @return array<string, array{id: string, name: string|null, schema_type: ?string, schema_custom: ?string, field_category: ?string}>
  */
-function fetchCustomJiraFieldIds(PDO $pdo): array
+function fetchEligibleJiraFields(PDO $pdo): array
 {
     $sql = <<<SQL
-        SELECT id
+        SELECT id, name, schema_type, schema_custom, field_category
         FROM staging_jira_fields
         WHERE is_custom = 1
+          AND field_category IN ('jira_custom', 'app_custom')
         ORDER BY id
     SQL;
 
     try {
         $statement = $pdo->query($sql);
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to fetch Jira custom field identifiers: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException('Failed to fetch Jira custom field metadata: ' . $exception->getMessage(), 0, $exception);
     }
 
     if ($statement === false) {
         return [];
     }
 
-    $ids = [];
+    $fields = [];
     while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
         if (!isset($row['id'])) {
             continue;
         }
 
         $id = trim((string)$row['id']);
-        if ($id !== '') {
-            $ids[] = $id;
+        if ($id === '') {
+            continue;
         }
+
+        $fields[$id] = [
+            'id' => $id,
+            'name' => isset($row['name']) ? normalizeString((string)$row['name'], 255) : null,
+            'schema_type' => isset($row['schema_type']) ? (string)$row['schema_type'] : null,
+            'schema_custom' => isset($row['schema_custom']) ? (string)$row['schema_custom'] : null,
+            'field_category' => isset($row['field_category']) ? (string)$row['field_category'] : null,
+        ];
     }
 
-    return $ids;
+    return $fields;
 }
 
 /**
- * @return array<string, array<int, array<string, mixed>>>
+ * @return array<string, array<int, array{project_id: string, issue_type_id: string, is_required: bool, allowed_values: array}>>
  */
-function loadJiraCustomFieldContextMap(PDO $pdo): array
+function loadJiraProjectIssueTypeFieldDetails(PDO $pdo): array
 {
     $sql = <<<SQL
         SELECT
-            field_id,
-            context_id,
-            name,
-            is_global,
-            is_any_issue_type,
-            project_ids,
-            issue_type_ids,
-            options,
-            raw_options
-        FROM staging_jira_field_contexts
-        ORDER BY field_id, context_id
+            jira_project_id,
+            jira_issue_type_id,
+            jira_field_id,
+            is_required,
+            allowed_values_json,
+            schema_type,
+            schema_custom,
+            raw_field
+        FROM staging_jira_project_issue_type_fields
     SQL;
 
     try {
         $statement = $pdo->query($sql);
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to load Jira custom field contexts: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException('Failed to load Jira project/issue-type field details: ' . $exception->getMessage(), 0, $exception);
     }
 
     if ($statement === false) {
@@ -856,110 +1409,81 @@ function loadJiraCustomFieldContextMap(PDO $pdo): array
     }
 
     $map = [];
+    $backfillStatement = null;
+    $backfilledAssignments = 0;
 
     while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
-        if (!isset($row['field_id']) || !isset($row['context_id'])) {
+        if (!isset($row['jira_field_id']) || !isset($row['jira_project_id']) || !isset($row['jira_issue_type_id'])) {
             continue;
         }
 
-        $fieldId = trim((string)$row['field_id']);
-        if ($fieldId === '') {
+        $fieldId = trim((string)$row['jira_field_id']);
+        $projectId = trim((string)$row['jira_project_id']);
+        $issueTypeId = trim((string)$row['jira_issue_type_id']);
+
+        if ($fieldId === '' || $projectId === '' || $issueTypeId === '') {
             continue;
         }
 
-        $context = [
-            'context_id' => (string)$row['context_id'],
-            'name' => isset($row['name']) ? trim((string)$row['name']) : null,
-            'is_global' => normalizeBooleanFlag($row['is_global'] ?? null) ?? null,
-            'is_any_issue_type' => normalizeBooleanFlag($row['is_any_issue_type'] ?? null) ?? null,
-            'project_ids' => array_values(array_filter((array)decodeJsonColumn($row['project_ids'] ?? null), static function ($value): bool {
-                return trim((string)$value) !== '';
-            })),
-            'issue_type_ids' => array_values(array_filter((array)decodeJsonColumn($row['issue_type_ids'] ?? null), static function ($value): bool {
-                return trim((string)$value) !== '';
-            })),
-            'options' => (array)decodeJsonColumn($row['options'] ?? null),
-            'raw_options' => (array)decodeJsonColumn($row['raw_options'] ?? null),
+        $allowedValues = normalizeAllowedValuesPayload(decodeJsonColumn($row['allowed_values_json'] ?? null));
+        if ($allowedValues === []) {
+            $rawFieldPayload = decodeJsonColumn($row['raw_field'] ?? null);
+            if (is_array($rawFieldPayload)) {
+                $derivedDescriptor = extractAllowedValuesDescriptorFromField(
+                    $rawFieldPayload,
+                    isset($row['schema_type']) ? (string)$row['schema_type'] : null,
+                    isset($row['schema_custom']) ? (string)$row['schema_custom'] : null
+                );
+
+                if ($derivedDescriptor !== null) {
+                    $normalizedDescriptor = normalizeAllowedValuesPayload($derivedDescriptor);
+                    if ($normalizedDescriptor !== []) {
+                        $allowedValues = $normalizedDescriptor;
+
+                        if ($backfillStatement === null) {
+                            $backfillStatement = $pdo->prepare(<<<SQL
+                                UPDATE staging_jira_project_issue_type_fields
+                                SET allowed_values_json = :allowed_values_json
+                                WHERE jira_project_id = :jira_project_id
+                                  AND jira_issue_type_id = :jira_issue_type_id
+                                  AND jira_field_id = :jira_field_id
+                            SQL);
+
+                            if ($backfillStatement === false) {
+                                throw new RuntimeException('Failed to prepare allowed values backfill statement.');
+                            }
+                        }
+
+                        $backfillStatement->execute([
+                            'allowed_values_json' => encodeJsonColumn($normalizedDescriptor),
+                            'jira_project_id' => $projectId,
+                            'jira_issue_type_id' => $issueTypeId,
+                            'jira_field_id' => $fieldId,
+                        ]);
+
+                        $backfilledAssignments++;
+                    }
+                }
+            }
+        }
+
+        $map[$fieldId][] = [
+            'project_id' => $projectId,
+            'issue_type_id' => $issueTypeId,
+            'allowed_values' => $allowedValues,
+            'is_required' => normalizeBooleanFlag($row['is_required'] ?? null) ?? false,
         ];
+    }
 
-        $map[$fieldId][] = $context;
+    if ($backfilledAssignments > 0) {
+        printf(
+            "  Backfilled allowed values for %d Jira project/issue-type field assignment(s).%s",
+            $backfilledAssignments,
+            PHP_EOL
+        );
     }
 
     return $map;
-}
-
-/**
- * @return array<string, string>
- */
-function buildJiraProjectNameLookup(PDO $pdo): array
-{
-    $sql = <<<SQL
-        SELECT id, name
-        FROM staging_jira_projects
-    SQL;
-
-    try {
-        $statement = $pdo->query($sql);
-    } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to build Jira project name lookup: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    if ($statement === false) {
-        return [];
-    }
-
-    $lookup = [];
-    while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
-        if (!isset($row['id'])) {
-            continue;
-        }
-
-        $projectId = trim((string)$row['id']);
-        if ($projectId === '') {
-            continue;
-        }
-
-        $lookup[$projectId] = isset($row['name']) ? trim((string)$row['name']) : $projectId;
-    }
-
-    return $lookup;
-}
-
-/**
- * @return array<string, string>
- */
-function buildJiraIssueTypeNameLookup(PDO $pdo): array
-{
-    $sql = <<<SQL
-        SELECT id, name
-        FROM staging_jira_issue_types
-    SQL;
-
-    try {
-        $statement = $pdo->query($sql);
-    } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to build Jira issue type name lookup: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    if ($statement === false) {
-        return [];
-    }
-
-    $lookup = [];
-    while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
-        if (!isset($row['id'])) {
-            continue;
-        }
-
-        $issueTypeId = trim((string)$row['id']);
-        if ($issueTypeId === '') {
-            continue;
-        }
-
-        $lookup[$issueTypeId] = isset($row['name']) ? trim((string)$row['name']) : $issueTypeId;
-    }
-
-    return $lookup;
 }
 
 /**
@@ -1039,252 +1563,9 @@ function buildJiraToRedmineTrackerLookup(PDO $pdo): array
 }
 
 /**
- * @param array<int, array<string, mixed>> $contexts
- * @return array<int, array<string, mixed>>
+ * @param array<string, mixed> $allowedValues
+ * @return array|null
  */
-function buildJiraFieldContextGroups(string $fieldId, array $contexts, array $projectNames, array $issueTypeNames): array
-{
-    if ($contexts === []) {
-        return [];
-    }
-
-    $groups = [];
-
-    foreach ($contexts as $context) {
-        $options = isset($context['options']) && is_array($context['options']) ? $context['options'] : [];
-        $rawOptions = isset($context['raw_options']) && is_array($context['raw_options']) ? $context['raw_options'] : [];
-        $normalizedOptions = normalizeOptionsWithChildren($options, $rawOptions);
-        $fingerprint = computeContextOptionsFingerprint($normalizedOptions);
-
-        if (!isset($groups[$fingerprint])) {
-            $groups[$fingerprint] = [
-                'fingerprint' => $fingerprint,
-                'contexts' => [],
-            ];
-        }
-
-        $groups[$fingerprint]['contexts'][] = array_merge($context, [
-            'normalized_options' => $normalizedOptions,
-        ]);
-    }
-
-    $result = [];
-
-    foreach ($groups as $group) {
-        $contextIds = [];
-        $projectIds = [];
-        $issueTypeIds = [];
-        $parentOptions = [];
-        $childOptionMap = [];
-        $isCascading = false;
-
-        foreach ($group['contexts'] as $context) {
-            $contextId = isset($context['context_id']) ? trim((string)$context['context_id']) : '';
-            if ($contextId !== '') {
-                $contextIds[] = $contextId;
-            }
-
-            if (isset($context['project_ids']) && is_array($context['project_ids'])) {
-                foreach ($context['project_ids'] as $projectId) {
-                    $projectIdString = trim((string)$projectId);
-                    if ($projectIdString !== '') {
-                        $projectIds[] = $projectIdString;
-                    }
-                }
-            }
-
-            if (isset($context['issue_type_ids']) && is_array($context['issue_type_ids'])) {
-                foreach ($context['issue_type_ids'] as $issueTypeId) {
-                    $issueTypeIdString = trim((string)$issueTypeId);
-                    if ($issueTypeIdString !== '') {
-                        $issueTypeIds[] = $issueTypeIdString;
-                    }
-                }
-            }
-
-            $normalizedOptions = isset($context['normalized_options']) && is_array($context['normalized_options'])
-                ? $context['normalized_options']
-                : [];
-
-            foreach ($normalizedOptions as $option) {
-                if (!is_array($option)) {
-                    continue;
-                }
-
-                $value = isset($option['value']) ? trim((string)$option['value']) : '';
-                if ($value === '') {
-                    continue;
-                }
-
-                $disabled = normalizeBooleanFlag($option['disabled'] ?? null) ?? false;
-                if (!isset($parentOptions[$value]) || ($parentOptions[$value]['disabled'] ?? false) !== false) {
-                    $parentOptions[$value] = [
-                        'id' => isset($option['id']) ? (string)$option['id'] : null,
-                        'value' => $value,
-                        'disabled' => $disabled,
-                    ];
-                }
-
-                if (isset($option['children']) && is_array($option['children']) && $option['children'] !== []) {
-                    $isCascading = true;
-                    foreach ($option['children'] as $child) {
-                        if (!is_array($child)) {
-                            continue;
-                        }
-
-                        $childValue = isset($child['value']) ? trim((string)$child['value']) : '';
-                        if ($childValue === '') {
-                            continue;
-                        }
-
-                        $childDisabled = normalizeBooleanFlag($child['disabled'] ?? null) ?? false;
-                        if ($childDisabled) {
-                            continue;
-                        }
-
-                        $childOptionMap[$value][$childValue] = [
-                            'id' => isset($child['id']) ? (string)$child['id'] : null,
-                            'value' => $childValue,
-                        ];
-                    }
-                }
-            }
-        }
-
-        sort($contextIds);
-        sort($projectIds);
-        sort($issueTypeIds);
-        ksort($parentOptions);
-
-        if ($isCascading) {
-            $structuredParents = [];
-            foreach ($parentOptions as $parentValue => $parentOption) {
-                if (($parentOption['disabled'] ?? false) === true) {
-                    continue;
-                }
-
-                $structuredParents[] = [
-                    'id' => $parentOption['id'] ?? null,
-                    'value' => $parentValue,
-                ];
-            }
-
-            $structuredDependencies = [];
-            foreach ($parentOptions as $parentValue => $parentOption) {
-                $children = $childOptionMap[$parentValue] ?? [];
-                ksort($children);
-                $structuredDependencies[$parentValue] = array_values($children);
-            }
-
-            $allowedPayload = [
-                'mode' => 'cascading',
-                'parents' => $structuredParents,
-                'dependencies' => $structuredDependencies,
-            ];
-        } else {
-            $flatValues = [];
-            foreach ($parentOptions as $parentValue => $parentOption) {
-                if (($parentOption['disabled'] ?? false) === true) {
-                    continue;
-                }
-
-                $flatValues[] = [
-                    'id' => $parentOption['id'] ?? null,
-                    'value' => $parentValue,
-                ];
-            }
-
-            $allowedPayload = [
-                'mode' => 'flat',
-                'values' => $flatValues,
-            ];
-        }
-
-        try {
-            $contextScopeHash = sha1(json_encode([
-                'field' => $fieldId,
-                'fingerprint' => $group['fingerprint'],
-                'contexts' => $contextIds,
-                'projects' => $projectIds,
-                'issue_types' => $issueTypeIds,
-            ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-        } catch (JsonException $exception) {
-            throw new RuntimeException('Failed to compute custom field context hash: ' . $exception->getMessage(), 0, $exception);
-        }
-
-        $contextScopeLabel = deriveContextScopeLabel($group['contexts'], $projectIds, $issueTypeIds, $projectNames, $issueTypeNames);
-
-        $result[] = [
-            'context_scope_hash' => $contextScopeHash,
-            'context_scope_label' => $contextScopeLabel,
-            'context_ids' => $contextIds,
-            'project_ids' => array_values(array_unique($projectIds)),
-            'issue_type_ids' => array_values(array_unique($issueTypeIds)),
-            'allowed_values' => $allowedPayload,
-        ];
-    }
-
-    return $result;
-}
-
-function computeContextOptionsFingerprint(array $options): string
-{
-    if ($options === []) {
-        return sha1('no-options');
-    }
-
-    $normalized = [];
-    foreach ($options as $option) {
-        if (!is_array($option)) {
-            continue;
-        }
-
-        $value = isset($option['value']) ? trim((string)$option['value']) : '';
-        $disabled = normalizeBooleanFlag($option['disabled'] ?? null) ?? false;
-        $children = [];
-
-        if (isset($option['children']) && is_array($option['children'])) {
-            foreach ($option['children'] as $child) {
-                if (!is_array($child)) {
-                    continue;
-                }
-
-                $childValue = isset($child['value']) ? trim((string)$child['value']) : '';
-                if ($childValue === '') {
-                    continue;
-                }
-
-                $children[] = [
-                    'value' => $childValue,
-                    'disabled' => normalizeBooleanFlag($child['disabled'] ?? null) ?? false,
-                ];
-            }
-
-            if ($children !== []) {
-                usort($children, static function (array $left, array $right): int {
-                    return strcmp($left['value'], $right['value']);
-                });
-            }
-        }
-
-        $normalized[] = [
-            'value' => $value,
-            'disabled' => $disabled,
-            'children' => $children,
-        ];
-    }
-
-    usort($normalized, static function (array $left, array $right): int {
-        return strcmp($left['value'], $right['value']);
-    });
-
-    try {
-        return sha1(json_encode($normalized, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-    } catch (JsonException $exception) {
-        throw new RuntimeException('Failed to compute Jira context fingerprint: ' . $exception->getMessage(), 0, $exception);
-    }
-}
-
 function parseCascadingAllowedValues(array $allowedValues): ?array
 {
     if (!isset($allowedValues['mode']) || $allowedValues['mode'] !== 'cascading') {
@@ -1356,159 +1637,6 @@ function parseCascadingAllowedValues(array $allowedValues): ?array
         'dependencies' => $dependencies,
         'child_values' => array_values($childUnion),
     ];
-}
-
-/**
- * @param array<int, array<string, mixed>> $contexts
- * @param array<int, string> $projectIds
- * @param array<int, string> $issueTypeIds
- * @return string
- */
-function deriveContextScopeLabel(array $contexts, array $projectIds, array $issueTypeIds, array $projectNames, array $issueTypeNames): string
-{
-    $contextNames = [];
-    foreach ($contexts as $context) {
-        if (!isset($context['name'])) {
-            continue;
-        }
-
-        $name = trim((string)$context['name']);
-        if ($name === '') {
-            continue;
-        }
-
-        if (!isset($contextNames[$name])) {
-            $contextNames[$name] = $name;
-        }
-    }
-
-    if ($contextNames !== []) {
-        $label = summarizeContextScopeValues(array_values($contextNames));
-        $normalized = normalizeString($label, 255);
-
-        return $normalized ?? 'Global';
-    }
-
-    $parts = [];
-
-    $projectIds = array_values(array_unique($projectIds));
-    if ($projectIds !== []) {
-        $labels = [];
-        foreach ($projectIds as $projectId) {
-            $label = $projectNames[$projectId] ?? $projectId;
-            $labels[$label] = $label;
-        }
-
-        $labels = array_values($labels);
-        $summary = summarizeContextScopeValues($labels);
-        if ($summary !== '') {
-            $prefix = count($labels) > 1 ? 'Projects ' : 'Project ';
-            $parts[] = $prefix . $summary;
-        }
-    }
-
-    $issueTypeIds = array_values(array_unique($issueTypeIds));
-    if ($issueTypeIds !== []) {
-        $labels = [];
-        foreach ($issueTypeIds as $issueTypeId) {
-            $label = $issueTypeNames[$issueTypeId] ?? $issueTypeId;
-            $labels[$label] = $label;
-        }
-
-        $labels = array_values($labels);
-        $summary = summarizeContextScopeValues($labels);
-        if ($summary !== '') {
-            $prefix = count($labels) > 1 ? 'Issue types ' : 'Issue type ';
-            $parts[] = $prefix . $summary;
-        }
-    }
-
-    if ($parts === []) {
-        return 'Global';
-    }
-
-    $label = implode(' / ', $parts);
-    $normalized = normalizeString($label, 255);
-
-    return $normalized ?? 'Global';
-}
-
-/**
- * Summarize a list of project or issue-type labels into a compact, human-friendly description.
- *
- * @param array<int, string> $values
- */
-function summarizeContextScopeValues(array $values, int $maxValues = 5, int $maxLength = 200): string
-{
-    $deduplicated = [];
-    foreach ($values as $value) {
-        if (!is_scalar($value)) {
-            continue;
-        }
-
-        $stringValue = trim((string)$value);
-        if ($stringValue === '') {
-            continue;
-        }
-
-        if (mb_strlen($stringValue) > 60) {
-            $stringValue = rtrim(mb_substr($stringValue, 0, 57)) . '…';
-        }
-
-        if (!isset($deduplicated[$stringValue])) {
-            $deduplicated[$stringValue] = $stringValue;
-        }
-    }
-
-    $values = array_values($deduplicated);
-    $total = count($values);
-    if ($total === 0) {
-        return '';
-    }
-
-    if ($maxValues > 0 && $total > $maxValues) {
-        $display = array_slice($values, 0, $maxValues);
-        $summary = implode(', ', $display) . sprintf(' (+%d more)', $total - $maxValues);
-    } else {
-        $summary = implode(', ', $values);
-    }
-
-    if ($maxLength > 0 && mb_strlen($summary) > $maxLength) {
-        $summary = rtrim(mb_substr($summary, 0, $maxLength - 1)) . '…';
-    }
-
-    return $summary;
-}
-
-function removeObsoleteCustomFieldMappings(PDO $pdo, string $fieldId, array $validHashes): void
-{
-    $fieldId = trim($fieldId);
-    if ($fieldId === '') {
-        return;
-    }
-
-    if ($validHashes === []) {
-        $sql = 'DELETE FROM migration_mapping_custom_fields WHERE jira_field_id = :field_id';
-        $params = ['field_id' => $fieldId];
-    } else {
-        $placeholders = implode(', ', array_fill(0, count($validHashes), '?'));
-        $sql = sprintf(
-            'DELETE FROM migration_mapping_custom_fields WHERE jira_field_id = ? AND context_scope_hash NOT IN (%s)',
-            $placeholders
-        );
-        $params = array_merge([$fieldId], $validHashes);
-    }
-
-    try {
-        $statement = $pdo->prepare($sql);
-        if ($statement === false) {
-            throw new RuntimeException('Failed to prepare statement for pruning custom field mappings.');
-        }
-
-        $statement->execute($params);
-    } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to prune obsolete custom field mappings: ' . $exception->getMessage(), 0, $exception);
-    }
 }
 
 function purgeOrphanedCustomFieldMappings(PDO $pdo): void
@@ -1705,8 +1833,16 @@ function runCustomFieldUsagePhase(PDO $pdo): array
 /**
  * @throws Throwable
  */
-function fetchAndStoreRedmineCustomFields(Client $client, PDO $pdo): int
+function fetchAndStoreRedmineCustomFields(Client $client, PDO $pdo, bool $useExtendedApi, ?string $extendedApiPrefix = null): int
 {
+    if ($useExtendedApi) {
+        if ($extendedApiPrefix === null) {
+            throw new RuntimeException('Extended API requested for the Redmine snapshot but no prefix was provided.');
+        }
+
+        verifyExtendedApiAvailability($client, $extendedApiPrefix, 'custom_fields.json');
+    }
+
     try {
         $pdo->exec('TRUNCATE TABLE staging_redmine_custom_fields');
     } catch (PDOException $exception) {
@@ -1818,6 +1954,11 @@ function fetchAndStoreRedmineCustomFields(Client $client, PDO $pdo): int
                 continue;
             }
 
+            $detailedPayload = fetchRedmineCustomFieldDetails($client, $id, $useExtendedApi, $extendedApiPrefix);
+            if (is_array($detailedPayload) && isset($detailedPayload['custom_field']) && is_array($detailedPayload['custom_field'])) {
+                $customField = $detailedPayload['custom_field'];
+            }
+
             if (isset($seenIds[$id])) {
                 $duplicateIds[$id] = true;
             } else {
@@ -1853,7 +1994,8 @@ function fetchAndStoreRedmineCustomFields(Client $client, PDO $pdo): int
             $projectIds = extractIdListFromRedmineCustomField($customField['projects'] ?? null);
 
             try {
-                $rawPayload = json_encode($customField, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                $rawPayloadSource = $detailedPayload ?? $customField;
+                $rawPayload = json_encode($rawPayloadSource, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             } catch (JsonException $exception) {
                 throw new RuntimeException(
                     sprintf('Failed to encode Redmine custom field payload for %d: %s', $id, $exception->getMessage()),
@@ -1908,6 +2050,55 @@ function fetchAndStoreRedmineCustomFields(Client $client, PDO $pdo): int
 }
 
 /**
+ * @return array<string, mixed>|null
+ */
+function fetchRedmineCustomFieldDetails(Client $client, int $customFieldId, bool $useExtendedApi, ?string $extendedApiPrefix): ?array
+{
+    $resource = sprintf('custom_fields/%d.json', $customFieldId);
+    $queryString = '';
+    if ($useExtendedApi) {
+        if ($extendedApiPrefix === null) {
+            throw new RuntimeException('Extended API prefix is required when useExtendedApi is true.');
+        }
+
+        $resource = buildExtendedApiPath($extendedApiPrefix, $resource);
+        $queryString = http_build_query([
+            'extended_api[mode]' => 'extended',
+            'extended_api[fallback_to_native]' => false,
+        ], '', '&', PHP_QUERY_RFC3986);
+    } else {
+        $resource = '/' . ltrim($resource, '/');
+    }
+
+    $endpoint = $queryString === '' ? $resource : sprintf('%s?%s', $resource, $queryString);
+
+    try {
+        $response = $client->get($endpoint);
+    } catch (BadResponseException $exception) {
+        $response = $exception->getResponse();
+        $message = sprintf('Failed to fetch Redmine custom field %d', $customFieldId);
+        if ($response !== null) {
+            $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+        }
+
+        throw new RuntimeException($message, 0, $exception);
+    } catch (GuzzleException $exception) {
+        throw new RuntimeException(
+            sprintf('Failed to fetch Redmine custom field %d: %s', $customFieldId, $exception->getMessage()),
+            0,
+            $exception
+        );
+    }
+
+    $decoded = decodeJsonResponse($response);
+    if (!is_array($decoded)) {
+        return null;
+    }
+
+    return $decoded;
+}
+
+/**
  * @return string|null
  */
 function extractIdListFromRedmineCustomField(mixed $value): ?string
@@ -1946,25 +2137,12 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
 {
     syncCustomFieldMappings($pdo);
     refreshCustomFieldMetadata($pdo);
+    logCustomFieldMappingStats($pdo);
 
     $redmineLookup = buildRedmineCustomFieldLookup($pdo);
     $jiraProjectToRedmine = buildJiraToRedmineProjectLookup($pdo);
     $jiraIssueTypeToTracker = buildJiraToRedmineTrackerLookup($pdo);
     $mappings = fetchCustomFieldMappingsForTransform($pdo);
-
-    $fieldGroupCounts = [];
-    foreach ($mappings as $row) {
-        if (!isset($row['jira_field_id'])) {
-            continue;
-        }
-
-        $fieldId = (string)$row['jira_field_id'];
-        if ($fieldId === '') {
-            continue;
-        }
-
-        $fieldGroupCounts[$fieldId] = ($fieldGroupCounts[$fieldId] ?? 0) + 1;
-    }
 
     $updateStatement = $pdo->prepare(<<<SQL
         UPDATE migration_mapping_custom_fields
@@ -2014,10 +2192,6 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         $jiraFieldName = isset($row['jira_field_name']) ? (string)$row['jira_field_name'] : null;
         $jiraSchemaType = isset($row['jira_schema_type']) ? (string)$row['jira_schema_type'] : null;
         $jiraSchemaCustom = isset($row['jira_schema_custom']) ? (string)$row['jira_schema_custom'] : null;
-        $contextScopeLabel = isset($row['context_scope_label']) && $row['context_scope_label'] !== null
-            ? trim((string)$row['context_scope_label'])
-            : null;
-
         $currentRedmineId = isset($row['redmine_custom_field_id']) ? (int)$row['redmine_custom_field_id'] : null;
         $currentRedmineParentId = isset($row['redmine_parent_custom_field_id']) ? (int)$row['redmine_parent_custom_field_id'] : null;
         $currentNotes = isset($row['notes']) ? (string)$row['notes'] : null;
@@ -2095,6 +2269,10 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         $usageLastCountedAtRaw = isset($row['usage_last_counted_at']) ? (string)$row['usage_last_counted_at'] : null;
         $usageLastCountedAt = $usageLastCountedAtRaw !== '' ? $usageLastCountedAtRaw : 'n/a';
 
+        $fieldCategory = isset($row['jira_field_category']) ? (string)$row['jira_field_category'] : null;
+        $manualReasons = [];
+        $infoNotes = [];
+
         if ($usageTotalIssues === 0) {
             $usageNote = 'Usage snapshot: no staged issues counted yet.';
         } else {
@@ -2137,21 +2315,10 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         }
 
         $defaultName = $jiraFieldName !== null ? normalizeString($jiraFieldName, 255) : null;
-        $hasMultipleGroups = ($fieldGroupCounts[$jiraFieldId] ?? 1) > 1;
-        $contextSuffix = $contextScopeLabel !== null && $contextScopeLabel !== '' ? $contextScopeLabel : null;
-
-        $contextualDefaultName = null;
-        if ($defaultName !== null) {
-            $contextualDefaultName = $hasMultipleGroups && $contextSuffix !== null && strtolower($contextSuffix) !== 'global'
-                ? normalizeString(sprintf('%s (Context %s)', $defaultName, $contextSuffix), 255)
-                : $defaultName;
-        }
 
         $proposedName = $currentProposedName;
         if ($proposedName === null) {
-            $proposedName = $contextualDefaultName ?? $defaultName ?? $jiraFieldId;
-        } elseif ($contextualDefaultName !== null && $proposedName === $defaultName) {
-            $proposedName = $contextualDefaultName;
+            $proposedName = $defaultName ?? $jiraFieldId;
         }
         $proposedName = $proposedName !== null ? normalizeString($proposedName, 255) : null;
 
@@ -2162,6 +2329,68 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         $proposedIsMultiple = $currentProposedIsMultiple ?? false;
         $proposedDefaultValue = $currentProposedDefaultValue;
 
+        $appCustomAutoStatuses = ['PENDING_ANALYSIS'];
+
+        if ($fieldCategory === 'app_custom') {
+            if (!in_array($currentStatus, $appCustomAutoStatuses, true)) {
+                $summary['unchanged']++;
+                continue;
+            }
+
+            $manualReasons[] = 'Jira app custom field, mapping must be defined manually.';
+
+            $proposedPossibleValuesJson = encodeJsonColumn($proposedPossibleValues);
+            $proposedTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
+            $proposedRoleIdsJson = encodeJsonColumn($proposedRoleIds);
+            $proposedProjectIdsJson = encodeJsonColumn($proposedProjectIds);
+
+            $notes = implode(' ', array_unique($manualReasons));
+            $newStatus = 'MANUAL_INTERVENTION_REQUIRED';
+            $existingRedmineFieldId = $currentRedmineId;
+
+            $automationHash = computeCustomFieldAutomationStateHash(
+                $existingRedmineFieldId,
+                $newStatus,
+                $proposedName,
+                $proposedFormat,
+                $proposedIsRequired,
+                $proposedIsFilter,
+                $proposedIsForAll,
+                $proposedIsMultiple,
+                $proposedPossibleValuesJson,
+                $proposedDefaultValue,
+                $proposedTrackerIdsJson,
+                $proposedRoleIdsJson,
+                $proposedProjectIdsJson,
+                $notes,
+                $currentRedmineParentId
+            );
+
+            $updateStatement->execute([
+                'redmine_custom_field_id' => $existingRedmineFieldId,
+                'migration_status' => $newStatus,
+                'notes' => $notes,
+                'proposed_redmine_name' => $proposedName,
+                'proposed_field_format' => $proposedFormat,
+                'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
+                'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
+                'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
+                'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
+                'proposed_possible_values' => $proposedPossibleValuesJson,
+                'proposed_default_value' => $proposedDefaultValue,
+                'proposed_tracker_ids' => $proposedTrackerIdsJson,
+                'proposed_role_ids' => $proposedRoleIdsJson,
+                'proposed_project_ids' => $proposedProjectIdsJson,
+                'automation_hash' => $automationHash,
+                'mapping_id' => (int)$row['mapping_id'],
+            ]);
+
+            $summary['manual_review']++;
+            continue;
+        }
+
+        $infoNotes[] = $usageNote;
+
         $classification = classifyJiraCustomField($jiraSchemaType, $jiraSchemaCustom);
         if ($proposedFormat === null) {
             $proposedFormat = $classification['field_format'];
@@ -2170,9 +2399,6 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         if ($classification['is_multiple'] !== null) {
             $proposedIsMultiple = $classification['is_multiple'];
         }
-
-        $manualReasons = [];
-        $infoNotes = [$usageNote];
 
         $autoIgnoreUnused = $usageTotalIssues > 0 && $usageIssuesWithValue === 0 && $usageIssuesWithNonEmpty === 0;
         if ($autoIgnoreUnused && in_array($currentStatus, $allowedStatuses, true)) {
@@ -2235,13 +2461,16 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             continue;
         }
 
-        $isCascadingField = !empty($classification['is_cascading']);
+        $isCascadingField = !empty($classification['is_cascading'])
+            || ($jiraSchemaType !== null && strtolower($jiraSchemaType) === 'option-with-child');
         $cascadingDescriptor = null;
         if ($isCascadingField) {
             $cascadingDescriptor = parseCascadingAllowedValues($jiraAllowedValues);
             if ($cascadingDescriptor === null) {
                 $manualReasons[] = 'Unable to parse cascading Jira custom field options for dependent field creation.';
             } else {
+                $proposedFormat = 'depending_list';
+
                 if ($cascadingDescriptor['child_values'] === []) {
                     $manualReasons[] = 'Cascading Jira custom field does not expose any child options.';
                 } else {
@@ -2253,6 +2482,11 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 }
 
                 $infoNotes[] = 'Will use the redmine_depending_custom_fields API for dependent list creation.';
+                $infoNotes[] = sprintf(
+                    'Cascading parents: %s; dependencies: %s',
+                    json_encode($cascadingDescriptor['parents']),
+                    json_encode($cascadingDescriptor['dependencies'])
+                );
             }
         }
 
@@ -2303,16 +2537,13 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             if ($derivedValues !== []) {
                 $proposedPossibleValues = array_values($derivedValues);
             } else {
-                $manualReasons[] = 'List-style Jira field requires allowed option values; unable to derive from contexts.';
+                $manualReasons[] = 'List-style Jira field requires allowed option values; Jira metadata exposes no allowedValues payload.';
             }
         }
 
         $lookupCandidates = [];
         if ($proposedName !== null) {
             $lookupCandidates[] = strtolower($proposedName);
-        }
-        if ($contextualDefaultName !== null) {
-            $lookupCandidates[] = strtolower($contextualDefaultName);
         }
         if ($defaultName !== null) {
             $lookupCandidates[] = strtolower($defaultName);
@@ -2445,10 +2676,6 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             $proposedIsForAll = false;
         }
 
-        if ($hasMultipleGroups) {
-            $infoNotes[] = sprintf('Context-specific variant covering %s.', $contextSuffix ?? 'selected Jira contexts');
-        }
-
         if ($matchedRedmine === null) {
             if ($manualReasons !== []) {
                 $newStatus = 'MANUAL_INTERVENTION_REQUIRED';
@@ -2536,21 +2763,15 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
 
 function syncCustomFieldMappings(PDO $pdo): void
 {
-    $fields = fetchCustomJiraFieldIds($pdo);
+    $fields = fetchEligibleJiraFields($pdo);
     if ($fields === []) {
         return;
     }
 
-    $contextMap = loadJiraCustomFieldContextMap($pdo);
-    $projectNameLookup = buildJiraProjectNameLookup($pdo);
-    $issueTypeNameLookup = buildJiraIssueTypeNameLookup($pdo);
-
+    $projectIssueTypeUsageMap = loadJiraProjectIssueTypeFieldDetails($pdo);
     $insertStatement = $pdo->prepare(<<<SQL
         INSERT INTO migration_mapping_custom_fields (
             jira_field_id,
-            context_scope_hash,
-            context_scope_label,
-            jira_context_ids,
             jira_project_ids,
             jira_issue_type_ids,
             jira_allowed_values,
@@ -2560,9 +2781,6 @@ function syncCustomFieldMappings(PDO $pdo): void
             last_updated_at
         ) VALUES (
             :jira_field_id,
-            :context_scope_hash,
-            :context_scope_label,
-            :jira_context_ids,
             :jira_project_ids,
             :jira_issue_type_ids,
             :jira_allowed_values,
@@ -2572,8 +2790,6 @@ function syncCustomFieldMappings(PDO $pdo): void
             NOW()
         )
         ON DUPLICATE KEY UPDATE
-            context_scope_label = VALUES(context_scope_label),
-            jira_context_ids = VALUES(jira_context_ids),
             jira_project_ids = VALUES(jira_project_ids),
             jira_issue_type_ids = VALUES(jira_issue_type_ids),
             jira_allowed_values = VALUES(jira_allowed_values),
@@ -2584,37 +2800,49 @@ function syncCustomFieldMappings(PDO $pdo): void
         throw new RuntimeException('Failed to prepare insert statement for migration_mapping_custom_fields.');
     }
 
-    foreach ($fields as $fieldId) {
-        $contexts = $contextMap[$fieldId] ?? [];
-        $groups = buildJiraFieldContextGroups($fieldId, $contexts, $projectNameLookup, $issueTypeNameLookup);
-        if ($groups === []) {
-            $groups = [[
-                'context_scope_hash' => sha1('global'),
-                'context_scope_label' => 'Global',
-                'context_ids' => [],
-                'project_ids' => [],
-                'issue_type_ids' => [],
-                'allowed_values' => [],
-            ]];
+    foreach ($fields as $fieldId => $definition) {
+        $usageEntries = $projectIssueTypeUsageMap[$fieldId] ?? [];
+
+        $projectIds = [];
+        $issueTypeIds = [];
+        $aggregatedAllowedValues = [];
+
+        foreach ($usageEntries as $usage) {
+            if (!is_array($usage)) {
+                continue;
+            }
+
+            $projectId = isset($usage['project_id']) ? trim((string)$usage['project_id']) : '';
+            $issueTypeId = isset($usage['issue_type_id']) ? trim((string)$usage['issue_type_id']) : '';
+
+            if ($projectId !== '') {
+                $projectIds[$projectId] = $projectId;
+            }
+
+            if ($issueTypeId !== '') {
+                $issueTypeIds[$issueTypeId] = $issueTypeId;
+            }
+
+            $aggregatedAllowedValues = mergeAllowedValuesPayloads(
+                $aggregatedAllowedValues,
+                isset($usage['allowed_values']) && is_array($usage['allowed_values']) ? $usage['allowed_values'] : []
+            );
         }
 
-        $validHashes = [];
-        foreach ($groups as $group) {
-            $contextScopeHash = (string)$group['context_scope_hash'];
-            $validHashes[] = $contextScopeHash;
+        $projectIds = array_values($projectIds);
+        $issueTypeIds = array_values($issueTypeIds);
 
-            $insertStatement->execute([
-                'jira_field_id' => $fieldId,
-                'context_scope_hash' => $contextScopeHash,
-                'context_scope_label' => $group['context_scope_label'] ?? null,
-                'jira_context_ids' => encodeJsonColumn($group['context_ids'] ?? []),
-                'jira_project_ids' => encodeJsonColumn($group['project_ids'] ?? []),
-                'jira_issue_type_ids' => encodeJsonColumn($group['issue_type_ids'] ?? []),
-                'jira_allowed_values' => encodeJsonColumn($group['allowed_values'] ?? []),
-            ]);
-        }
+        sort($projectIds);
+        sort($issueTypeIds);
 
-        removeObsoleteCustomFieldMappings($pdo, $fieldId, $validHashes);
+        $normalizedAllowedValues = normalizeAllowedValuesPayload($aggregatedAllowedValues);
+
+        $insertStatement->execute([
+            'jira_field_id' => $fieldId,
+            'jira_project_ids' => encodeJsonColumn($projectIds),
+            'jira_issue_type_ids' => encodeJsonColumn($issueTypeIds),
+            'jira_allowed_values' => encodeJsonColumn($normalizedAllowedValues),
+        ]);
     }
 
     purgeOrphanedCustomFieldMappings($pdo);
@@ -2628,9 +2856,9 @@ function refreshCustomFieldMetadata(PDO $pdo): void
         SET
             map.jira_field_name = jf.name,
             map.jira_schema_type = jf.schema_type,
-            map.jira_schema_custom = jf.schema_custom,
-            map.jira_searcher_key = jf.searcher_key
+            map.jira_schema_custom = jf.schema_custom
         WHERE jf.is_custom = 1
+          AND jf.field_category IN ('jira_custom', 'app_custom')
     SQL;
 
     try {
@@ -2638,6 +2866,46 @@ function refreshCustomFieldMetadata(PDO $pdo): void
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to refresh Jira custom field metadata in migration_mapping_custom_fields: ' . $exception->getMessage(), 0, $exception);
     }
+}
+
+function logCustomFieldMappingStats(PDO $pdo): void
+{
+    $sql = <<<SQL
+        SELECT
+            COUNT(*) AS total_mappings,
+            SUM(CASE WHEN jf.schema_type IN ('option', 'array', 'option-with-child') THEN 1 ELSE 0 END) AS list_like,
+            SUM(CASE WHEN jf.schema_type = 'option-with-child' THEN 1 ELSE 0 END) AS cascading,
+            SUM(CASE WHEN map.jira_allowed_values IS NOT NULL AND JSON_LENGTH(map.jira_allowed_values) > 0 THEN 1 ELSE 0 END) AS with_allowed_values
+        FROM migration_mapping_custom_fields map
+        LEFT JOIN staging_jira_fields jf ON jf.id = map.jira_field_id
+    SQL;
+
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to compute custom field mapping statistics: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    $row = $statement !== false ? $statement->fetch(PDO::FETCH_ASSOC) : null;
+
+    if ($row === false || $row === null) {
+        printf("  No custom field mappings found.%s", PHP_EOL);
+        return;
+    }
+
+    $total = (int)($row['total_mappings'] ?? 0);
+    $listLike = (int)($row['list_like'] ?? 0);
+    $cascading = (int)($row['cascading'] ?? 0);
+    $withAllowedValues = (int)($row['with_allowed_values'] ?? 0);
+
+    printf(
+        "  Custom field mappings: %d total | %d list-like | %d cascading | %d with allowed values.%s",
+        $total,
+        $listLike,
+        $cascading,
+        $withAllowedValues,
+        PHP_EOL
+    );
 }
 
 /**
@@ -2968,10 +3236,7 @@ function fetchCustomFieldMappingsForTransform(PDO $pdo): array
             map.jira_field_name,
             map.jira_schema_type,
             map.jira_schema_custom,
-            map.jira_searcher_key,
-            map.context_scope_hash,
-            map.context_scope_label,
-            map.jira_context_ids,
+            jf.field_category AS jira_field_category,
             map.jira_project_ids,
             map.jira_issue_type_ids,
             map.jira_allowed_values,
@@ -2996,6 +3261,8 @@ function fetchCustomFieldMappingsForTransform(PDO $pdo): array
             usage_stats.issues_with_non_empty_value AS usage_issues_with_non_empty_value,
             usage_stats.last_counted_at AS usage_last_counted_at
         FROM migration_mapping_custom_fields map
+        LEFT JOIN staging_jira_fields jf
+            ON jf.id = map.jira_field_id
         LEFT JOIN staging_jira_field_usage usage_stats ON usage_stats.field_id = map.jira_field_id
             AND usage_stats.usage_scope = :usage_scope
         ORDER BY map.jira_field_name IS NULL, map.jira_field_name, map.jira_field_id
@@ -3125,6 +3392,12 @@ function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): ar
                 break;
             case 'date':
                 $result['field_format'] = 'date';
+                break;
+            case 'option-with-child':
+                $result['field_format'] = 'depending_list';
+                $result['requires_possible_values'] = true;
+                $result['is_cascading'] = true;
+                $result['note'] = 'Requires the redmine_depending_custom_fields plugin to migrate cascading selects.';
                 break;
             case 'array':
                 $result['field_format'] = 'text';
@@ -3672,7 +3945,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             if ($isDependingField) {
                 $descriptor = parseCascadingAllowedValues($jiraAllowedValues);
                 if ($descriptor === null || $descriptor['parents'] === [] || $descriptor['child_values'] === []) {
-                    $errorMessage = 'Unable to derive cascading dependencies from Jira contexts. Review the staging data.';
+                    $errorMessage = 'Unable to derive cascading dependencies from Jira metadata. Review the allowedValues payload.';
                     $automationHash = computeCustomFieldAutomationStateHash(
                         null,
                         'CREATION_FAILED',

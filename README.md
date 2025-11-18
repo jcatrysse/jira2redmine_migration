@@ -582,7 +582,7 @@ php 07_migrate_trackers.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.16`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.17`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Acknowledge manual tracker creation or confirm the extended API run.                  |
@@ -628,7 +628,7 @@ php 08_migrate_custom_fields.php --help
 | Option              | Description                                                                           |
 |---------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`      | Print usage information and exit.                                                     |
-| `-V`, `--version`   | Display the script version (`0.0.14`).                                                |
+| `-V`, `--version`   | Display the script version (`0.0.25`).                                                |
 | `--phases=<list>`   | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`     | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`    | Acknowledge manual creations or confirm extended API operations.                      |
@@ -638,24 +638,27 @@ php 08_migrate_custom_fields.php --help
 ### Workflow highlights
 
 1. **Jira extraction (`jira`)** – reads `/rest/api/3/field`, captures the schema
-   type, custom type key, searcher information, and stores the raw payloads in
-   `staging_jira_fields`. For every custom Jira field the script also walks the
-   `/rest/api/3/field/{id}/context` and `/context/{contextId}/option` endpoints,
-   recording the per-project/per-issue-type contexts together with their allowed
-   values in `staging_jira_field_contexts`.
+   type, custom type key, and stores the raw payloads in `staging_jira_fields`
+   together with a `field_category` hint (`system`, `jira_custom`, or
+   `app_custom`). The extraction iterates over every staged project and its
+   issue types via `/rest/api/3/issue/createmeta` so
+   `staging_jira_project_issue_type_fields` lists which fields are visible on
+   each create screen (with required flags, schema hints, and normalised allowed
+   values). Context APIs are no longer used; allowed options are taken directly
+   from the create-metadata responses.
 2. **Redmine snapshot (`redmine`)** – truncates and repopulates
    `staging_redmine_custom_fields` from `GET /custom_fields.json`, storing
    metadata such as `customized_type`, `field_format`, possible values, default
    values, and tracker/role/project associations for comparison.
 3. **Transform (`transform`)** – synchronises `migration_mapping_custom_fields`
    with the staging snapshots, preserving automation hashes so operator edits
-   survive reruns. Contexts that share the same allowed values are collapsed into
-   a single Redmine proposal; divergent contexts automatically fan out into
-   separate mapping rows with context-aware name suffixes. The transform phase
-   reuses the Jira option lists where possible, derives sensible defaults for
-   simple field types, and maps Jira projects and issue types to the corresponding
-   Redmine projects and trackers. Missing project or tracker mappings, unsupported
-   field types, and contexts without option data are routed to
+   survive reruns. Each Jira custom field produces a single Redmine proposal that
+   is enriched with the aggregated project/issue-type usage and normalised
+   allowed values from the create metadata. The transform phase reuses the Jira
+   option lists where possible, derives sensible defaults for simple field types,
+   and maps Jira projects and issue types to the corresponding Redmine projects
+   and trackers. Missing project or tracker mappings, unsupported field types, or
+   list-style fields without `allowedValues` data are routed to
    `MANUAL_INTERVENTION_REQUIRED` with explanatory notes.
 4. **Push (`push`)** – when `--use-extended-api` is supplied the script creates
    standard custom fields through `POST /custom_fields.json` and, when the
@@ -663,12 +666,12 @@ php 08_migrate_custom_fields.php --help
    selects by first creating the parent list via the extended API and then
    calling `POST /depending_custom_fields.json` for the dependent child field.
    Without the plugins it produces a detailed checklist that reflects the
-   context-specific naming, project scope, tracker scope, and option lists
+   project scope, tracker scope, and option lists
    derived during the transform so you can create the fields manually before
    acknowledging them with `--confirm-push`.
 
 > **Tip:** list-style Jira fields pull their options directly from the Jira
-> context metadata. If a context lacks options or a Jira project/issue type
+> create-metadata responses. If a project/issue type pairing lacks options or
 > cannot be mapped yet, the row is flagged for manual intervention with a
 > targeted note so you can fill in the missing pieces before rerunning the
 > transform.
