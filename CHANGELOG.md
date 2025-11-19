@@ -4,28 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [TODO]
 
-- Migrate custom fields script: link custom fields to projects and trackers in Redmine
-    - table migration_mapping_custom_fields: checklist are missing.
+- Migrate custom fields script: 
+    - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
     - table migration_mapping_custom_fields: proposed_role_ids, proposed_is_required, proposed_is_multiple, proposed_is_filter, proposed_default_value, ... investigate the usage because they are all NULL.
-    - table staging_jira_project_issue_type_fields: allowed_values_json, ... needs to be retrieved for objects (maybe from the issues).
-    - table staging_jira_project_issue_type_fields: allowed_values_json, ... needs to be validated for Team and Cascading fields.
-    - Examples: 
-        - Error: [manual] Jira custom field Team: List-style Jira field requires allowed option values; Jira metadata exposes no allowedValues payload. Usage snapshot (2025-11-19 13:37:07): non-empty values in 32/3230 issues (values present in 32/3230). App/Service Desk selector; will derive option labels from Jira allowed values. Consider a key/value list if you need stable IDs.
-        - Error: [manual] Jira custom field ICT Hardware: Cascading Jira custom field does not expose any child options. Usage snapshot (2025-11-19 13:37:07): non-empty values in 2/3230 issues (values present in 2/3230). Will use the redmine_depending_custom_fields API for dependent list creation. Cascading parents: ["Access Point","Firewall","Laptop","Other","Server","Switch","Workstation"]; dependencies: {"Access Point":[],"Firewall":[],"Laptop":[],"Other":[],"Server":[],"Switch":[],"Workstation":[]} Requires the redmine_depending_custom_fields plugin to migrate cascading selects.
-
-    - Example payloads for schema_type en raw_field:
-      - INSERT INTO `staging_jira_project_issue_type_fields` VALUES('team', '{\"key\": \"customfield_10001\", \"name\": \"Team\", \"schema\": {\"type\": \"team\", \"custom\": \"com.atlassian.jira.plugin.system.customfieldtypes:atlassian-team\", \"customId\": 10001, \"configuration\": {\"com.atlassian.jira.plugin.system.customfieldtypes:atlassian-team\": true}}, \"fieldId\": \"customfield_10001\", \"required\": false, \"operations\": [\"set\"], \"autoCompleteUrl\": \"https://geoxyz.atlassian.net/gateway/api/v1/recommendations\", \"hasDefaultValue\": false}');
-
-- Verify if all automation hashes align with the latest database schemas.
-- Migrate custom fields script: retrieve object information, or create them manually as enumeration, check if issue contains readable values.
-- Migrate custom fields script: add support for datetime fields in redmine using https://github.com/jcatrysse/redmine_datetime_custom_field and the https://github.com/jcatrysse/redmine_extended_api for API access.
-- Migrate custom fields script: investigate unsupported field types (any, team, option, option-with-child, option2, sd-customerrequesttype, object, sd-approvals, ...)
-- Migrate custom fields script: investigate cascading fields (option-with-child) and how to match them with https://github.com/jcatrysse/redmine_depending_custom_fields
-- Migrate custom fields script: investigate and validate the transformation from Jira Context to separate custom fields in Redmine.
+    - table staging_jira_project_issue_type_fields: allowed_values_json, ... check if we have differences between projects, this would require multiple fields in Redmine.
+    - investigate cascading fields (option-with-child) and how to match them with https://github.com/jcatrysse/redmine_depending_custom_fields
+    - examples Error: [manual] Jira custom field ICT Hardware: Cascading Jira custom field does not expose any child options. Usage snapshot (2025-11-19 13:37:07): non-empty values in 2/3230 issues (values present in 2/3230). Will use the redmine_depending_custom_fields API for dependent list creation. Cascading parents: ["Access Point","Firewall","Laptop","Other","Server","Switch","Workstation"]; dependencies: {"Access Point":[],"Firewall":[],"Laptop":[],"Other":[],"Server":[],"Switch":[],"Workstation":[]} Requires the redmine_depending_custom_fields plugin to migrate cascading selects.
+- General: verify if all automation hashes align with the latest database schemas.
 - Fine-tune the attachments, issues, and journals scripts.
-- Migrate issues script: on a rerun, newer issues should be fetched.
-- Migrate issues script: on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
-- Create the missing scripts: labels, (document) categories, milestones, watchers, ...
+- Verify ADF to Markdown conversion.
+- Migrate issues script:
+    - on a rerun, newer issues should be fetched.
+    - on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
+- Create the missing scripts: labels/tags, (document) categories, milestones, watchers, checklists, relations, subtasks, workflows, custom workflows...
 - Validate we can push authors and creation timestamps to Redmine.
 
 ## [0.0.46] - 2025-12-15
@@ -36,8 +27,12 @@ All notable changes to this project will be documented in this file.
   linger with empty Redmine proposals.
 - Bump the custom field migration script version to `0.0.26` and align the
   README references.
+- Bumped the custom fields migration script version to reflect the new issue-driven enrichment logic.
+- Added a post-create-metadata backfill step that enriches project/issue-type field assignments with data derived from staged Jira issues.
+- Implemented helpers to harvest missing field assignments and allowed values from staged issues, including metadata loading and normalization of observed values for storage
 
 ## [0.0.45] - 2025-12-14
+
 - Automatically mark custom field mappings as ignored when Jira project or issue type scopes are empty
 - Treat `migration_mapping_trackers` and `migration_mapping_projects` as the
   primary Redmine sources during the tracker transform so newly created

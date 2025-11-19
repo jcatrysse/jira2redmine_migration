@@ -1,4 +1,5 @@
-<?php /** @noinspection PhpArrayIndexImmediatelyRewrittenInspection */
+<?php
+/** @noinspection PhpArrayIndexImmediatelyRewrittenInspection */
 /** @noinspection DuplicatedCode */
 /** @noinspection SpellCheckingInspection */
 
@@ -9,7 +10,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.26';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.27';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
     'usage' => 'Analyse Jira custom field usage statistics from staging data.',
@@ -512,7 +513,14 @@ function refreshJiraProjectIssueTypeFields(Client $client, PDO $pdo): void
         }
     }
 
-    printf("  Captured %d project/issue-type field assignments.%s", $totalAssignments, PHP_EOL);
+    $backfilledFromIssues = backfillProjectIssueTypeFieldsFromIssues($pdo, $extractedAt);
+
+    printf(
+        "  Captured %d project/issue-type field assignments (%d from staged issues).%s",
+        $totalAssignments + $backfilledFromIssues,
+        $backfilledFromIssues,
+        PHP_EOL
+    );
 }
 
 /**
@@ -1484,6 +1492,376 @@ function loadJiraProjectIssueTypeFieldDetails(PDO $pdo): array
     }
 
     return $map;
+}
+
+function backfillProjectIssueTypeFieldsFromIssues(PDO $pdo, string $extractedAt): int
+{
+    $existingAssignments = [];
+    $existingAllowedValues = [];
+
+    try {
+        $existingStatement = $pdo->query(<<<SQL
+            SELECT
+                jira_project_id,
+                jira_issue_type_id,
+                jira_field_id,
+                allowed_values_json,
+                raw_field
+            FROM staging_jira_project_issue_type_fields
+        SQL);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to read existing project/issue-type field assignments: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($existingStatement === false) {
+        throw new RuntimeException('Failed to iterate existing project/issue-type field assignments.');
+    }
+
+    while (($row = $existingStatement->fetch(PDO::FETCH_ASSOC)) !== false) {
+        $projectId = isset($row['jira_project_id']) ? trim((string)$row['jira_project_id']) : '';
+        $issueTypeId = isset($row['jira_issue_type_id']) ? trim((string)$row['jira_issue_type_id']) : '';
+        $fieldId = isset($row['jira_field_id']) ? trim((string)$row['jira_field_id']) : '';
+
+        if ($projectId === '' || $issueTypeId === '' || $fieldId === '') {
+            continue;
+        }
+
+        $key = sprintf('%s|%s|%s', $projectId, $issueTypeId, $fieldId);
+        $existingAssignments[$key] = true;
+        $existingAllowedValues[$key] = normalizeAllowedValuesPayload(decodeJsonColumn($row['allowed_values_json'] ?? null));
+    }
+
+    $fieldsById = loadJiraFieldMetadata($pdo);
+    if ($fieldsById === []) {
+        return 0;
+    }
+
+    try {
+        $usageStatement = $pdo->query(<<<SQL
+            SELECT
+                f.id AS field_id,
+                f.name AS field_name,
+                f.schema_type,
+                f.schema_custom,
+                f.field_category,
+                i.project_id,
+                i.issuetype_id,
+                COUNT(*) AS issue_count,
+                p.project_key,
+                p.name AS project_name
+            FROM staging_jira_fields f
+            JOIN staging_jira_issues i
+              ON JSON_EXTRACT(i.raw_payload, CONCAT('$.fields.', f.id)) IS NOT NULL
+              AND JSON_EXTRACT(i.raw_payload, CONCAT('$.fields.', f.id)) != JSON_EXTRACT(JSON_OBJECT('x', NULL), '$.x')
+              AND JSON_UNQUOTE(JSON_EXTRACT(i.raw_payload, CONCAT('$.fields.', f.id))) <> ''
+            LEFT JOIN staging_jira_projects p ON p.id = i.project_id
+            WHERE f.is_custom = 1
+            GROUP BY
+                f.id,
+                f.name,
+                f.schema_type,
+                f.schema_custom,
+                f.field_category,
+                i.project_id,
+                i.issuetype_id,
+                p.project_key,
+                p.name
+            ORDER BY
+                f.id,
+                i.project_id,
+                i.issuetype_id
+        SQL);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to aggregate staged issue field usage for backfill: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($usageStatement === false) {
+        throw new RuntimeException('Failed to iterate staged issue field usage for backfill.');
+    }
+
+    $insertStatement = $pdo->prepare(<<<SQL
+        INSERT INTO staging_jira_project_issue_type_fields (
+            jira_project_id,
+            jira_project_key,
+            jira_project_name,
+            jira_issue_type_id,
+            jira_field_id,
+            jira_field_name,
+            is_custom,
+            is_required,
+            has_default_value,
+            schema_type,
+            schema_custom,
+            field_category,
+            allowed_values_json,
+            raw_field,
+            extracted_at
+        ) VALUES (
+            :jira_project_id,
+            :jira_project_key,
+            :jira_project_name,
+            :jira_issue_type_id,
+            :jira_field_id,
+            :jira_field_name,
+            1,
+            0,
+            NULL,
+            :schema_type,
+            :schema_custom,
+            :field_category,
+            :allowed_values_json,
+            :raw_field,
+            :extracted_at
+        )
+    SQL);
+
+    if ($insertStatement === false) {
+        throw new RuntimeException('Failed to prepare staged issue backfill insert statement.');
+    }
+
+    $updateStatement = $pdo->prepare(<<<SQL
+        UPDATE staging_jira_project_issue_type_fields
+        SET allowed_values_json = :allowed_values_json,
+            raw_field = :raw_field
+        WHERE jira_project_id = :jira_project_id
+          AND jira_issue_type_id = :jira_issue_type_id
+          AND jira_field_id = :jira_field_id
+    SQL);
+
+    if ($updateStatement === false) {
+        throw new RuntimeException('Failed to prepare staged issue backfill update statement.');
+    }
+
+    $inserted = 0;
+    $updated = 0;
+
+    while (($row = $usageStatement->fetch(PDO::FETCH_ASSOC)) !== false) {
+        if (!isset($row['field_id'], $row['project_id'], $row['issuetype_id'])) {
+            continue;
+        }
+
+        $fieldId = trim((string)$row['field_id']);
+        $projectId = trim((string)$row['project_id']);
+        $issueTypeId = trim((string)$row['issuetype_id']);
+
+        if ($fieldId === '' || $projectId === '' || $issueTypeId === '') {
+            continue;
+        }
+
+        $metadata = $fieldsById[$fieldId] ?? null;
+        if ($metadata === null) {
+            continue;
+        }
+
+        $allowedDescriptor = deriveAllowedValuesDescriptorFromIssues($pdo, $fieldId, $projectId, $issueTypeId);
+        $normalizedAllowedValues = normalizeAllowedValuesPayload($allowedDescriptor);
+
+        $rawFieldPayload = [
+            'source' => 'staging_jira_issues',
+            'issue_count' => (int)($row['issue_count'] ?? 0),
+            'schema_type' => $metadata['schema_type'],
+            'schema_custom' => $metadata['schema_custom'],
+        ];
+
+        $key = sprintf('%s|%s|%s', $projectId, $issueTypeId, $fieldId);
+        if (!isset($existingAssignments[$key])) {
+            $insertStatement->execute([
+                'jira_project_id' => $projectId,
+                'jira_project_key' => isset($row['project_key']) ? (string)$row['project_key'] : null,
+                'jira_project_name' => isset($row['project_name']) ? (string)$row['project_name'] : null,
+                'jira_issue_type_id' => $issueTypeId,
+                'jira_field_id' => $fieldId,
+                'jira_field_name' => isset($row['field_name']) ? (string)$row['field_name'] : ($metadata['name'] ?? $fieldId),
+                'schema_type' => $metadata['schema_type'],
+                'schema_custom' => $metadata['schema_custom'],
+                'field_category' => $metadata['field_category'],
+                'allowed_values_json' => $normalizedAllowedValues !== [] ? encodeJsonColumn($normalizedAllowedValues) : null,
+                'raw_field' => encodeJsonColumn($rawFieldPayload),
+                'extracted_at' => $extractedAt,
+            ]);
+
+            $inserted++;
+            continue;
+        }
+
+        $existingValues = $existingAllowedValues[$key] ?? [];
+        if ($existingValues === [] && $normalizedAllowedValues !== []) {
+            $updateStatement->execute([
+                'allowed_values_json' => encodeJsonColumn($normalizedAllowedValues),
+                'raw_field' => encodeJsonColumn($rawFieldPayload),
+                'jira_project_id' => $projectId,
+                'jira_issue_type_id' => $issueTypeId,
+                'jira_field_id' => $fieldId,
+            ]);
+
+            $updated++;
+        }
+    }
+
+    return $inserted + $updated;
+}
+
+function loadJiraFieldMetadata(PDO $pdo): array
+{
+    try {
+        $statement = $pdo->query('SELECT id, name, schema_type, schema_custom, field_category FROM staging_jira_fields WHERE is_custom = 1');
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to load Jira custom field metadata: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement === false) {
+        return [];
+    }
+
+    $fields = [];
+    while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+        if (!isset($row['id'])) {
+            continue;
+        }
+
+        $fieldId = trim((string)$row['id']);
+        if ($fieldId === '') {
+            continue;
+        }
+
+        $fields[$fieldId] = [
+            'id' => $fieldId,
+            'name' => isset($row['name']) ? (string)$row['name'] : null,
+            'schema_type' => isset($row['schema_type']) ? (string)$row['schema_type'] : null,
+            'schema_custom' => isset($row['schema_custom']) ? (string)$row['schema_custom'] : null,
+            'field_category' => isset($row['field_category']) ? (string)$row['field_category'] : null,
+        ];
+    }
+
+    return $fields;
+}
+
+function deriveAllowedValuesDescriptorFromIssues(PDO $pdo, string $fieldId, string $projectId, string $issueTypeId): array
+{
+    static $statement = null;
+
+    if ($statement === null) {
+        $statement = $pdo->prepare(<<<SQL
+            SELECT
+                JSON_EXTRACT(raw_payload, CONCAT('$.fields.', :field_id)) AS value,
+                JSON_UNQUOTE(JSON_EXTRACT(raw_payload, CONCAT('$.fields.', :field_id))) AS scalar_value,
+                JSON_TYPE(JSON_EXTRACT(raw_payload, CONCAT('$.fields.', :field_id))) AS value_type
+            FROM staging_jira_issues
+            WHERE JSON_VALID(raw_payload)
+              AND project_id = :project_id
+              AND issuetype_id = :issuetype_id
+              AND JSON_EXTRACT(raw_payload, CONCAT('$.fields.', :field_id)) IS NOT NULL
+              AND JSON_EXTRACT(raw_payload, CONCAT('$.fields.', :field_id)) != JSON_EXTRACT(JSON_OBJECT('x', NULL), '$.x')
+        SQL);
+
+        if ($statement === false) {
+            throw new RuntimeException('Failed to prepare staged issue allowed values probe statement.');
+        }
+    }
+
+    $statement->execute([
+        'field_id' => $fieldId,
+        'project_id' => $projectId,
+        'issuetype_id' => $issueTypeId,
+    ]);
+
+    $values = [];
+
+    while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+        $valueType = isset($row['value_type']) ? strtoupper((string)$row['value_type']) : '';
+
+        if ($valueType === '' || $valueType === 'NULL' || $valueType === 'MISSING') {
+            continue;
+        }
+
+        if (in_array($valueType, ['STRING', 'NUMBER', 'BOOLEAN'], true)) {
+            $textValue = trim((string)($row['scalar_value'] ?? ''));
+            if ($textValue !== '') {
+                $values[$textValue] = ['id' => null, 'value' => $textValue];
+            }
+            continue;
+        }
+
+        $decoded = null;
+        $rawJson = $row['value'] ?? null;
+        if (is_string($rawJson)) {
+            try {
+                $decoded = json_decode($rawJson, true, 512, JSON_THROW_ON_ERROR);
+            } catch (JsonException $exception) {
+                $decoded = null;
+            }
+        }
+
+        if ($valueType === 'ARRAY' && is_array($decoded)) {
+            foreach ($decoded as $item) {
+                $normalized = normalizeIssueFieldValueItem($item);
+                if ($normalized === null) {
+                    continue;
+                }
+
+                $values[$normalized['value']] = $normalized;
+            }
+            continue;
+        }
+
+        if ($valueType === 'OBJECT' && is_array($decoded)) {
+            $normalized = normalizeIssueFieldValueItem($decoded);
+            if ($normalized !== null) {
+                $values[$normalized['value']] = $normalized;
+            }
+        }
+    }
+
+    $statement->closeCursor();
+
+    if ($values === []) {
+        return [];
+    }
+
+    ksort($values);
+
+    return [
+        'mode' => 'flat',
+        'values' => array_values($values),
+    ];
+}
+
+function normalizeIssueFieldValueItem(mixed $item): ?array
+{
+    if (is_array($item)) {
+        $valueText = null;
+        foreach (['value', 'name', 'label', 'title', 'key'] as $key) {
+            if (isset($item[$key]) && trim((string)$item[$key]) !== '') {
+                $valueText = trim((string)$item[$key]);
+                break;
+            }
+        }
+
+        $id = isset($item['id']) && trim((string)$item['id']) !== '' ? trim((string)$item['id']) : null;
+
+        if ($valueText === null) {
+            $valueText = trim(encodeJsonColumn($item) ?? '');
+        }
+
+        if ($valueText === '') {
+            return null;
+        }
+
+        return [
+            'id' => $id,
+            'value' => $valueText,
+        ];
+    }
+
+    $valueText = trim((string)$item);
+    if ($valueText === '') {
+        return null;
+    }
+
+    return [
+        'id' => null,
+        'value' => $valueText,
+    ];
 }
 
 /**
