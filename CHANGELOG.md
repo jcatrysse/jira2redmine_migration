@@ -33,50 +33,11 @@ All notable changes to this project will be documented in this file.
 - Migrate custom fields script: investigate cascading fields (option-with-child) and how to match them with https://github.com/jcatrysse/redmine_depending_custom_fields
 - Migrate custom fields script: investigate and validate the transformation from Jira Context to separate custom fields in Redmine.
 - Migrate custom fields script: in table migration_mapping_custom_fields, when jira_project_ids or jira_issue_type_ids is empty, set migration_status to IGNORED.
-- Migrate trackers script: in the transform phase, the system seems to match the redmine projects or other information with the staging_redmine tables, while the relevant information about redmine values should come from the mapping tables, they are up to date after a push. 
-- Migrate trackers script: in the transform phase, jira_scope_project_id should be set with the jira project id's, same logic as for proposed_redmine_project_ids, but with the Jira is's.
-- Migrate trackers script: in the transform phase, trackers who have no proposed_redmine_project_ids should be set to IGNORED.
-- Migrate trackers script: seems to call the Redmine projects endpoint to link the tracker to the projects, while the tracker should be linked to the projects in the extended_api tracker endpoint, or use the project endpoint if the extended_api is not available.
-  - Payload on the standard Redmine API for projects: {
-    "project":{
-    "name":"Example name",
-    "identifier":"example_name",
-    "description":"Description of exapmple project",
-    "is_public":false,
-    "parent_id":1,
-    "inherit_members":false,
-    "tracker_ids":[
-    1,
-    2,
-    3,
-    4,
-    5
-    ],
-    "enabled_module_names":[
-    "issue_tracking"
-    ],
-    "custom_field_values":{
-    "1":"VALUE"
-    }
-    }
-    }
 - Fine-tune the attachments, issues, and journals scripts.
 - Migrate issues script: on a rerun, newer issues should be fetched.
 - Migrate issues script: on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
 - Create the missing scripts: labels, (document) categories, milestones, watchers, ...
 - Validate we can push authors and creation timestamps to Redmine.
-- Check if cascading fields are one value, or a value for every member of the family.
-- Prefer moving to Redmine Enumerations and not lists, watchout to map the ID's of the enumerations for easy mapping between issue values.
-
-## [0.0.46] - 2025-12-15
-
-- Pass the mapped Redmine project IDs to the extended API tracker payloads so
-  freshly created trackers are associated with their projects immediately.
-- Revert the project-tracker snapshot back to `staging_redmine_projects` so the
-  push phase only updates associations that exist in the latest Redmine
-  snapshot, preventing erroneous updates against missing project endpoints.
-- Bump `07_migrate_trackers.php` to version `0.0.19` and refresh the README
-  references.
 
 ## [0.0.45] - 2025-12-14
 
@@ -90,6 +51,32 @@ All notable changes to this project will be documented in this file.
   operations still know which associations already exist.
 - Bump `07_migrate_trackers.php` to version `0.0.18` and update the README
   references.
+
+## [0.0.42] - 2025-12-11
+
+- Ensure the Jira create-metadata extractor always requests expanded field
+  definitions so project/issue-type rows capture allowed values, even for
+  system fields, and store those option payloads in the staging table. This
+  keeps `migration_mapping_custom_fields` populated with Jira project/issue
+  scopes and allowed values so the transform phase can propose matching
+  Redmine project/tracker links. Bump the custom field migration script to
+  version `0.0.23` and align the README reference.
+
+## [0.0.44] - 2025-12-13
+
+- Normalise and persist Jira `allowedValues` for every project/issue-type
+  assignment, including cascading selects, by reusing the raw field payload when
+  Atlassian omits the flattened helper column so `allowed_values_json` never
+  stays empty.
+- Backfill missing `allowed_values_json` values in
+  `staging_jira_project_issue_type_fields` during the transform phase and log
+  the number of repaired rows so we can demonstrate the script actually filled
+  the gaps called out in the TODO list.
+- Ensure `migration_mapping_custom_fields` always receives the aggregated Jira
+  project IDs, issue type IDs, and allowed-value descriptors so downstream Redmine
+  proposals have the context they need to set `proposed_project_ids`,
+  `proposed_tracker_ids`, `proposed_possible_values`, `proposed_role_ids`, and
+  `proposed_is_required`.
 
 ## [0.0.43] - 2025-12-12
 

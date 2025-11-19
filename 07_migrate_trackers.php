@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_TRACKERS_SCRIPT_VERSION = '0.0.17';
+const MIGRATE_TRACKERS_SCRIPT_VERSION = '0.0.19';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issue types into staging_jira_issue_types.',
     'redmine' => 'Refresh the Redmine tracker snapshot from the REST API.',
@@ -603,6 +603,7 @@ function runTrackerTransformationPhase(PDO $pdo, array $config): array
             proposed_redmine_name = :proposed_redmine_name,
             proposed_redmine_description = :proposed_redmine_description,
             proposed_default_status_id = :proposed_default_status_id,
+            jira_scope_project_id = :jira_scope_project_id,
             automation_hash = :automation_hash
         WHERE mapping_id = :mapping_id
     SQL);
@@ -634,7 +635,7 @@ function runTrackerTransformationPhase(PDO $pdo, array $config): array
         $jiraIssueTypeName = $row['jira_issue_type_name'] !== null ? (string)$row['jira_issue_type_name'] : null;
         $jiraIssueTypeDescription = $row['jira_issue_type_description'] !== null ? (string)$row['jira_issue_type_description'] : null;
         $jiraIsSubtask = normalizeBooleanFlag($row['jira_is_subtask'] ?? null) ?? false;
-        $jiraProjectId = normalizeString($row['jira_scope_project_id'] ?? null, 255);
+        $currentJiraScopeProjectIds = normalizeJiraProjectIdList($row['jira_scope_project_id'] ?? null) ?? [];
 
         $currentRedmineId = $row['redmine_tracker_id'] !== null ? (int)$row['redmine_tracker_id'] : null;
         $currentNotes = $row['notes'] !== null ? (string)$row['notes'] : null;
@@ -682,9 +683,16 @@ function runTrackerTransformationPhase(PDO $pdo, array $config): array
 
         $associatedJiraProjects = $jiraIssueTypeProjectUsage[$jiraIssueTypeId] ?? [];
 
-        if ($jiraProjectId !== null && !in_array($jiraProjectId, $associatedJiraProjects, true)) {
-            $associatedJiraProjects[] = $jiraProjectId;
+        if ($currentJiraScopeProjectIds !== []) {
+            $associatedJiraProjects = array_merge($associatedJiraProjects, $currentJiraScopeProjectIds);
         }
+
+        if ($associatedJiraProjects !== []) {
+            $associatedJiraProjects = array_values(array_unique($associatedJiraProjects));
+            sort($associatedJiraProjects);
+        }
+
+        $newJiraScopeProjectIds = $associatedJiraProjects;
 
         $mappedProjectIds = [];
         $unmappedProjects = [];
@@ -791,6 +799,13 @@ function runTrackerTransformationPhase(PDO $pdo, array $config): array
             }
         }
 
+        if ($newStatus !== 'MANUAL_INTERVENTION_REQUIRED' && $proposedProjectIds === []) {
+            $newStatus = 'IGNORED';
+            if ($notes === null) {
+                $notes = 'No Redmine project associations available for this Jira issue type.';
+            }
+        }
+
         if ($proposedName === null) {
             $proposedName = $defaultName ?? $jiraIssueTypeId;
         }
@@ -811,6 +826,7 @@ function runTrackerTransformationPhase(PDO $pdo, array $config): array
             || $currentProposedDescription !== $proposedDescription
             || $currentProposedDefaultStatusId !== $proposedDefaultStatusId
             || normalizeProjectIdList($currentProposedProjectIds) !== normalizeProjectIdList($proposedProjectIds)
+            || $currentJiraScopeProjectIds !== $newJiraScopeProjectIds
             || $currentNotes !== $notes
             || $storedAutomationHash !== $newAutomationHash;
 
@@ -827,6 +843,7 @@ function runTrackerTransformationPhase(PDO $pdo, array $config): array
             'proposed_redmine_name' => $proposedName,
             'proposed_redmine_description' => $proposedDescription,
             'proposed_default_status_id' => $proposedDefaultStatusId,
+            'jira_scope_project_id' => encodeJiraProjectIdList($newJiraScopeProjectIds),
             'automation_hash' => $newAutomationHash,
             'mapping_id' => $row['mapping_id'],
         ]);
@@ -896,31 +913,118 @@ function refreshTrackerMetadata(PDO $pdo): void
 
 function buildRedmineTrackerLookup(PDO $pdo): array
 {
+    $lookup = [];
+
+    $registerTracker = static function (?string $name, array $payload) use (&$lookup): void {
+        $normalized = $name !== null ? normalizeString($name, 255) : null;
+        if ($normalized === null) {
+            return;
+        }
+
+        $lookup[strtolower($normalized)] = $payload;
+    };
+
     try {
         $statement = $pdo->query('SELECT id, name, description, default_status_id FROM staging_redmine_trackers');
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to build Redmine tracker lookup: ' . $exception->getMessage(), 0, $exception);
     }
 
+    if ($statement !== false) {
+        /** @var array<int, array<string, mixed>> $rows */
+        $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        foreach ($rows as $row) {
+            $trackerId = normalizeInteger($row['id'] ?? null, 1);
+            $name = normalizeString($row['name'] ?? null, 255);
+            if ($trackerId === null || $name === null) {
+                continue;
+            }
+
+            $description = null;
+            if (isset($row['description']) && is_string($row['description'])) {
+                $trimmed = trim($row['description']);
+                if ($trimmed !== '') {
+                    $description = $trimmed;
+                }
+            }
+
+            $payload = [
+                'id' => $trackerId,
+                'name' => $name,
+                'description' => $description,
+                'default_status_id' => normalizeInteger($row['default_status_id'] ?? null, 1),
+            ];
+
+            $registerTracker($name, $payload);
+        }
+    }
+
+    $sql = <<<SQL
+        SELECT
+            map.redmine_tracker_id,
+            map.proposed_redmine_name,
+            map.proposed_redmine_description,
+            map.proposed_default_status_id,
+            map.jira_issue_type_name,
+            srt.name AS staging_name,
+            srt.description AS staging_description,
+            srt.default_status_id AS staging_default_status_id
+        FROM migration_mapping_trackers map
+        LEFT JOIN staging_redmine_trackers srt ON srt.id = map.redmine_tracker_id
+        WHERE map.redmine_tracker_id IS NOT NULL
+    SQL;
+
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to overlay mapping tracker data: ' . $exception->getMessage(), 0, $exception);
+    }
+
     if ($statement === false) {
-        return [];
+        return $lookup;
     }
 
     /** @var array<int, array<string, mixed>> $rows */
-    $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
-    $lookup = [];
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
     foreach ($rows as $row) {
-        if (!isset($row['name'])) {
+        $trackerId = normalizeInteger($row['redmine_tracker_id'] ?? null, 1);
+        if ($trackerId === null) {
             continue;
         }
 
-        $name = normalizeString($row['name'], 255);
-        if ($name === null) {
-            continue;
+        $description = null;
+        foreach ([$row['staging_description'] ?? null, $row['proposed_redmine_description'] ?? null] as $candidate) {
+            if (!is_string($candidate)) {
+                continue;
+            }
+
+            $trimmed = trim($candidate);
+            if ($trimmed !== '') {
+                $description = $trimmed;
+                break;
+            }
         }
 
-        $lookup[strtolower($name)] = $row;
+        $defaultStatusId = normalizeInteger($row['staging_default_status_id'] ?? null, 1)
+            ?? normalizeInteger($row['proposed_default_status_id'] ?? null, 1);
+
+        $payload = [
+            'id' => $trackerId,
+            'name' => normalizeString($row['staging_name'] ?? $row['proposed_redmine_name'] ?? $row['jira_issue_type_name'] ?? null, 255)
+                ?? sprintf('Tracker #%d', $trackerId),
+            'description' => $description,
+            'default_status_id' => $defaultStatusId,
+        ];
+
+        foreach ([
+            $row['staging_name'] ?? null,
+            $row['proposed_redmine_name'] ?? null,
+            $row['jira_issue_type_name'] ?? null,
+        ] as $candidateName) {
+            $registerTracker($candidateName, $payload);
+        }
     }
 
     return $lookup;
@@ -1025,6 +1129,51 @@ function fetchTrackerMigrationStatusCounts(PDO $pdo): array
     return $results;
 }
 
+function countTrackersInStatuses(PDO $pdo, array $statuses): int
+{
+    $normalizedStatuses = [];
+
+    foreach ($statuses as $status) {
+        if (!is_string($status)) {
+            continue;
+        }
+
+        $trimmed = trim($status);
+        if ($trimmed === '') {
+            continue;
+        }
+
+        $normalizedStatuses[] = $trimmed;
+    }
+
+    $normalizedStatuses = array_values(array_unique($normalizedStatuses));
+
+    if ($normalizedStatuses === []) {
+        return 0;
+    }
+
+    $placeholders = implode(', ', array_fill(0, count($normalizedStatuses), '?'));
+    $sql = sprintf(
+        'SELECT COUNT(*) AS total FROM migration_mapping_trackers WHERE migration_status IN (%s)',
+        $placeholders
+    );
+
+    try {
+        $statement = $pdo->prepare($sql);
+        $statement->execute($normalizedStatuses);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to count tracker statuses: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    $row = $statement->fetch(PDO::FETCH_ASSOC);
+
+    if ($row === false || !isset($row['total'])) {
+        return 0;
+    }
+
+    return (int)$row['total'];
+}
+
 
 
 function resolveDefaultTrackerStatusId(PDO $pdo, array $config): ?int
@@ -1087,6 +1236,8 @@ function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array 
 {
     $pendingTrackers = fetchTrackersReadyForCreation($pdo);
     $pendingCount = count($pendingTrackers);
+    $readyForUpdateCount = countTrackersInStatuses($pdo, ['READY_FOR_UPDATE']);
+    $shouldSynchronizeProjects = ($pendingCount > 0) || ($readyForUpdateCount > 0);
 
     $projectTrackerSnapshot = buildRedmineProjectTrackerSnapshot($pdo);
     $jiraToRedmineProjectLookup = buildJiraToRedmineProjectLookup($pdo);
@@ -1283,13 +1434,16 @@ function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array 
             PHP_EOL
         );
 
-        synchronizeProjectTrackers(
-            $pdo,
-            $redmineClient,
-            $projectTrackerSnapshot,
-            $jiraToRedmineProjectLookup,
-            $isDryRun
-        );
+        if ($shouldSynchronizeProjects) {
+            synchronizeProjectTrackers(
+                $pdo,
+                $redmineClient,
+                $projectTrackerSnapshot,
+                $jiraToRedmineProjectLookup,
+                $isDryRun,
+                $extendedApiPrefix
+            );
+        }
 
         return;
     }
@@ -1404,8 +1558,20 @@ function fetchTrackersReadyForCreation(PDO $pdo): array
 
 function buildRedmineProjectTrackerSnapshot(PDO $pdo): array
 {
+    $sql = <<<SQL
+        SELECT
+            map.redmine_project_id,
+            map.proposed_name,
+            map.jira_project_id,
+            srp.name AS staging_name,
+            srp.raw_payload
+        FROM migration_mapping_projects map
+        LEFT JOIN staging_redmine_projects srp ON srp.id = map.redmine_project_id
+        WHERE map.redmine_project_id IS NOT NULL
+    SQL;
+
     try {
-        $statement = $pdo->query('SELECT id, name, raw_payload FROM staging_redmine_projects');
+        $statement = $pdo->query($sql);
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to read Redmine projects for tracker linkage: ' . $exception->getMessage(), 0, $exception);
     }
@@ -1415,16 +1581,30 @@ function buildRedmineProjectTrackerSnapshot(PDO $pdo): array
     }
 
     /** @var array<int, array<string, mixed>> $rows */
-    $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $snapshot = [];
 
     foreach ($rows as $row) {
-        $projectId = normalizeInteger($row['id'] ?? null, 1);
+        $projectId = normalizeInteger($row['redmine_project_id'] ?? null, 1);
         if ($projectId === null) {
             continue;
         }
 
-        $name = normalizeString($row['name'] ?? null, 255) ?? sprintf('Project #%d', $projectId);
+        $projectName = null;
+        foreach ([
+            $row['staging_name'] ?? null,
+            $row['proposed_name'] ?? null,
+            $row['jira_project_id'] ?? null,
+        ] as $candidate) {
+            $projectName = $candidate !== null ? normalizeString((string)$candidate, 255) : null;
+            if ($projectName !== null) {
+                break;
+            }
+        }
+
+        if ($projectName === null) {
+            $projectName = sprintf('Redmine project #%d', $projectId);
+        }
 
         $trackerIds = [];
         if (isset($row['raw_payload'])) {
@@ -1436,18 +1616,20 @@ function buildRedmineProjectTrackerSnapshot(PDO $pdo): array
 
             if (is_array($decoded) && isset($decoded['trackers']) && is_array($decoded['trackers'])) {
                 foreach ($decoded['trackers'] as $tracker) {
-                    if (is_array($tracker) && isset($tracker['id'])) {
-                        $normalized = normalizeInteger($tracker['id'], 1);
-                        if ($normalized !== null) {
-                            $trackerIds[] = $normalized;
-                        }
+                    if (!is_array($tracker) || !isset($tracker['id'])) {
+                        continue;
+                    }
+
+                    $normalized = normalizeInteger($tracker['id'], 1);
+                    if ($normalized !== null) {
+                        $trackerIds[] = $normalized;
                     }
                 }
             }
         }
 
         $snapshot[$projectId] = [
-            'name' => $name,
+            'name' => $projectName,
             'tracker_ids' => array_values(array_unique($trackerIds)),
         ];
     }
@@ -1539,7 +1721,12 @@ function collectTrackerProjectLinkPlan(PDO $pdo, array $jiraToRedmineProjectLook
             map.jira_issue_type_name,
             map.jira_scope_project_id,
             map.redmine_tracker_id,
-            map.proposed_redmine_project_ids
+            map.proposed_redmine_project_ids,
+            map.migration_status,
+            map.notes,
+            map.proposed_redmine_name,
+            map.proposed_redmine_description,
+            map.proposed_default_status_id
         FROM migration_mapping_trackers map
         WHERE
             map.redmine_tracker_id IS NOT NULL
@@ -1554,7 +1741,7 @@ function collectTrackerProjectLinkPlan(PDO $pdo, array $jiraToRedmineProjectLook
     }
 
     if ($statement === false) {
-        return [[], []];
+        return [[], [], []];
     }
 
     /** @var array<int, array<string, mixed>> $rows */
@@ -1562,18 +1749,40 @@ function collectTrackerProjectLinkPlan(PDO $pdo, array $jiraToRedmineProjectLook
 
     $plan = [];
     $warnings = [];
+    $trackerMetadata = [];
 
     foreach ($rows as $row) {
-        $jiraProjectId = normalizeString($row['jira_scope_project_id'] ?? null, 255);
         $trackerId = normalizeInteger($row['redmine_tracker_id'] ?? null, 1);
-        $mappedProjectIds = normalizeProjectIdList($row['proposed_redmine_project_ids'] ?? null) ?? [];
+        $storedProjectIds = normalizeProjectIdList($row['proposed_redmine_project_ids'] ?? null);
+        $mappedProjectIds = $storedProjectIds ?? [];
+        $jiraProjectIds = normalizeJiraProjectIdList($row['jira_scope_project_id'] ?? null) ?? [];
 
         if ($trackerId === null) {
             continue;
         }
 
-        if ($mappedProjectIds === [] && $jiraProjectId !== null && isset($jiraToRedmineProjectLookup[$jiraProjectId])) {
-            $mappedProjectIds = [$jiraToRedmineProjectLookup[$jiraProjectId]];
+        if (!isset($trackerMetadata[$trackerId])) {
+            $trackerMetadata[$trackerId] = [
+                'mapping_id' => isset($row['mapping_id']) ? (int)$row['mapping_id'] : null,
+                'jira_issue_type_id' => isset($row['jira_issue_type_id']) ? (string)$row['jira_issue_type_id'] : null,
+                'jira_issue_type_name' => $row['jira_issue_type_name'] ?? null,
+                'current_status' => isset($row['migration_status']) ? (string)$row['migration_status'] : null,
+                'current_notes' => $row['notes'] ?? null,
+                'redmine_tracker_id' => $trackerId,
+                'proposed_project_ids' => $storedProjectIds,
+                'proposed_redmine_name' => $row['proposed_redmine_name'] ?? null,
+                'proposed_redmine_description' => $row['proposed_redmine_description'] ?? null,
+                'proposed_default_status_id' => normalizeInteger($row['proposed_default_status_id'] ?? null, 1),
+            ];
+        }
+
+        if ($mappedProjectIds === [] && $jiraProjectIds !== []) {
+            foreach ($jiraProjectIds as $jiraProjectId) {
+                if (isset($jiraToRedmineProjectLookup[$jiraProjectId])) {
+                    $mappedProjectIds[] = $jiraToRedmineProjectLookup[$jiraProjectId];
+                }
+            }
+            $mappedProjectIds = array_values(array_unique($mappedProjectIds));
         }
 
         if ($mappedProjectIds === []) {
@@ -1627,13 +1836,19 @@ function collectTrackerProjectLinkPlan(PDO $pdo, array $jiraToRedmineProjectLook
     }
     unset($details);
 
-    return [$plan, $warnings];
+    return [$plan, $warnings, $trackerMetadata];
 }
 
 
-function synchronizeProjectTrackers(PDO $pdo, Client $redmineClient, array $projectTrackerSnapshot, array $jiraToRedmineProjectLookup, bool $isDryRun): void
-{
-    [$plan, $warnings] = collectTrackerProjectLinkPlan($pdo, $jiraToRedmineProjectLookup, $projectTrackerSnapshot);
+function synchronizeProjectTrackers(
+    PDO $pdo,
+    Client $redmineClient,
+    array $projectTrackerSnapshot,
+    array $jiraToRedmineProjectLookup,
+    bool $isDryRun,
+    ?string $extendedApiPrefix = null
+): void {
+    [$plan, $warnings, $trackerMetadata] = collectTrackerProjectLinkPlan($pdo, $jiraToRedmineProjectLookup, $projectTrackerSnapshot);
 
     foreach ($warnings as $warning) {
         printf("  [warning] %s%s", $warning, PHP_EOL);
@@ -1645,6 +1860,8 @@ function synchronizeProjectTrackers(PDO $pdo, Client $redmineClient, array $proj
     }
 
     printf("  %d project(s) need tracker association updates.%s", count($plan), PHP_EOL);
+
+    $trackerResults = [];
 
     foreach ($plan as $projectId => $details) {
         $projectName = $details['project_name'];
@@ -1668,8 +1885,13 @@ function synchronizeProjectTrackers(PDO $pdo, Client $redmineClient, array $proj
         }
 
         try {
+            $resource = sprintf('projects/%d.json', $projectId);
+            if ($extendedApiPrefix !== null) {
+                $resource = buildExtendedApiPath($extendedApiPrefix, $resource);
+            }
+
             $redmineClient->put(
-                sprintf('projects/%d.json', $projectId),
+                $resource,
                 [
                     'json' => [
                         'project' => [
@@ -1680,6 +1902,17 @@ function synchronizeProjectTrackers(PDO $pdo, Client $redmineClient, array $proj
             );
 
             printf("    [updated] Tracker list now includes %s.%s", implode(', ', $newTrackerIds), PHP_EOL);
+
+            foreach ($pendingTrackerIds as $trackerId) {
+                if (!isset($trackerResults[$trackerId])) {
+                    $trackerResults[$trackerId] = ['success' => [], 'failed' => []];
+                }
+
+                $trackerResults[$trackerId]['success'][] = [
+                    'project_id' => $projectId,
+                    'project_name' => $projectName,
+                ];
+            }
         } catch (Throwable $exception) {
             printf(
                 "    [failed] Could not update project %s (%d): %s%s",
@@ -1688,7 +1921,109 @@ function synchronizeProjectTrackers(PDO $pdo, Client $redmineClient, array $proj
                 $exception->getMessage(),
                 PHP_EOL
             );
+
+            foreach ($pendingTrackerIds as $trackerId) {
+                if (!isset($trackerResults[$trackerId])) {
+                    $trackerResults[$trackerId] = ['success' => [], 'failed' => []];
+                }
+
+                $trackerResults[$trackerId]['failed'][] = [
+                    'project_id' => $projectId,
+                    'project_name' => $projectName,
+                    'error' => $exception->getMessage(),
+                ];
+            }
         }
+    }
+
+    if (!$isDryRun) {
+        finalizeTrackerProjectAssociationStatuses($pdo, $trackerMetadata, $trackerResults);
+    }
+}
+
+function finalizeTrackerProjectAssociationStatuses(PDO $pdo, array $trackerMetadata, array $results): void
+{
+    if ($results === []) {
+        return;
+    }
+
+    $updateStatement = $pdo->prepare(<<<SQL
+        UPDATE migration_mapping_trackers
+        SET
+            migration_status = :migration_status,
+            notes = :notes,
+            automation_hash = :automation_hash
+        WHERE mapping_id = :mapping_id
+    SQL);
+
+    if ($updateStatement === false) {
+        throw new RuntimeException('Failed to prepare tracker status update statement after project synchronization.');
+    }
+
+    foreach ($results as $trackerId => $outcome) {
+        if (!isset($trackerMetadata[$trackerId])) {
+            continue;
+        }
+
+        $metadata = $trackerMetadata[$trackerId];
+        $mappingId = isset($metadata['mapping_id']) ? (int)$metadata['mapping_id'] : null;
+        if ($mappingId === null) {
+            continue;
+        }
+
+        $currentStatus = isset($metadata['current_status']) ? (string)$metadata['current_status'] : null;
+        $currentNotes = isset($metadata['current_notes']) ? (string)$metadata['current_notes'] : null;
+        $failedProjects = $outcome['failed'] ?? [];
+        $successfulProjects = $outcome['success'] ?? [];
+
+        if ($failedProjects !== []) {
+            $newStatus = 'CREATION_FAILED';
+            $noteParts = [];
+            foreach ($failedProjects as $failure) {
+                if (!is_array($failure) || !isset($failure['project_id'], $failure['project_name'], $failure['error'])) {
+                    continue;
+                }
+
+                $noteParts[] = sprintf(
+                    '%s (%d): %s',
+                    (string)$failure['project_name'],
+                    (int)$failure['project_id'],
+                    (string)$failure['error']
+                );
+            }
+
+            if ($noteParts === []) {
+                $noteParts[] = 'Unknown failure while updating tracker associations.';
+            }
+
+            $newNotes = sprintf('Failed to update tracker associations for project(s): %s.', implode('; ', $noteParts));
+        } elseif ($successfulProjects !== []) {
+            $newStatus = 'CREATION_SUCCESS';
+            $newNotes = null;
+        } else {
+            continue;
+        }
+
+        if ($newStatus === $currentStatus && $newNotes === $currentNotes) {
+            continue;
+        }
+
+        $automationHash = computeTrackerAutomationStateHash(
+            $metadata['redmine_tracker_id'] ?? null,
+            $newStatus,
+            $metadata['proposed_project_ids'] ?? null,
+            $metadata['proposed_redmine_name'] ?? null,
+            $metadata['proposed_redmine_description'] ?? null,
+            $metadata['proposed_default_status_id'] ?? null,
+            $newNotes
+        );
+
+        $updateStatement->execute([
+            'migration_status' => $newStatus,
+            'notes' => $newNotes,
+            'automation_hash' => $automationHash,
+            'mapping_id' => $mappingId,
+        ]);
     }
 }
 
@@ -2011,6 +2346,55 @@ function normalizeProjectIdList(mixed $value): ?array
     return $normalized;
 }
 
+function normalizeJiraProjectIdList(mixed $value): ?array
+{
+    if ($value === null) {
+        return null;
+    }
+
+    if (is_string($value)) {
+        $trimmed = trim($value);
+        if ($trimmed === '') {
+            return [];
+        }
+
+        if (str_starts_with($trimmed, '[')) {
+            try {
+                $decoded = json_decode($trimmed, true, 512, JSON_THROW_ON_ERROR);
+            } catch (JsonException $exception) {
+                return null;
+            }
+
+            $value = $decoded;
+        } else {
+            $value = [$trimmed];
+        }
+    }
+
+    if (!is_array($value)) {
+        return null;
+    }
+
+    $normalized = [];
+
+    foreach ($value as $item) {
+        if (is_string($item) || is_numeric($item)) {
+            $normalizedId = normalizeString((string)$item, 255);
+        } else {
+            $normalizedId = null;
+        }
+
+        if ($normalizedId !== null) {
+            $normalized[] = $normalizedId;
+        }
+    }
+
+    $normalized = array_values(array_unique($normalized));
+    sort($normalized);
+
+    return $normalized;
+}
+
 function encodeProjectIdList(?array $projectIds): ?string
 {
     if ($projectIds === null) {
@@ -2027,6 +2411,25 @@ function encodeProjectIdList(?array $projectIds): ?string
         return json_encode($normalized, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     } catch (JsonException $exception) {
         throw new RuntimeException('Failed to encode project ID list: ' . $exception->getMessage(), 0, $exception);
+    }
+}
+
+function encodeJiraProjectIdList(?array $projectIds): ?string
+{
+    if ($projectIds === null) {
+        return null;
+    }
+
+    $normalized = normalizeJiraProjectIdList($projectIds);
+
+    if ($normalized === null) {
+        return null;
+    }
+
+    try {
+        return json_encode($normalized, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } catch (JsonException $exception) {
+        throw new RuntimeException('Failed to encode Jira project ID list: ' . $exception->getMessage(), 0, $exception);
     }
 }
 

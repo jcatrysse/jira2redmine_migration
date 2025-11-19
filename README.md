@@ -582,7 +582,7 @@ php 07_migrate_trackers.php --help
 | Option            | Description                                                                           |
 |-------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                                     |
-| `-V`, `--version` | Display the script version (`0.0.17`).                                                 |
+| `-V`, `--version` | Display the script version (`0.0.18`).                                                 |
 | `--phases=<list>` | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`  | Acknowledge manual tracker creation or confirm the extended API run.                  |
@@ -597,14 +597,22 @@ php 07_migrate_trackers.php --help
    capturing the default status identifier for each tracker.
 3. **Transform (`transform`)** – synchronises `migration_mapping_trackers`, matching Jira and Redmine tracker names
    case-insensitively. Proposed Redmine names, descriptions, and default status IDs are derived automatically while
-   preserving automation hashes so manual overrides survive reruns. When the script cannot infer a default status it
-   routes the row to `MANUAL_INTERVENTION_REQUIRED` with a descriptive note.
+   preserving automation hashes so manual overrides survive reruns. Whenever a mapping row already carries a
+   `redmine_tracker_id`, the transform prefers the mapping-table details and only falls back to the staging snapshot,
+   so reruns immediately after a push still recognise newly created trackers. When the script cannot infer a default
+   status it routes the row to `MANUAL_INTERVENTION_REQUIRED` with a descriptive note.
 4. **Push (`push`)** – with `--use-extended-api`, the script creates missing trackers via the plugin and records the
    results in the mapping table. Without the plugin it prints a detailed checklist so you can create the trackers
    manually before marking them as complete.
 5. **Project linkage** – once tracker IDs are available, the transform phase records the mapped Redmine project IDs from Jira
-   usage in `migration_mapping_trackers.proposed_redmine_project_ids`. The push phase then aligns both project-scoped and
-   global issue types with those recorded projects, adding any missing tracker associations via the standard Redmine API.
+   usage in `migration_mapping_trackers.proposed_redmine_project_ids`. The mapping-table driven project snapshot keeps new
+   Redmine identifiers in play even before you refresh `staging_redmine_projects`, and the push phase then aligns both
+   project-scoped and global issue types with those recorded projects, adding any missing tracker associations via the
+   standard Redmine API.
+
+Because the transform and linkage steps now lean on the mapping tables for tracker and project state, you can safely rerun
+`--phases=transform` immediately after a push without first refreshing the Redmine snapshots; any available staging payloads
+simply enrich the proposals with descriptions and existing tracker lists when present.
 
 > **Configuration tip:** set `migration.trackers.default_redmine_status_id` when every new tracker should share the
 > same default Redmine status. Otherwise the transform phase falls back to the first open status discovered in the
@@ -707,7 +715,7 @@ php 10_migrate_attachments.php --help
 | Option              | Description                                                                     |
 |---------------------|---------------------------------------------------------------------------------|
 | `-h`, `--help`      | Print usage information and exit.                                               |
-| `-V`, `--version`   | Display the script version (`0.0.17`).                                           |
+| `-V`, `--version`   | Display the script version (`0.0.18`).                                           |
 | `--phases=<list>`   | Comma-separated list of phases to run (default: `jira,pull,transform,push`).     |
 | `--skip=<list>`     | Comma-separated list of phases to skip.                                         |
 | `--confirm-pull`    | Required toggle to download from Jira during the pull phase.                    |
