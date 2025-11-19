@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.25';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.26';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
     'usage' => 'Analyse Jira custom field usage statistics from staging data.',
@@ -2328,6 +2328,188 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         $proposedIsForAll = $currentProposedIsForAll ?? true;
         $proposedIsMultiple = $currentProposedIsMultiple ?? false;
         $proposedDefaultValue = $currentProposedDefaultValue;
+
+        if (($jiraProjectIds === [] || $jiraIssueTypeIds === []) && in_array($currentStatus, $allowedStatuses, true)) {
+            $notesParts = [];
+            if ($currentNotes !== null && trim($currentNotes) !== '') {
+                $notesParts[] = trim($currentNotes);
+            }
+
+            $notesParts[] = 'Automatically ignored: jira_project_ids or jira_issue_type_ids is empty; no scope available for mapping.';
+            $notes = implode(' ', array_unique($notesParts));
+
+            $proposedPossibleValuesJson = encodeJsonColumn($proposedPossibleValues);
+            $proposedTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
+            $proposedRoleIdsJson = encodeJsonColumn($proposedRoleIds);
+            $proposedProjectIdsJson = encodeJsonColumn($proposedProjectIds);
+
+            $automationHash = computeCustomFieldAutomationStateHash(
+                $currentRedmineId,
+                'IGNORED',
+                $proposedName,
+                $proposedFormat,
+                $proposedIsRequired,
+                $proposedIsFilter,
+                $proposedIsForAll,
+                $proposedIsMultiple,
+                $proposedPossibleValuesJson,
+                $proposedDefaultValue,
+                $proposedTrackerIdsJson,
+                $proposedRoleIdsJson,
+                $proposedProjectIdsJson,
+                $notes,
+                $currentRedmineParentId
+            );
+
+            $updateStatement->execute([
+                'redmine_custom_field_id' => $currentRedmineId,
+                'migration_status' => 'IGNORED',
+                'notes' => $notes,
+                'proposed_redmine_name' => $proposedName,
+                'proposed_field_format' => $proposedFormat,
+                'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
+                'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
+                'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
+                'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
+                'proposed_possible_values' => $proposedPossibleValuesJson,
+                'proposed_default_value' => $proposedDefaultValue,
+                'proposed_tracker_ids' => $proposedTrackerIdsJson,
+                'proposed_role_ids' => $proposedRoleIdsJson,
+                'proposed_project_ids' => $proposedProjectIdsJson,
+                'automation_hash' => $automationHash,
+                'mapping_id' => (int)$row['mapping_id'],
+            ]);
+
+            if ($automationHash === $currentAutomationHash) {
+                $summary['ignored_unused']++;
+                continue;
+            }
+
+            $summary['ignored_unused']++;
+            continue;
+        }
+
+        $schemaType = $row['jira_schema_type'] !== null ? strtolower((string)$row['jira_schema_type']) : null;
+
+        if (($jiraProjectIds === [] || $jiraIssueTypeIds === []) && in_array($currentStatus, $allowedStatuses, true)) {
+            $notesParts = [];
+            if ($currentNotes !== null && trim($currentNotes) !== '') {
+                $notesParts[] = trim($currentNotes);
+            }
+
+            $notesParts[] = 'Automatically ignored: jira_project_ids or jira_issue_type_ids is empty; no scope available for mapping.';
+            $notes = implode(' ', array_unique($notesParts));
+
+            $proposedPossibleValuesJson = encodeJsonColumn($proposedPossibleValues);
+            $proposedTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
+            $proposedRoleIdsJson = encodeJsonColumn($proposedRoleIds);
+            $proposedProjectIdsJson = encodeJsonColumn($proposedProjectIds);
+
+            $automationHash = computeCustomFieldAutomationStateHash(
+                $currentRedmineId,
+                'IGNORED',
+                $proposedName,
+                $proposedFormat,
+                $proposedIsRequired,
+                $proposedIsFilter,
+                $proposedIsForAll,
+                $proposedIsMultiple,
+                $proposedPossibleValuesJson,
+                $proposedDefaultValue,
+                $proposedTrackerIdsJson,
+                $proposedRoleIdsJson,
+                $proposedProjectIdsJson,
+                $notes,
+                $currentRedmineParentId
+            );
+
+            $updateStatement->execute([
+                'redmine_custom_field_id' => $currentRedmineId,
+                'migration_status' => 'IGNORED',
+                'notes' => $notes,
+                'proposed_redmine_name' => $proposedName,
+                'proposed_field_format' => $proposedFormat,
+                'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
+                'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
+                'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
+                'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
+                'proposed_possible_values' => $proposedPossibleValuesJson,
+                'proposed_default_value' => $proposedDefaultValue,
+                'proposed_tracker_ids' => $proposedTrackerIdsJson,
+                'proposed_role_ids' => $proposedRoleIdsJson,
+                'proposed_project_ids' => $proposedProjectIdsJson,
+                'automation_hash' => $automationHash,
+                'mapping_id' => (int)$row['mapping_id'],
+            ]);
+
+            if ($automationHash === $currentAutomationHash) {
+                $summary['ignored_unused']++;
+                continue;
+            }
+
+            $summary['ignored_unused']++;
+            continue;
+        }
+
+        if ($schemaType === 'object' && in_array($currentStatus, $allowedStatuses, true)) {
+            $notesParts = [];
+            if ($currentNotes !== null && trim($currentNotes) !== '') {
+                $notesParts[] = trim($currentNotes);
+            }
+
+            $notesParts[] = 'Automatically ignored: unsupported Jira schema type "object"; no automated proposal available.';
+            $notes = implode(' ', array_unique($notesParts));
+
+            $proposedPossibleValuesJson = encodeJsonColumn($proposedPossibleValues);
+            $proposedTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
+            $proposedRoleIdsJson = encodeJsonColumn($proposedRoleIds);
+            $proposedProjectIdsJson = encodeJsonColumn($proposedProjectIds);
+
+            $automationHash = computeCustomFieldAutomationStateHash(
+                $currentRedmineId,
+                'IGNORED',
+                $proposedName,
+                $proposedFormat,
+                $proposedIsRequired,
+                $proposedIsFilter,
+                $proposedIsForAll,
+                $proposedIsMultiple,
+                $proposedPossibleValuesJson,
+                $proposedDefaultValue,
+                $proposedTrackerIdsJson,
+                $proposedRoleIdsJson,
+                $proposedProjectIdsJson,
+                $notes,
+                $currentRedmineParentId
+            );
+
+            $updateStatement->execute([
+                'redmine_custom_field_id' => $currentRedmineId,
+                'migration_status' => 'IGNORED',
+                'notes' => $notes,
+                'proposed_redmine_name' => $proposedName,
+                'proposed_field_format' => $proposedFormat,
+                'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
+                'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
+                'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
+                'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
+                'proposed_possible_values' => $proposedPossibleValuesJson,
+                'proposed_default_value' => $proposedDefaultValue,
+                'proposed_tracker_ids' => $proposedTrackerIdsJson,
+                'proposed_role_ids' => $proposedRoleIdsJson,
+                'proposed_project_ids' => $proposedProjectIdsJson,
+                'automation_hash' => $automationHash,
+                'mapping_id' => (int)$row['mapping_id'],
+            ]);
+
+            if ($automationHash === $currentAutomationHash) {
+                $summary['ignored_unused']++;
+                continue;
+            }
+
+            $summary['ignored_unused']++;
+            continue;
+        }
 
         $appCustomAutoStatuses = ['PENDING_ANALYSIS'];
 

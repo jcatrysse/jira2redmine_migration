@@ -636,7 +636,7 @@ php 08_migrate_custom_fields.php --help
 | Option              | Description                                                                           |
 |---------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`      | Print usage information and exit.                                                     |
-| `-V`, `--version`   | Display the script version (`0.0.25`).                                                |
+| `-V`, `--version`   | Display the script version (`0.0.26`).                                                |
 | `--phases=<list>`   | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`     | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`    | Acknowledge manual creations or confirm extended API operations.                      |
@@ -782,7 +782,7 @@ php 11_migrate_issues.php --help
 | Option              | Description                                                                                          |
 |---------------------|------------------------------------------------------------------------------------------------------|
 | `-h`, `--help`      | Print usage information and exit.                                                                    |
-| `-V`, `--version`   | Display the script version (`0.0.25`).                                                                |
+| `-V`, `--version`   | Display the script version (`0.0.26`).                                                                |
 | `--phases=<list>`   | Comma-separated list of phases to run (e.g., `jira`, `transform`, `push`).                           |
 | `--skip=<list>`     | Comma-separated list of phases to skip.                                                              |
 | `--confirm-push`    | Required toggle to allow the push phase to create Redmine issues.                                   |
