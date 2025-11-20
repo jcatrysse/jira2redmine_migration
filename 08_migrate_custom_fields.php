@@ -10,7 +10,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.27';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.31';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
     'usage' => 'Analyse Jira custom field usage statistics from staging data.',
@@ -924,6 +924,15 @@ function normalizeAllowedValuesPayload($payload): array
         return [];
     }
 
+    $transformLabel = static function (string $label): string {
+        $decodedLabel = decodeAppCustomLabelString($label);
+        if ($decodedLabel !== null) {
+            return $decodedLabel;
+        }
+
+        return trim($label);
+    };
+
     $mode = $payload['mode'] ?? null;
     if ($mode === 'flat') {
         $values = [];
@@ -933,7 +942,7 @@ function normalizeAllowedValuesPayload($payload): array
                     continue;
                 }
 
-                $label = isset($value['value']) ? trim((string)$value['value']) : '';
+                $label = isset($value['value']) ? $transformLabel((string)$value['value']) : '';
                 if ($label === '') {
                     continue;
                 }
@@ -960,7 +969,7 @@ function normalizeAllowedValuesPayload($payload): array
                     continue;
                 }
 
-                $value = isset($parent['value']) ? trim((string)$parent['value']) : '';
+                $value = isset($parent['value']) ? $transformLabel((string)$parent['value']) : '';
                 if ($value === '') {
                     continue;
                 }
@@ -1050,7 +1059,8 @@ function mergeAllowedValuesPayloads(array $existing, array $incoming): array
                 continue;
             }
 
-            $label = isset($value['value']) ? trim((string)$value['value']) : '';
+            $rawLabel = isset($value['value']) ? (string)$value['value'] : '';
+            $label = decodeAppCustomLabelString($rawLabel) ?? trim($rawLabel);
             if ($label === '') {
                 continue;
             }
@@ -1066,7 +1076,8 @@ function mergeAllowedValuesPayloads(array $existing, array $incoming): array
                 continue;
             }
 
-            $label = isset($value['value']) ? trim((string)$value['value']) : '';
+            $rawLabel = isset($value['value']) ? (string)$value['value'] : '';
+            $label = decodeAppCustomLabelString($rawLabel) ?? trim($rawLabel);
             if ($label === '') {
                 continue;
             }
@@ -1092,7 +1103,8 @@ function mergeAllowedValuesPayloads(array $existing, array $incoming): array
                     continue;
                 }
 
-                $label = isset($parent['value']) ? trim((string)$parent['value']) : '';
+                $rawLabel = isset($parent['value']) ? (string)$parent['value'] : '';
+                $label = decodeAppCustomLabelString($rawLabel) ?? trim($rawLabel);
                 if ($label === '') {
                     continue;
                 }
@@ -1110,7 +1122,8 @@ function mergeAllowedValuesPayloads(array $existing, array $incoming): array
                     continue;
                 }
 
-                $label = isset($parent['value']) ? trim((string)$parent['value']) : '';
+                $rawLabel = isset($parent['value']) ? (string)$parent['value'] : '';
+                $label = decodeAppCustomLabelString($rawLabel) ?? trim($rawLabel);
                 if ($label === '') {
                     continue;
                 }
@@ -1210,6 +1223,204 @@ function mergeAllowedValuesPayloads(array $existing, array $incoming): array
     }
 
     return $base;
+}
+
+function decodeAppCustomLabelString(string $value): ?string
+{
+    $trimmed = trim($value);
+    if ($trimmed === '') {
+        return null;
+    }
+
+    if ($trimmed[0] !== '{' && $trimmed[0] !== '[') {
+        return null;
+    }
+
+    try {
+        $decoded = json_decode($trimmed, true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException $exception) {
+        return null;
+    }
+
+    if (!is_array($decoded) || !isset($decoded['labels']) || !is_array($decoded['labels'])) {
+        return null;
+    }
+
+    $labels = [];
+    foreach ($decoded['labels'] as $label) {
+        $normalized = trim((string)$label);
+        if ($normalized === '') {
+            continue;
+        }
+
+        $labels[$normalized] = $normalized;
+    }
+
+    if ($labels === []) {
+        return null;
+    }
+
+    $normalizedLabels = array_values($labels);
+    sort($normalizedLabels, SORT_NATURAL | SORT_FLAG_CASE);
+
+    return implode(', ', $normalizedLabels);
+}
+
+/**
+ * @param array<string, mixed> $allowedValues
+ * @return array<int, string>
+ */
+function flattenAllowedValuesForConcatenation(array $allowedValues): array
+{
+    $normalized = normalizeAllowedValuesPayload($allowedValues);
+
+    if ($normalized === []) {
+        return [];
+    }
+
+    if (($normalized['mode'] ?? null) === 'flat') {
+        $values = [];
+
+        foreach ($normalized['values'] as $option) {
+            if (!is_array($option)) {
+                continue;
+            }
+
+            $label = isset($option['value']) ? trim((string)$option['value']) : '';
+            if ($label === '') {
+                continue;
+            }
+
+            $values[$label] = $label;
+        }
+
+        ksort($values);
+
+        return array_values($values);
+    }
+
+    if (($normalized['mode'] ?? null) === 'cascading') {
+        $values = [];
+
+        if (isset($normalized['parents']) && is_array($normalized['parents'])) {
+            foreach ($normalized['parents'] as $parent) {
+                if (!is_array($parent)) {
+                    continue;
+                }
+
+                $label = isset($parent['value']) ? trim((string)$parent['value']) : '';
+                if ($label === '') {
+                    continue;
+                }
+
+                $values[$label] = $label;
+
+                if (!isset($normalized['dependencies']) || !is_array($normalized['dependencies'])) {
+                    continue;
+                }
+
+                $children = $normalized['dependencies'][$label] ?? null;
+                if (!is_array($children)) {
+                    continue;
+                }
+
+                foreach ($children as $child) {
+                    if (!is_array($child)) {
+                        continue;
+                    }
+
+                    $childLabel = isset($child['value']) ? trim((string)$child['value']) : '';
+                    if ($childLabel === '') {
+                        continue;
+                    }
+
+                    $values[sprintf('%s → %s', $label, $childLabel)] = sprintf('%s → %s', $label, $childLabel);
+                }
+            }
+        }
+
+        ksort($values);
+
+        return array_values($values);
+    }
+
+    return [];
+}
+
+/**
+ * @return array<string, array{distinct_sets: int, concatenated_values: array<int, string>}>|array
+ */
+function summarizeAllowedValuesVariations(PDO $pdo): array
+{
+    $sql = 'SELECT jira_field_id, allowed_values_json FROM staging_jira_project_issue_type_fields WHERE allowed_values_json IS NOT NULL';
+
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to summarise allowed values per Jira field: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement === false) {
+        return [];
+    }
+
+    $summaries = [];
+
+    while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+        if (!isset($row['jira_field_id'])) {
+            continue;
+        }
+
+        $fieldId = trim((string)$row['jira_field_id']);
+        if ($fieldId === '') {
+            continue;
+        }
+
+        $descriptor = normalizeAllowedValuesPayload(decodeJsonColumn($row['allowed_values_json'] ?? null));
+        if ($descriptor === []) {
+            continue;
+        }
+
+        try {
+            $hash = json_encode($descriptor, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        } catch (JsonException $exception) {
+            throw new RuntimeException('Failed to encode allowed values descriptor for variation analysis: ' . $exception->getMessage(), 0, $exception);
+        }
+
+        if ($hash === false || $hash === null) {
+            continue;
+        }
+
+        if (!isset($summaries[$fieldId])) {
+            $summaries[$fieldId] = [
+                'hashes' => [],
+                'concatenated_values' => [],
+            ];
+        }
+
+        $summaries[$fieldId]['hashes'][$hash] = $hash;
+
+        $flattened = flattenAllowedValuesForConcatenation($descriptor);
+        if ($flattened !== []) {
+            $summaries[$fieldId]['concatenated_values'] = array_values(array_unique(array_merge(
+                $summaries[$fieldId]['concatenated_values'],
+                $flattened
+            )));
+        }
+    }
+
+    $results = [];
+    foreach ($summaries as $fieldId => $summary) {
+        $values = $summary['concatenated_values'];
+        sort($values);
+
+        $results[$fieldId] = [
+            'distinct_sets' => count($summary['hashes']),
+            'concatenated_values' => $values,
+        ];
+    }
+
+    return $results;
 }
 
 function extractAllowedValuesDescriptorFromField(array $fieldData, ?string $schemaType, ?string $schemaCustom): ?array
@@ -1734,6 +1945,143 @@ function loadJiraFieldMetadata(PDO $pdo): array
     }
 
     return $fields;
+}
+
+/**
+ * @return array<string, array{total_assignments: int, required_assignments: int, default_values: array<int, string>}>
+ */
+function summarizeJiraFieldAssignments(PDO $pdo): array
+{
+    $sql = 'SELECT jira_field_id, is_required, raw_field FROM staging_jira_project_issue_type_fields';
+
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to summarise Jira field assignments: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement === false) {
+        return [];
+    }
+
+    $summaries = [];
+
+    while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+        if (!isset($row['jira_field_id'])) {
+            continue;
+        }
+
+        $fieldId = trim((string)$row['jira_field_id']);
+        if ($fieldId === '') {
+            continue;
+        }
+
+        if (!isset($summaries[$fieldId])) {
+            $summaries[$fieldId] = [
+                'total_assignments' => 0,
+                'required_assignments' => 0,
+                'default_values' => [],
+            ];
+        }
+
+        $summaries[$fieldId]['total_assignments']++;
+
+        $isRequired = normalizeBooleanFlag($row['is_required'] ?? null);
+        if ($isRequired === true) {
+            $summaries[$fieldId]['required_assignments']++;
+        }
+
+        $rawFieldPayload = decodeJsonColumn($row['raw_field'] ?? null);
+        if (is_array($rawFieldPayload)) {
+            $defaultValue = extractDefaultValueFromJiraFieldPayload($rawFieldPayload);
+            if ($defaultValue !== null && trim($defaultValue) !== '') {
+                $summaries[$fieldId]['default_values'][$defaultValue] = $defaultValue;
+            }
+        }
+    }
+
+    return $summaries;
+}
+
+/**
+ * @return array<string, array{searchable: ?bool, navigable: ?bool}>
+ */
+function loadJiraFieldSearchability(PDO $pdo): array
+{
+    $sql = 'SELECT id, raw_payload FROM staging_jira_fields WHERE is_custom = 1';
+
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to load Jira custom field searchability details: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement === false) {
+        return [];
+    }
+
+    $results = [];
+
+    while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+        if (!isset($row['id'])) {
+            continue;
+        }
+
+        $fieldId = trim((string)$row['id']);
+        if ($fieldId === '') {
+            continue;
+        }
+
+        $payload = decodeJsonColumn($row['raw_payload'] ?? null);
+        $results[$fieldId] = [
+            'searchable' => is_array($payload) ? normalizeBooleanFlag($payload['searchable'] ?? null) : null,
+            'navigable' => is_array($payload) ? normalizeBooleanFlag($payload['navigable'] ?? null) : null,
+        ];
+    }
+
+    return $results;
+}
+
+/**
+ * @param array<string, mixed> $rawFieldPayload
+ */
+function extractDefaultValueFromJiraFieldPayload(array $rawFieldPayload): ?string
+{
+    $hasDefaultFlag = normalizeBooleanFlag($rawFieldPayload['hasDefaultValue'] ?? null);
+    if ($hasDefaultFlag === false) {
+        return null;
+    }
+
+    $defaultValue = $rawFieldPayload['defaultValue'] ?? ($rawFieldPayload['default_value'] ?? null);
+    if ($defaultValue === null) {
+        return null;
+    }
+
+    if (is_array($defaultValue)) {
+        foreach (['value', 'name', 'id'] as $key) {
+            if (isset($defaultValue[$key])) {
+                $candidate = trim((string)$defaultValue[$key]);
+                if ($candidate !== '') {
+                    return $candidate;
+                }
+            }
+        }
+
+        try {
+            $encoded = json_encode($defaultValue, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        } catch (JsonException $exception) {
+            return null;
+        }
+
+        return $encoded !== false ? $encoded : null;
+    }
+
+    if (is_scalar($defaultValue)) {
+        $stringValue = trim((string)$defaultValue);
+        return $stringValue === '' ? null : $stringValue;
+    }
+
+    return null;
 }
 
 function deriveAllowedValuesDescriptorFromIssues(PDO $pdo, string $fieldId, string $projectId, string $issueTypeId): array
@@ -2521,6 +2869,9 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
     $jiraProjectToRedmine = buildJiraToRedmineProjectLookup($pdo);
     $jiraIssueTypeToTracker = buildJiraToRedmineTrackerLookup($pdo);
     $mappings = fetchCustomFieldMappingsForTransform($pdo);
+    $jiraAssignmentSummaries = summarizeJiraFieldAssignments($pdo);
+    $jiraSearchability = loadJiraFieldSearchability($pdo);
+    $allowedValuesVariations = summarizeAllowedValuesVariations($pdo);
 
     $updateStatement = $pdo->prepare(<<<SQL
         UPDATE migration_mapping_custom_fields
@@ -2707,6 +3058,34 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         $proposedIsMultiple = $currentProposedIsMultiple ?? false;
         $proposedDefaultValue = $currentProposedDefaultValue;
 
+        $assignmentSummary = $jiraAssignmentSummaries[$jiraFieldId] ?? null;
+        if ($assignmentSummary !== null && $assignmentSummary['total_assignments'] > 0) {
+            if ($assignmentSummary['required_assignments'] === $assignmentSummary['total_assignments']) {
+                $proposedIsRequired = true;
+            } elseif ($assignmentSummary['required_assignments'] === 0) {
+                $proposedIsRequired = false;
+            } else {
+                $infoNotes[] = sprintf(
+                    'Requirement varies across contexts: %d/%d Jira assignments mark the field as required.',
+                    $assignmentSummary['required_assignments'],
+                    $assignmentSummary['total_assignments']
+                );
+                $proposedIsRequired = false;
+            }
+
+            $uniqueDefaultValues = $assignmentSummary['default_values'];
+            if (count($uniqueDefaultValues) === 1) {
+                $proposedDefaultValue = array_values($uniqueDefaultValues)[0];
+            } elseif (count($uniqueDefaultValues) > 1) {
+                $manualReasons[] = 'Multiple default values detected across Jira projects/issue types.';
+            }
+        }
+
+        $searchability = $jiraSearchability[$jiraFieldId] ?? null;
+        if ($searchability !== null && $searchability['searchable'] !== null) {
+            $proposedIsFilter = $searchability['searchable'];
+        }
+
         if (($jiraProjectIds === [] || $jiraIssueTypeIds === []) && in_array($currentStatus, $allowedStatuses, true)) {
             $notesParts = [];
             if ($currentNotes !== null && trim($currentNotes) !== '') {
@@ -2829,66 +3208,6 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             continue;
         }
 
-        if ($schemaType === 'object' && in_array($currentStatus, $allowedStatuses, true)) {
-            $notesParts = [];
-            if ($currentNotes !== null && trim($currentNotes) !== '') {
-                $notesParts[] = trim($currentNotes);
-            }
-
-            $notesParts[] = 'Automatically ignored: unsupported Jira schema type "object"; no automated proposal available.';
-            $notes = implode(' ', array_unique($notesParts));
-
-            $proposedPossibleValuesJson = encodeJsonColumn($proposedPossibleValues);
-            $proposedTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
-            $proposedRoleIdsJson = encodeJsonColumn($proposedRoleIds);
-            $proposedProjectIdsJson = encodeJsonColumn($proposedProjectIds);
-
-            $automationHash = computeCustomFieldAutomationStateHash(
-                $currentRedmineId,
-                'IGNORED',
-                $proposedName,
-                $proposedFormat,
-                $proposedIsRequired,
-                $proposedIsFilter,
-                $proposedIsForAll,
-                $proposedIsMultiple,
-                $proposedPossibleValuesJson,
-                $proposedDefaultValue,
-                $proposedTrackerIdsJson,
-                $proposedRoleIdsJson,
-                $proposedProjectIdsJson,
-                $notes,
-                $currentRedmineParentId
-            );
-
-            $updateStatement->execute([
-                'redmine_custom_field_id' => $currentRedmineId,
-                'migration_status' => 'IGNORED',
-                'notes' => $notes,
-                'proposed_redmine_name' => $proposedName,
-                'proposed_field_format' => $proposedFormat,
-                'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
-                'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
-                'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
-                'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
-                'proposed_possible_values' => $proposedPossibleValuesJson,
-                'proposed_default_value' => $proposedDefaultValue,
-                'proposed_tracker_ids' => $proposedTrackerIdsJson,
-                'proposed_role_ids' => $proposedRoleIdsJson,
-                'proposed_project_ids' => $proposedProjectIdsJson,
-                'automation_hash' => $automationHash,
-                'mapping_id' => (int)$row['mapping_id'],
-            ]);
-
-            if ($automationHash === $currentAutomationHash) {
-                $summary['ignored_unused']++;
-                continue;
-            }
-
-            $summary['ignored_unused']++;
-            continue;
-        }
-
         $appCustomAutoStatuses = ['PENDING_ANALYSIS'];
 
         if ($fieldCategory === 'app_custom') {
@@ -2897,56 +3216,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 continue;
             }
 
-            $manualReasons[] = 'Jira app custom field, mapping must be defined manually.';
-
-            $proposedPossibleValuesJson = encodeJsonColumn($proposedPossibleValues);
-            $proposedTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
-            $proposedRoleIdsJson = encodeJsonColumn($proposedRoleIds);
-            $proposedProjectIdsJson = encodeJsonColumn($proposedProjectIds);
-
-            $notes = implode(' ', array_unique($manualReasons));
-            $newStatus = 'MANUAL_INTERVENTION_REQUIRED';
-            $existingRedmineFieldId = $currentRedmineId;
-
-            $automationHash = computeCustomFieldAutomationStateHash(
-                $existingRedmineFieldId,
-                $newStatus,
-                $proposedName,
-                $proposedFormat,
-                $proposedIsRequired,
-                $proposedIsFilter,
-                $proposedIsForAll,
-                $proposedIsMultiple,
-                $proposedPossibleValuesJson,
-                $proposedDefaultValue,
-                $proposedTrackerIdsJson,
-                $proposedRoleIdsJson,
-                $proposedProjectIdsJson,
-                $notes,
-                $currentRedmineParentId
-            );
-
-            $updateStatement->execute([
-                'redmine_custom_field_id' => $existingRedmineFieldId,
-                'migration_status' => $newStatus,
-                'notes' => $notes,
-                'proposed_redmine_name' => $proposedName,
-                'proposed_field_format' => $proposedFormat,
-                'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
-                'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
-                'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
-                'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
-                'proposed_possible_values' => $proposedPossibleValuesJson,
-                'proposed_default_value' => $proposedDefaultValue,
-                'proposed_tracker_ids' => $proposedTrackerIdsJson,
-                'proposed_role_ids' => $proposedRoleIdsJson,
-                'proposed_project_ids' => $proposedProjectIdsJson,
-                'automation_hash' => $automationHash,
-                'mapping_id' => (int)$row['mapping_id'],
-            ]);
-
-            $summary['manual_review']++;
-            continue;
+            $infoNotes[] = 'Jira app custom field; proposal derived from Jira metadata.';
         }
 
         $infoNotes[] = $usageNote;
@@ -3070,7 +3340,8 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                         continue;
                     }
 
-                    $value = isset($option['value']) ? trim((string)$option['value']) : '';
+                    $rawValue = isset($option['value']) ? (string)$option['value'] : '';
+                    $value = decodeAppCustomLabelString($rawValue) ?? trim($rawValue);
                     $disabled = normalizeBooleanFlag($option['disabled'] ?? null) ?? false;
                     if ($value === '' || $disabled) {
                         continue;
@@ -3084,7 +3355,8 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                         continue;
                     }
 
-                    $value = isset($option['value']) ? trim((string)$option['value']) : '';
+                    $rawValue = isset($option['value']) ? (string)$option['value'] : '';
+                    $value = decodeAppCustomLabelString($rawValue) ?? trim($rawValue);
                     $disabled = normalizeBooleanFlag($option['disabled'] ?? null) ?? false;
                     if ($value === '' || $disabled) {
                         continue;
@@ -3098,6 +3370,22 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 $proposedPossibleValues = array_values($derivedValues);
             } else {
                 $manualReasons[] = 'List-style Jira field requires allowed option values; Jira metadata exposes no allowedValues payload.';
+            }
+        }
+
+        if (
+            isset($allowedValuesVariations[$jiraFieldId])
+            && ($classification['requires_possible_values'] || $isCascadingField)
+            && $allowedValuesVariations[$jiraFieldId]['distinct_sets'] > 1
+            && $allowedValuesVariations[$jiraFieldId]['concatenated_values'] !== []
+        ) {
+            $concatenatedDefault = implode("\n", $allowedValuesVariations[$jiraFieldId]['concatenated_values']);
+            if ($concatenatedDefault !== '') {
+                $proposedDefaultValue = $concatenatedDefault;
+                $infoNotes[] = sprintf(
+                    'Concatenated allowed values from %d distinct Jira option set(s).',
+                    $allowedValuesVariations[$jiraFieldId]['distinct_sets']
+                );
             }
         }
 
@@ -3841,6 +4129,17 @@ function fetchCustomFieldMappingsForTransform(PDO $pdo): array
 
     return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
+function deriveIsMultipleFromSchemaType(?string $schemaType): ?bool
+{
+    $normalizedType = $schemaType !== null ? strtolower($schemaType) : null;
+
+    return match ($normalizedType) {
+        'array', 'object' => true,
+        'any', 'team', 'option', 'sd-customerrequesttype', 'option-with-child', 'option2', 'sd-approvals' => false,
+        default => null,
+    };
+}
+
 /**
  * @return array{field_format: ?string, is_multiple: ?bool, requires_possible_values: bool, requires_manual_review: bool, note: ?string}
  */
@@ -3918,8 +4217,9 @@ function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): ar
     if ($normalizedType !== null) {
         switch ($normalizedType) {
             case 'object':
-                $result['field_format'] = 'text';
-                $result['note'] = 'Object-type Jira field; review inferred proposals in migration_mapping_custom_object.';
+                $result['field_format'] = 'list';
+                $result['requires_possible_values'] = true;
+                $result['note'] = 'Object-type Jira field; using allowed values from Jira create metadata.';
                 break;
             case 'team':
             case 'sd-customerrequesttype':
@@ -3970,6 +4270,11 @@ function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): ar
     } else {
         $result['requires_manual_review'] = true;
         $result['note'] = 'Unable to detect Jira schema type; review manually.';
+    }
+
+    $schemaTypeIsMultiple = deriveIsMultipleFromSchemaType($schemaType);
+    if ($result['is_multiple'] === null && $schemaTypeIsMultiple !== null) {
+        $result['is_multiple'] = $schemaTypeIsMultiple;
     }
 
     return $result;

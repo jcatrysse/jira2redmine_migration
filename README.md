@@ -60,6 +60,11 @@ phase will:
 2. Call the plugin endpoint to create the dependent child field with the Jira
    value dependencies intact.
 
+When Jira projects expose divergent option lists for the same custom field,
+the transform phase now concatenates the unique values (including cascading
+parent/child pairs) into `proposed_default_value` so the eventual Redmine field
+is seeded with the combined set instead of an empty default.
+
 If the plugin is missing, the transform phase keeps cascading Jira fields in
 `MANUAL_INTERVENTION_REQUIRED` and the push preview reminds you to create them
 by hand. No additional configuration is required beyond enabling the extended
@@ -636,7 +641,7 @@ php 08_migrate_custom_fields.php --help
 | Option              | Description                                                                           |
 |---------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`      | Print usage information and exit.                                                     |
-| `-V`, `--version`   | Display the script version (`0.0.26`).                                                |
+| `-V`, `--version`   | Display the script version (`0.0.31`).                                                |
 | `--phases=<list>`   | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`     | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`    | Acknowledge manual creations or confirm extended API operations.                      |
@@ -664,9 +669,11 @@ php 08_migrate_custom_fields.php --help
    is enriched with the aggregated project/issue-type usage and normalised
    allowed values from the create metadata. The transform phase reuses the Jira
    option lists where possible, derives sensible defaults for simple field types,
-   and maps Jira projects and issue types to the corresponding Redmine projects
-   and trackers. Missing project or tracker mappings, unsupported field types, or
-   list-style fields without `allowedValues` data are routed to
+   infers required flags, filterability, default values, and multiplicity from
+   Jira create metadata/schema hints, and maps Jira projects and issue types to
+   the corresponding Redmine projects and trackers. Missing project or tracker
+   mappings, unsupported field types, or list-style fields without
+   `allowedValues` data are routed to
    `MANUAL_INTERVENTION_REQUIRED` with explanatory notes.
 4. **Push (`push`)** – when `--use-extended-api` is supplied the script creates
    standard custom fields through `POST /custom_fields.json` and, when the

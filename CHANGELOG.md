@@ -4,9 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [TODO]
 
-- Migrate custom fields script: 
+- Migrate custom fields script:
     - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
-    - table migration_mapping_custom_fields: proposed_role_ids, proposed_is_required, proposed_is_multiple, proposed_is_filter, proposed_default_value, ... investigate the usage because they are all NULL.
     - table staging_jira_project_issue_type_fields: allowed_values_json, ... check if we have differences between projects, this would require multiple fields in Redmine.
     - investigate cascading fields (option-with-child) and how to match them with https://github.com/jcatrysse/redmine_depending_custom_fields
     - examples Error: [manual] Jira custom field ICT Hardware: Cascading Jira custom field does not expose any child options. Usage snapshot (2025-11-19 13:37:07): non-empty values in 2/3230 issues (values present in 2/3230). Will use the redmine_depending_custom_fields API for dependent list creation. Cascading parents: ["Access Point","Firewall","Laptop","Other","Server","Switch","Workstation"]; dependencies: {"Access Point":[],"Firewall":[],"Laptop":[],"Other":[],"Server":[],"Switch":[],"Workstation":[]} Requires the redmine_depending_custom_fields plugin to migrate cascading selects.
@@ -18,6 +17,39 @@ All notable changes to this project will be documented in this file.
     - on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
 - Create the missing scripts: labels/tags, (document) categories, milestones, watchers, checklists, relations, subtasks, workflows, custom workflows...
 - Validate we can push authors and creation timestamps to Redmine.
+
+## [0.0.50] - 2025-12-20
+
+- Decode Jira app custom object option payloads that embed JSON strings and
+  extract their label lists so `jira_allowed_values` and downstream proposals
+  reflect the actual label names.
+- Allow app-sourced Jira custom fields to progress through automated mapping
+  when metadata is available instead of forcing manual intervention.
+- Bump the custom field migration script version to `0.0.31`.
+
+## [0.0.49] - 2025-12-19
+
+- Allow object-schema Jira fields to derive list proposals from create-metadata allowed values, enabling automation instead of forced ignores.
+- Bump the custom field migration script version to `0.0.30`.
+
+## [0.0.48] - 2025-12-18
+
+- Concatenate Jira option lists from projects/issue types with divergent `allowedValues`
+  into `proposed_default_value` so Redmine creations always see the union of values
+  (parents/children flattened for cascading selects) instead of a `NULL` placeholder.
+- Bump the custom field migration script version to `0.0.29`.
+
+## [0.0.47] - 2025-12-17
+
+- Derive `proposed_is_required`, `proposed_is_filter`, `proposed_is_multiple`, and
+  `proposed_default_value` from Jira create-metadata payloads so
+  `migration_mapping_custom_fields` records surface concrete proposals instead of
+  `NULL` placeholders.
+- Interpret Jira schema types to determine multiplicity (arrays/objects vs.
+  single-value option-like types) in addition to the existing schema.custom
+  hints.
+- Surface the new derivations in the README and bump the custom field migration
+  script version to `0.0.28`.
 
 ## [0.0.46] - 2025-12-15
 
