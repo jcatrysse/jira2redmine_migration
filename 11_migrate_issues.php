@@ -11,7 +11,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use League\HTMLToMarkdown\HtmlConverter;
 
-const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.27';
+const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.29';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issues into staging_jira_issues (and related staging tables).',
     'transform' => 'Reconcile Jira issues with Redmine dependencies to populate migration mappings.',
@@ -923,6 +923,7 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
     $statusLookup = buildStatusLookup($pdo);
     $priorityLookup = buildPriorityLookup($pdo);
     $userLookup = buildUserLookup($pdo);
+    $cascadingFieldIndex = buildCascadingFieldIndex($pdo);
 
     $issueConfig = $config['migration']['issues'] ?? [];
     $defaultProjectId = isset($issueConfig['default_redmine_project_id']) ? normalizeInteger($issueConfig['default_redmine_project_id'], 1) : null;
@@ -1085,6 +1086,10 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
                 if ($security !== null) {
                     $proposedIsPrivate = true;
                 }
+                $proposedCustomFields = buildCascadingCustomFieldPayload($decodedIssue, $cascadingFieldIndex);
+                $proposedCustomFieldPayload = $proposedCustomFields !== []
+                    ? encodeJsonColumn($proposedCustomFields)
+                    : null;
             }
         }
 
@@ -1966,6 +1971,168 @@ function buildAttachmentMetadataIndex(PDO $pdo): array
 
     return $index;
 }
+
+/**
+ * @return array<string, array{parent_field_id: int, child_field_id: int, child_lookup: array<string, array{parent_label: string, parent_id: string|null, child_label: string, child_id: string}>, child_label_lookup: array<string, array<int, string>>}>|
+ *         array{}
+ */
+function buildCascadingFieldIndex(PDO $pdo): array
+{
+    $sql = <<<SQL
+        SELECT jira_field_id, jira_field_name, jira_allowed_values, redmine_custom_field_id, redmine_parent_custom_field_id
+        FROM migration_mapping_custom_fields
+        WHERE proposed_field_format = 'depending_list'
+          AND redmine_custom_field_id IS NOT NULL
+          AND redmine_parent_custom_field_id IS NOT NULL
+          AND migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS', 'READY_FOR_UPDATE', 'READY_FOR_CREATION')
+    SQL;
+
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to build cascading field index: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement === false) {
+        throw new RuntimeException('Failed to build cascading field index.');
+    }
+
+    $index = [];
+    while (true) {
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            break;
+        }
+
+        $jiraFieldId = isset($row['jira_field_id']) ? (string)$row['jira_field_id'] : '';
+        if ($jiraFieldId === '') {
+            continue;
+        }
+
+        $allowedValues = decodeJsonColumn($row['jira_allowed_values'] ?? null);
+        if (!is_array($allowedValues)) {
+            continue;
+        }
+
+        $descriptor = parseCascadingAllowedValues($allowedValues);
+        if ($descriptor === null) {
+            continue;
+        }
+
+        $childLookup = isset($descriptor['child_lookup']) && is_array($descriptor['child_lookup']) ? $descriptor['child_lookup'] : [];
+        $childLabelLookup = isset($descriptor['child_label_lookup']) && is_array($descriptor['child_label_lookup']) ? $descriptor['child_label_lookup'] : [];
+        if ($childLookup === [] && $childLabelLookup === []) {
+            continue;
+        }
+
+        $index[$jiraFieldId] = [
+            'parent_field_id' => (int)$row['redmine_parent_custom_field_id'],
+            'child_field_id' => (int)$row['redmine_custom_field_id'],
+            'child_lookup' => $childLookup,
+            'child_label_lookup' => $childLabelLookup,
+        ];
+    }
+
+    $statement->closeCursor();
+
+    return $index;
+}
+
+/**
+ * @param array<string, mixed> $issuePayload
+ * @param array<string, array{parent_field_id: int, child_field_id: int, child_lookup: array<string, array{parent_label: string, parent_id: string|null, child_label: string, child_id: string}>, child_label_lookup: array<string, array<int, string>>}> $cascadingIndex
+ * @return array<int, array{id: int, value: string}>
+ */
+function buildCascadingCustomFieldPayload(array $issuePayload, array $cascadingIndex): array
+{
+    if ($cascadingIndex === []) {
+        return [];
+    }
+
+    $fields = $issuePayload['fields'] ?? null;
+    if (!is_array($fields)) {
+        return [];
+    }
+
+    $result = [];
+    foreach ($cascadingIndex as $jiraFieldId => $meta) {
+        $rawValue = $fields[$jiraFieldId] ?? null;
+        $selection = extractJiraCascadingSelection($rawValue);
+        if ($selection === null) {
+            continue;
+        }
+
+        $parentLabel = null;
+        $childLabel = null;
+
+        if ($selection['child_id'] !== null && isset($meta['child_lookup'][$selection['child_id']])) {
+            $lookup = $meta['child_lookup'][$selection['child_id']];
+            $parentLabel = $lookup['parent_label'];
+            $childLabel = $lookup['child_label'];
+        } elseif ($selection['child_label'] !== null && isset($meta['child_label_lookup'][$selection['child_label']])) {
+            $potentialParents = $meta['child_label_lookup'][$selection['child_label']];
+            if (count($potentialParents) === 1) {
+                $parentLabel = current($potentialParents);
+                $childLabel = $selection['child_label'];
+            }
+        }
+
+        if ($parentLabel === null || $childLabel === null) {
+            continue;
+        }
+
+        $result[] = [
+            'id' => $meta['parent_field_id'],
+            'value' => $parentLabel,
+        ];
+        $result[] = [
+            'id' => $meta['child_field_id'],
+            'value' => $childLabel,
+        ];
+    }
+
+    return $result;
+}
+
+/**
+ * @param mixed $rawValue
+ * @return array{child_id: string|null, child_label: string|null}|null
+ */
+function extractJiraCascadingSelection(mixed $rawValue): ?array
+{
+    if (is_array($rawValue)) {
+        $child = $rawValue['child'] ?? null;
+        if (is_array($child)) {
+            $childId = isset($child['id']) ? trim((string)$child['id']) : null;
+            $childLabel = isset($child['value']) ? trim((string)$child['value']) : null;
+            if ($childId !== null || ($childLabel !== null && $childLabel !== '')) {
+                return [
+                    'child_id' => $childId !== '' ? $childId : null,
+                    'child_label' => $childLabel !== '' ? $childLabel : null,
+                ];
+            }
+        }
+
+        $childId = isset($rawValue['id']) ? trim((string)$rawValue['id']) : null;
+        $childLabel = isset($rawValue['value']) ? trim((string)$rawValue['value']) : null;
+        if ($childId !== null || ($childLabel !== null && $childLabel !== '')) {
+            return [
+                'child_id' => $childId !== '' ? $childId : null,
+                'child_label' => $childLabel !== '' ? $childLabel : null,
+            ];
+        }
+    } elseif (is_string($rawValue)) {
+        $trimmed = trim($rawValue);
+        if ($trimmed !== '') {
+            return [
+                'child_id' => $trimmed,
+                'child_label' => null,
+            ];
+        }
+    }
+
+    return null;
+}
 function resolveRedmineProjectId(array $lookup, string $jiraProjectId): ?int
 {
     if (!isset($lookup[$jiraProjectId])) {
@@ -2121,6 +2288,149 @@ function computeIssueAutomationStateHash(
     }
 
     return hash('sha256', $encoded);
+}
+
+/**
+ * @param array<string, mixed> $allowedValues
+ * @return array|null
+ */
+function parseCascadingAllowedValues(array $allowedValues): ?array
+{
+    if (!isset($allowedValues['mode']) || $allowedValues['mode'] !== 'cascading') {
+        return null;
+    }
+
+    $parents = [];
+    $parentIndex = [];
+    if (isset($allowedValues['parents']) && is_array($allowedValues['parents'])) {
+        foreach ($allowedValues['parents'] as $parent) {
+            if (!is_array($parent)) {
+                continue;
+            }
+
+            $value = isset($parent['value']) ? trim((string)$parent['value']) : '';
+            if ($value === '') {
+                continue;
+            }
+
+            $parents[$value] = $value;
+            if (isset($parent['id']) && (string)$parent['id'] !== '') {
+                $parentIndex[$value] = (string)$parent['id'];
+            }
+        }
+    }
+
+    ksort($parents);
+
+    $dependencies = [];
+    $childUnion = [];
+    $childLookup = [];
+    $childLabelLookup = [];
+
+    if (isset($allowedValues['dependencies']) && is_array($allowedValues['dependencies'])) {
+        foreach ($allowedValues['dependencies'] as $parentValue => $children) {
+            $parentKey = trim((string)$parentValue);
+            if ($parentKey === '') {
+                continue;
+            }
+
+            $parentId = $parentIndex[$parentKey] ?? null;
+
+            $normalizedChildren = [];
+            if (is_array($children)) {
+                foreach ($children as $child) {
+                    if (is_array($child)) {
+                        $childValue = isset($child['value']) ? trim((string)$child['value']) : '';
+                        $childId = isset($child['id']) ? trim((string)$child['id']) : null;
+                    } else {
+                        $childValue = trim((string)$child);
+                        $childId = null;
+                    }
+
+                    if ($childValue === '') {
+                        continue;
+                    }
+
+                    $normalizedChildren[$childValue] = $childValue;
+                    $childUnion[$childValue] = $childValue;
+
+                    if ($childId !== null && $childId !== '') {
+                        $childLookup[$childId] = [
+                            'parent_label' => $parentKey,
+                            'parent_id' => $parentId,
+                            'child_label' => $childValue,
+                            'child_id' => $childId,
+                        ];
+                    }
+
+                    if (!isset($childLabelLookup[$childValue])) {
+                        $childLabelLookup[$childValue] = [];
+                    }
+                    $childLabelLookup[$childValue][$parentKey] = $parentKey;
+                }
+            }
+
+            ksort($normalizedChildren);
+            $dependencies[$parentKey] = array_values($normalizedChildren);
+        }
+    }
+
+    foreach (array_keys($parents) as $parentValue) {
+        if (!isset($dependencies[$parentValue])) {
+            $dependencies[$parentValue] = [];
+        }
+    }
+
+    ksort($dependencies);
+    ksort($childUnion);
+
+    return [
+        'parents' => array_values($parents),
+        'dependencies' => $dependencies,
+        'child_values' => array_values($childUnion),
+        'parent_index' => $parentIndex,
+        'child_lookup' => $childLookup,
+        'child_label_lookup' => array_map('array_values', $childLabelLookup),
+    ];
+}
+
+function decodeJsonColumn(mixed $value): mixed
+{
+    if ($value === null) {
+        return null;
+    }
+
+    if (is_array($value)) {
+        return $value;
+    }
+
+    $stringValue = trim((string)$value);
+    if ($stringValue === '') {
+        return null;
+    }
+
+    try {
+        return json_decode($stringValue, true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException $exception) {
+        return $stringValue;
+    }
+}
+
+function encodeJsonColumn(mixed $value): ?string
+{
+    if ($value === null) {
+        return null;
+    }
+
+    if (is_string($value)) {
+        return $value;
+    }
+
+    try {
+        return json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } catch (JsonException $exception) {
+        throw new RuntimeException('Failed to encode JSON column value: ' . $exception->getMessage(), 0, $exception);
+    }
 }
 
 function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string

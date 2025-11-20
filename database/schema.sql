@@ -442,6 +442,7 @@ CREATE TABLE `migration_mapping_custom_fields` (
                                                    `proposed_is_for_all` BOOLEAN NULL,
                                                    `proposed_is_multiple` BOOLEAN NULL,
                                                    `proposed_possible_values` JSON NULL,
+                                                   `proposed_value_dependencies` JSON NULL,
                                                    `proposed_default_value` TEXT NULL,
                                                    `proposed_tracker_ids` JSON NULL,
                                                    `proposed_role_ids` JSON NULL,

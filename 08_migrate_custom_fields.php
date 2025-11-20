@@ -10,7 +10,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.31';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.52';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
     'usage' => 'Analyse Jira custom field usage statistics from staging data.',
@@ -2382,6 +2382,7 @@ function parseCascadingAllowedValues(array $allowedValues): ?array
     }
 
     $parents = [];
+    $parentIndex = [];
     if (isset($allowedValues['parents']) && is_array($allowedValues['parents'])) {
         foreach ($allowedValues['parents'] as $parent) {
             if (!is_array($parent)) {
@@ -2394,6 +2395,9 @@ function parseCascadingAllowedValues(array $allowedValues): ?array
             }
 
             $parents[$value] = $value;
+            if (isset($parent['id']) && (string)$parent['id'] !== '') {
+                $parentIndex[$value] = (string)$parent['id'];
+            }
         }
     }
 
@@ -2401,6 +2405,8 @@ function parseCascadingAllowedValues(array $allowedValues): ?array
 
     $dependencies = [];
     $childUnion = [];
+    $childLookup = [];
+    $childLabelLookup = [];
 
     if (isset($allowedValues['dependencies']) && is_array($allowedValues['dependencies'])) {
         foreach ($allowedValues['dependencies'] as $parentValue => $children) {
@@ -2409,13 +2415,17 @@ function parseCascadingAllowedValues(array $allowedValues): ?array
                 continue;
             }
 
+            $parentId = $parentIndex[$parentKey] ?? null;
+
             $normalizedChildren = [];
             if (is_array($children)) {
                 foreach ($children as $child) {
                     if (is_array($child)) {
                         $childValue = isset($child['value']) ? trim((string)$child['value']) : '';
+                        $childId = isset($child['id']) ? trim((string)$child['id']) : null;
                     } else {
                         $childValue = trim((string)$child);
+                        $childId = null;
                     }
 
                     if ($childValue === '') {
@@ -2424,6 +2434,20 @@ function parseCascadingAllowedValues(array $allowedValues): ?array
 
                     $normalizedChildren[$childValue] = $childValue;
                     $childUnion[$childValue] = $childValue;
+
+                    if ($childId !== null && $childId !== '') {
+                        $childLookup[$childId] = [
+                            'parent_label' => $parentKey,
+                            'parent_id' => $parentId,
+                            'child_label' => $childValue,
+                            'child_id' => $childId,
+                        ];
+                    }
+
+                    if (!isset($childLabelLookup[$childValue])) {
+                        $childLabelLookup[$childValue] = [];
+                    }
+                    $childLabelLookup[$childValue][$parentKey] = $parentKey;
                 }
             }
 
@@ -2445,6 +2469,9 @@ function parseCascadingAllowedValues(array $allowedValues): ?array
         'parents' => array_values($parents),
         'dependencies' => $dependencies,
         'child_values' => array_values($childUnion),
+        'parent_index' => $parentIndex,
+        'child_lookup' => $childLookup,
+        'child_label_lookup' => array_map('array_values', $childLabelLookup),
     ];
 }
 
@@ -2970,6 +2997,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             proposed_is_for_all = :proposed_is_for_all,
             proposed_is_multiple = :proposed_is_multiple,
             proposed_possible_values = :proposed_possible_values,
+            proposed_value_dependencies = :proposed_value_dependencies,
             proposed_default_value = :proposed_default_value,
             proposed_tracker_ids = :proposed_tracker_ids,
             proposed_role_ids = :proposed_role_ids,
@@ -3015,6 +3043,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         $currentProposedIsForAll = normalizeBooleanFlag($row['proposed_is_for_all'] ?? null);
         $currentProposedIsMultiple = normalizeBooleanFlag($row['proposed_is_multiple'] ?? null);
         $currentProposedPossibleValuesRaw = isset($row['proposed_possible_values']) ? (string)$row['proposed_possible_values'] : null;
+        $currentProposedValueDependenciesRaw = isset($row['proposed_value_dependencies']) ? (string)$row['proposed_value_dependencies'] : null;
         $currentProposedDefaultValue = isset($row['proposed_default_value']) ? (string)$row['proposed_default_value'] : null;
         $currentProposedTrackerIdsRaw = isset($row['proposed_tracker_ids']) ? (string)$row['proposed_tracker_ids'] : null;
         $currentProposedRoleIdsRaw = isset($row['proposed_role_ids']) ? (string)$row['proposed_role_ids'] : null;
@@ -3042,6 +3071,11 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             }
         } else {
             $proposedPossibleValues = null;
+        }
+
+        $proposedValueDependencies = decodeJsonColumn($currentProposedValueDependenciesRaw);
+        if (!is_array($proposedValueDependencies) || $proposedValueDependencies === []) {
+            $proposedValueDependencies = null;
         }
 
         $decodedTrackerIds = decodeJsonColumn($currentProposedTrackerIdsRaw);
@@ -3109,6 +3143,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             $currentProposedIsForAll,
             $currentProposedIsMultiple,
             $currentProposedPossibleValuesRaw,
+            $currentProposedValueDependenciesRaw,
             $currentProposedDefaultValue,
             $currentProposedTrackerIdsRaw,
             $currentProposedRoleIdsRaw,
@@ -3180,6 +3215,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             $notes = implode(' ', array_unique($notesParts));
 
             $proposedPossibleValuesJson = encodeJsonColumn($proposedPossibleValues);
+            $proposedValueDependenciesJson = encodeJsonColumn($proposedValueDependencies);
             $proposedTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
             $proposedRoleIdsJson = encodeJsonColumn($proposedRoleIds);
             $proposedProjectIdsJson = encodeJsonColumn($proposedProjectIds);
@@ -3194,6 +3230,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 $proposedIsForAll,
                 $proposedIsMultiple,
                 $proposedPossibleValuesJson,
+                $proposedValueDependenciesJson,
                 $proposedDefaultValue,
                 $proposedTrackerIdsJson,
                 $proposedRoleIdsJson,
@@ -3213,6 +3250,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
                 'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
                 'proposed_possible_values' => $proposedPossibleValuesJson,
+                'proposed_value_dependencies' => $proposedValueDependenciesJson,
                 'proposed_default_value' => $proposedDefaultValue,
                 'proposed_tracker_ids' => $proposedTrackerIdsJson,
                 'proposed_role_ids' => $proposedRoleIdsJson,
@@ -3242,6 +3280,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             $notes = implode(' ', array_unique($notesParts));
 
             $proposedPossibleValuesJson = encodeJsonColumn($proposedPossibleValues);
+            $proposedValueDependenciesJson = encodeJsonColumn($proposedValueDependencies);
             $proposedTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
             $proposedRoleIdsJson = encodeJsonColumn($proposedRoleIds);
             $proposedProjectIdsJson = encodeJsonColumn($proposedProjectIds);
@@ -3256,6 +3295,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 $proposedIsForAll,
                 $proposedIsMultiple,
                 $proposedPossibleValuesJson,
+                $proposedValueDependenciesJson,
                 $proposedDefaultValue,
                 $proposedTrackerIdsJson,
                 $proposedRoleIdsJson,
@@ -3275,6 +3315,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
                 'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
                 'proposed_possible_values' => $proposedPossibleValuesJson,
+                'proposed_value_dependencies' => $proposedValueDependenciesJson,
                 'proposed_default_value' => $proposedDefaultValue,
                 'proposed_tracker_ids' => $proposedTrackerIdsJson,
                 'proposed_role_ids' => $proposedRoleIdsJson,
@@ -3345,6 +3386,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             $notes = implode(' ', array_unique($notesParts));
 
             $proposedPossibleValuesJson = encodeJsonColumn($proposedPossibleValues);
+            $proposedValueDependenciesJson = encodeJsonColumn($proposedValueDependencies);
             $proposedTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
             $proposedRoleIdsJson = encodeJsonColumn($proposedRoleIds);
             $proposedProjectIdsJson = encodeJsonColumn($proposedProjectIds);
@@ -3359,6 +3401,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 $proposedIsForAll,
                 $proposedIsMultiple,
                 $proposedPossibleValuesJson,
+                $proposedValueDependenciesJson,
                 $proposedDefaultValue,
                 $proposedTrackerIdsJson,
                 $proposedRoleIdsJson,
@@ -3378,6 +3421,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
                 'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
                 'proposed_possible_values' => $proposedPossibleValuesJson,
+                'proposed_value_dependencies' => $proposedValueDependenciesJson,
                 'proposed_default_value' => $proposedDefaultValue,
                 'proposed_tracker_ids' => $proposedTrackerIdsJson,
                 'proposed_role_ids' => $proposedRoleIdsJson,
@@ -3407,12 +3451,16 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
 
                 if ($cascadingDescriptor['child_values'] === []) {
                     $manualReasons[] = 'Cascading Jira custom field does not expose any child options.';
-                } else {
-                    $proposedPossibleValues = $cascadingDescriptor['child_values'];
                 }
 
                 if ($cascadingDescriptor['parents'] === []) {
                     $manualReasons[] = 'Cascading Jira custom field does not expose any parent options.';
+                } else {
+                    $proposedPossibleValues = $cascadingDescriptor['parents'];
+                }
+
+                if ($cascadingDescriptor['dependencies'] !== []) {
+                    $proposedValueDependencies = $cascadingDescriptor['dependencies'];
                 }
 
                 $infoNotes[] = 'Will use the redmine_depending_custom_fields API for dependent list creation.';
@@ -3645,6 +3693,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         $notes = $notesParts !== [] ? implode(' ', array_unique(array_map('trim', $notesParts))) : null;
 
         $proposedPossibleValuesJson = encodeJsonColumn($proposedPossibleValues);
+        $proposedValueDependenciesJson = encodeJsonColumn($proposedValueDependencies);
         $proposedTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
         $proposedRoleIdsJson = encodeJsonColumn($proposedRoleIds);
         $proposedProjectIdsJson = encodeJsonColumn($proposedProjectIds);
@@ -3659,6 +3708,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             $proposedIsForAll,
             $proposedIsMultiple,
             $proposedPossibleValuesJson,
+            $proposedValueDependenciesJson,
             $proposedDefaultValue,
             $proposedTrackerIdsJson,
             $proposedRoleIdsJson,
@@ -3678,6 +3728,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
             'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
             'proposed_possible_values' => $proposedPossibleValuesJson,
+            'proposed_value_dependencies' => $proposedValueDependenciesJson,
             'proposed_default_value' => $proposedDefaultValue,
             'proposed_tracker_ids' => $proposedTrackerIdsJson,
             'proposed_role_ids' => $proposedRoleIdsJson,
@@ -4104,6 +4155,7 @@ function computeObjectProposalHash(
     ?string $keySourcePath,
     string $notes
 ): string {
+    // Notes are intentionally excluded from the automation hash to avoid noise from manual iterations.
     $payload = [
         'field_id' => $fieldId,
         'schema_custom' => $schemaCustom,
@@ -4251,6 +4303,7 @@ function fetchCustomFieldMappingsForTransform(PDO $pdo): array
             map.proposed_is_for_all,
             map.proposed_is_multiple,
             map.proposed_possible_values,
+            map.proposed_value_dependencies,
             map.proposed_default_value,
             map.proposed_tracker_ids,
             map.proposed_role_ids,
@@ -4442,6 +4495,7 @@ function computeCustomFieldAutomationStateHash(
     ?bool $proposedIsForAll,
     ?bool $proposedIsMultiple,
     ?string $proposedPossibleValues,
+    ?string $proposedValueDependencies,
     ?string $proposedDefaultValue,
     ?string $proposedTrackerIds,
     ?string $proposedRoleIds,
@@ -4449,21 +4503,22 @@ function computeCustomFieldAutomationStateHash(
     ?string $notes,
     ?int $redmineParentCustomFieldId = null
 ): string {
+    // Notes are intentionally excluded from the automation hash to avoid noise from manual iterations.
     $payload = [
         'redmine_custom_field_id' => $redmineCustomFieldId,
         'migration_status' => $migrationStatus,
-        'proposed_redmine_name' => $proposedName,
-        'proposed_field_format' => $proposedFieldFormat,
+        'proposed_redmine_name' => normalizeStringForHash($proposedName),
+        'proposed_field_format' => normalizeStringForHash($proposedFieldFormat),
         'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
         'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
         'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
         'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
         'proposed_possible_values' => normalizeJsonForHash($proposedPossibleValues),
-        'proposed_default_value' => $proposedDefaultValue,
+        'proposed_value_dependencies' => normalizeJsonForHash($proposedValueDependencies),
+        'proposed_default_value' => normalizeStringForHash($proposedDefaultValue),
         'proposed_tracker_ids' => normalizeJsonForHash($proposedTrackerIds),
         'proposed_role_ids' => normalizeJsonForHash($proposedRoleIds),
         'proposed_project_ids' => normalizeJsonForHash($proposedProjectIds),
-        'notes' => $notes,
         'redmine_parent_custom_field_id' => $redmineParentCustomFieldId,
     ];
 
@@ -4493,11 +4548,65 @@ function normalizeJsonForHash(?string $json): ?string
         return $trimmed;
     }
 
+    $normalized = normalizeStructureForHash($decoded);
+
     try {
-        return json_encode($decoded, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return json_encode($normalized, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     } catch (JsonException $exception) {
         return $trimmed;
     }
+}
+
+/**
+ * @param mixed $value
+ * @return mixed
+ */
+function normalizeStructureForHash(mixed $value): mixed
+{
+    if (!is_array($value)) {
+        return $value;
+    }
+
+    $isSequential = array_keys($value) === range(0, count($value) - 1);
+
+    if ($isSequential) {
+        $normalized = array_map('normalizeStructureForHash', $value);
+
+        $allScalar = array_reduce(
+            $normalized,
+            static fn(bool $carry, mixed $item): bool => $carry && !is_array($item),
+            true
+        );
+
+        if ($allScalar) {
+            sort($normalized, SORT_NATURAL | SORT_FLAG_CASE);
+        }
+
+        return $normalized;
+    }
+
+    $normalized = [];
+    foreach ($value as $key => $item) {
+        $normalized[(string)$key] = normalizeStructureForHash($item);
+    }
+
+    ksort($normalized, SORT_NATURAL | SORT_FLAG_CASE);
+
+    return $normalized;
+}
+
+function normalizeStringForHash(?string $value): ?string
+{
+    if ($value === null) {
+        return null;
+    }
+
+    $trimmed = trim($value);
+    if ($trimmed === '') {
+        return null;
+    }
+
+    return $trimmed;
 }
 
 function fetchCustomFieldMigrationStatusCounts(PDO $pdo): array
@@ -4629,6 +4738,7 @@ function collectCustomFieldUpdatePlan(PDO $pdo): array
             proposed_is_for_all,
             proposed_is_multiple,
             proposed_possible_values,
+            proposed_value_dependencies,
             proposed_default_value,
             proposed_tracker_ids,
             proposed_role_ids,
@@ -4719,6 +4829,7 @@ function collectCustomFieldUpdatePlan(PDO $pdo): array
             'proposed_is_for_all' => normalizeBooleanFlag($row['proposed_is_for_all'] ?? null),
             'proposed_is_multiple' => normalizeBooleanFlag($row['proposed_is_multiple'] ?? null),
             'proposed_possible_values' => $row['proposed_possible_values'] ?? null,
+            'proposed_value_dependencies' => $row['proposed_value_dependencies'] ?? null,
             'proposed_default_value' => $row['proposed_default_value'] ?? null,
             'proposed_role_ids' => $row['proposed_role_ids'] ?? null,
             'target_project_ids' => $mergedProjects,
@@ -4827,6 +4938,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             $proposedIsForAll = normalizeBooleanFlag($field['proposed_is_for_all'] ?? null) ?? true;
             $proposedIsMultiple = normalizeBooleanFlag($field['proposed_is_multiple'] ?? null) ?? false;
             $proposedPossibleValues = decodeJsonColumn($field['proposed_possible_values'] ?? null);
+            $proposedValueDependencies = decodeJsonColumn($field['proposed_value_dependencies'] ?? null);
             $proposedDefaultValue = $field['proposed_default_value'] ?? null;
             $proposedTrackerIds = decodeJsonColumn($field['proposed_tracker_ids'] ?? null);
             $proposedRoleIds = decodeJsonColumn($field['proposed_role_ids'] ?? null);
@@ -4844,6 +4956,46 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             $effectiveFormat = $proposedFormat ?? 'string';
             $isDependingPreview = strtolower($effectiveFormat) === 'depending_list';
             $dependingPreviewDescriptor = $isDependingPreview ? parseCascadingAllowedValues($jiraAllowedValuesPreview) : null;
+            if ($isDependingPreview && $dependingPreviewDescriptor === null && is_array($proposedValueDependencies)) {
+                $normalizedDependencies = [];
+                $childUnion = [];
+
+                foreach ($proposedValueDependencies as $parentKey => $children) {
+                    $parentLabel = trim((string)$parentKey);
+                    if ($parentLabel === '') {
+                        continue;
+                    }
+
+                    $normalizedDependencies[$parentLabel] = [];
+                    if (!is_array($children)) {
+                        continue;
+                    }
+
+                    foreach ($children as $child) {
+                        $childLabel = is_array($child)
+                            ? (isset($child['value']) ? trim((string)$child['value']) : '')
+                            : trim((string)$child);
+
+                        if ($childLabel === '') {
+                            continue;
+                        }
+
+                        $normalizedDependencies[$parentLabel][] = $childLabel;
+                        $childUnion[$childLabel] = $childLabel;
+                    }
+
+                    sort($normalizedDependencies[$parentLabel]);
+                }
+
+                ksort($normalizedDependencies);
+                ksort($childUnion);
+
+                $dependingPreviewDescriptor = [
+                    'parents' => $proposedPossibleValues ?? array_keys($normalizedDependencies),
+                    'dependencies' => $normalizedDependencies,
+                    'child_values' => array_values($childUnion),
+                ];
+            }
 
             printf(
                 "  - Jira custom field %s (ID: %s) -> Redmine \"%s\" (format: %s).%s",
@@ -4914,6 +5066,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                 proposed_is_for_all = :proposed_is_for_all,
                 proposed_is_multiple = :proposed_is_multiple,
                 proposed_possible_values = :proposed_possible_values,
+                proposed_value_dependencies = :proposed_value_dependencies,
                 proposed_default_value = :proposed_default_value,
                 proposed_tracker_ids = :proposed_tracker_ids,
                 proposed_role_ids = :proposed_role_ids,
@@ -4941,6 +5094,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             $proposedIsForAll = normalizeBooleanFlag($field['proposed_is_for_all'] ?? null) ?? true;
             $proposedIsMultiple = normalizeBooleanFlag($field['proposed_is_multiple'] ?? null) ?? false;
             $proposedPossibleValues = decodeJsonColumn($field['proposed_possible_values'] ?? null);
+            $proposedValueDependencies = decodeJsonColumn($field['proposed_value_dependencies'] ?? null);
             $proposedDefaultValue = $field['proposed_default_value'] ?? null;
             $proposedTrackerIds = decodeJsonColumn($field['proposed_tracker_ids'] ?? null);
             $proposedRoleIds = decodeJsonColumn($field['proposed_role_ids'] ?? null);
@@ -4961,6 +5115,46 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
 
             if ($isDependingField) {
                 $descriptor = parseCascadingAllowedValues($jiraAllowedValues);
+                if ($descriptor === null && $proposedValueDependencies !== null) {
+                    $normalizedDependencies = [];
+                    $childUnion = [];
+
+                    foreach ($proposedValueDependencies as $parentKey => $children) {
+                        $parentLabel = trim((string)$parentKey);
+                        if ($parentLabel === '') {
+                            continue;
+                        }
+
+                        $normalizedDependencies[$parentLabel] = [];
+                        if (!is_array($children)) {
+                            continue;
+                        }
+
+                        foreach ($children as $child) {
+                            $childLabel = is_array($child)
+                                ? (isset($child['value']) ? trim((string)$child['value']) : '')
+                                : trim((string)$child);
+
+                            if ($childLabel === '') {
+                                continue;
+                            }
+
+                            $normalizedDependencies[$parentLabel][] = $childLabel;
+                            $childUnion[$childLabel] = $childLabel;
+                        }
+
+                        sort($normalizedDependencies[$parentLabel]);
+                    }
+
+                    ksort($normalizedDependencies);
+                    ksort($childUnion);
+
+                    $descriptor = [
+                        'parents' => $proposedPossibleValues ?? array_keys($normalizedDependencies),
+                        'dependencies' => $normalizedDependencies,
+                        'child_values' => array_values($childUnion),
+                    ];
+                }
                 if ($descriptor === null || $descriptor['parents'] === [] || $descriptor['child_values'] === []) {
                     $errorMessage = 'Unable to derive cascading dependencies from Jira metadata. Review the allowedValues payload.';
                     $automationHash = computeCustomFieldAutomationStateHash(
@@ -4973,6 +5167,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                         $proposedIsForAll,
                         $proposedIsMultiple,
                         encodeJsonColumn($proposedPossibleValues),
+                        encodeJsonColumn($proposedValueDependencies),
                         $proposedDefaultValue,
                         encodeJsonColumn($proposedTrackerIds),
                         encodeJsonColumn($proposedRoleIds),
@@ -4993,6 +5188,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                         'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
                         'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
                         'proposed_possible_values' => encodeJsonColumn($proposedPossibleValues),
+                        'proposed_value_dependencies' => encodeJsonColumn($proposedValueDependencies),
                         'proposed_default_value' => $proposedDefaultValue,
                         'proposed_tracker_ids' => encodeJsonColumn($proposedTrackerIds),
                         'proposed_role_ids' => encodeJsonColumn($proposedRoleIds),
@@ -5037,6 +5233,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                             $proposedIsForAll,
                             $proposedIsMultiple,
                             encodeJsonColumn($proposedPossibleValues),
+                            encodeJsonColumn($proposedValueDependencies),
                             $proposedDefaultValue,
                             encodeJsonColumn($proposedTrackerIds),
                             encodeJsonColumn($proposedRoleIds),
@@ -5057,6 +5254,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                             'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
                             'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
                             'proposed_possible_values' => encodeJsonColumn($proposedPossibleValues),
+                            'proposed_value_dependencies' => encodeJsonColumn($proposedValueDependencies),
                             'proposed_default_value' => $proposedDefaultValue,
                             'proposed_tracker_ids' => encodeJsonColumn($proposedTrackerIds),
                             'proposed_role_ids' => encodeJsonColumn($proposedRoleIds),
@@ -5130,6 +5328,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                             $proposedIsForAll,
                             $proposedIsMultiple,
                             encodeJsonColumn($proposedPossibleValues),
+                            encodeJsonColumn($proposedValueDependencies),
                             $proposedDefaultValue,
                             encodeJsonColumn($proposedTrackerIds),
                             encodeJsonColumn($proposedRoleIds),
@@ -5150,6 +5349,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                             'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
                             'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
                             'proposed_possible_values' => encodeJsonColumn($proposedPossibleValues),
+                            'proposed_value_dependencies' => encodeJsonColumn($proposedValueDependencies),
                             'proposed_default_value' => $proposedDefaultValue,
                             'proposed_tracker_ids' => encodeJsonColumn($proposedTrackerIds),
                             'proposed_role_ids' => encodeJsonColumn($proposedRoleIds),
@@ -5183,7 +5383,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                         'visible' => true,
                         'parent_custom_field_id' => $redmineParentId,
                         'possible_values' => $proposedPossibleValues ?? $descriptor['child_values'],
-                        'value_dependencies' => $descriptor['dependencies'],
+                        'value_dependencies' => $proposedValueDependencies ?? $descriptor['dependencies'],
                     ],
                 ];
 
@@ -5212,6 +5412,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                         $proposedIsForAll,
                         $proposedIsMultiple,
                         encodeJsonColumn($proposedPossibleValues),
+                        encodeJsonColumn($proposedValueDependencies),
                         $proposedDefaultValue,
                         encodeJsonColumn($proposedTrackerIds),
                         encodeJsonColumn($proposedRoleIds),
@@ -5232,6 +5433,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                         'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
                         'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
                         'proposed_possible_values' => encodeJsonColumn($proposedPossibleValues),
+                        'proposed_value_dependencies' => encodeJsonColumn($proposedValueDependencies),
                         'proposed_default_value' => $proposedDefaultValue,
                         'proposed_tracker_ids' => encodeJsonColumn($proposedTrackerIds),
                         'proposed_role_ids' => encodeJsonColumn($proposedRoleIds),
@@ -5262,6 +5464,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                         $proposedIsForAll,
                         $proposedIsMultiple,
                         encodeJsonColumn($proposedPossibleValues),
+                        encodeJsonColumn($proposedValueDependencies),
                         $proposedDefaultValue,
                         encodeJsonColumn($proposedTrackerIds),
                         encodeJsonColumn($proposedRoleIds),
@@ -5282,6 +5485,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                         'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
                         'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
                         'proposed_possible_values' => encodeJsonColumn($proposedPossibleValues),
+                        'proposed_value_dependencies' => encodeJsonColumn($proposedValueDependencies),
                         'proposed_default_value' => $proposedDefaultValue,
                         'proposed_tracker_ids' => encodeJsonColumn($proposedTrackerIds),
                         'proposed_role_ids' => encodeJsonColumn($proposedRoleIds),
@@ -5352,6 +5556,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                     $proposedIsForAll,
                     $proposedIsMultiple,
                     encodeJsonColumn($proposedPossibleValues),
+                    encodeJsonColumn($proposedValueDependencies),
                     $proposedDefaultValue,
                     encodeJsonColumn($proposedTrackerIds),
                     encodeJsonColumn($proposedRoleIds),
@@ -5372,6 +5577,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                     'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
                     'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
                     'proposed_possible_values' => encodeJsonColumn($proposedPossibleValues),
+                    'proposed_value_dependencies' => encodeJsonColumn($proposedValueDependencies),
                     'proposed_default_value' => $proposedDefaultValue,
                     'proposed_tracker_ids' => encodeJsonColumn($proposedTrackerIds),
                     'proposed_role_ids' => encodeJsonColumn($proposedRoleIds),
@@ -5401,6 +5607,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                     $proposedIsForAll,
                     $proposedIsMultiple,
                     encodeJsonColumn($proposedPossibleValues),
+                    encodeJsonColumn($proposedValueDependencies),
                     $proposedDefaultValue,
                     encodeJsonColumn($proposedTrackerIds),
                     encodeJsonColumn($proposedRoleIds),
@@ -5421,6 +5628,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                     'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
                     'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
                     'proposed_possible_values' => encodeJsonColumn($proposedPossibleValues),
+                    'proposed_value_dependencies' => encodeJsonColumn($proposedValueDependencies),
                     'proposed_default_value' => $proposedDefaultValue,
                     'proposed_tracker_ids' => encodeJsonColumn($proposedTrackerIds),
                     'proposed_role_ids' => encodeJsonColumn($proposedRoleIds),
@@ -5499,6 +5707,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
         $proposedIsForAll = normalizeBooleanFlag($field['proposed_is_for_all'] ?? null) ?? true;
         $proposedIsMultiple = normalizeBooleanFlag($field['proposed_is_multiple'] ?? null) ?? false;
         $proposedPossibleValues = decodeJsonColumn($field['proposed_possible_values'] ?? null);
+        $proposedValueDependencies = decodeJsonColumn($field['proposed_value_dependencies'] ?? null);
         $proposedDefaultValue = $field['proposed_default_value'] ?? null;
         $proposedTrackerIds = decodeJsonColumn($field['proposed_tracker_ids'] ?? null);
         $proposedRoleIds = decodeJsonColumn($field['proposed_role_ids'] ?? null);
@@ -5599,6 +5808,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                 normalizeBooleanFlag($field['proposed_is_for_all'] ?? null) ?? true,
                 normalizeBooleanFlag($field['proposed_is_multiple'] ?? null) ?? false,
                 $field['proposed_possible_values'] ?? null,
+                $field['proposed_value_dependencies'] ?? null,
                 $field['proposed_default_value'] ?? null,
                 $field['proposed_tracker_ids'] ?? null,
                 $field['proposed_role_ids'] ?? null,
@@ -5636,6 +5846,7 @@ function fetchCustomFieldsReadyForCreation(PDO $pdo): array
             proposed_is_for_all,
             proposed_is_multiple,
             proposed_possible_values,
+            proposed_value_dependencies,
             proposed_default_value,
             proposed_tracker_ids,
             proposed_role_ids,
@@ -5747,6 +5958,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
                         $item['proposed_is_for_all'] ?? null,
                         $item['proposed_is_multiple'] ?? null,
                         $item['proposed_possible_values'] ?? null,
+                        $item['proposed_value_dependencies'] ?? null,
                         $item['proposed_default_value'] ?? null,
                         encodeJsonColumn($trackers),
                         $item['proposed_role_ids'] ?? null,
@@ -5795,6 +6007,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
                 $item['proposed_is_for_all'] ?? null,
                 $item['proposed_is_multiple'] ?? null,
                 $item['proposed_possible_values'] ?? null,
+                $item['proposed_value_dependencies'] ?? null,
                 $item['proposed_default_value'] ?? null,
                 encodeJsonColumn($trackers),
                 $item['proposed_role_ids'] ?? null,
@@ -5823,6 +6036,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
                 $item['proposed_is_for_all'] ?? null,
                 $item['proposed_is_multiple'] ?? null,
                 $item['proposed_possible_values'] ?? null,
+                $item['proposed_value_dependencies'] ?? null,
                 $item['proposed_default_value'] ?? null,
                 encodeJsonColumn($trackers),
                 $item['proposed_role_ids'] ?? null,

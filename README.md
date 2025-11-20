@@ -76,6 +76,9 @@ fields: either nested `cascadingOptions` blocks or the flattened Cloud variant
 that links child options to parents through the `optionId` attribute. In both
 cases the resulting parent/child matrix is captured in the staging tables so
 the push phase (or your manual review) has the exact Jira dependencies at hand.
+When issues are transformed later, the migration resolves each Jira child ID
+back to its parent and populates the dependent Redmine parent/child custom
+fields together so the plugin receives a consistent payload.
 
 Example (dry-run to inspect tracker payloads):
 
@@ -641,7 +644,7 @@ php 08_migrate_custom_fields.php --help
 | Option              | Description                                                                           |
 |---------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`      | Print usage information and exit.                                                     |
-| `-V`, `--version`   | Display the script version (`0.0.31`).                                                |
+| `-V`, `--version`   | Display the script version (`0.0.33`).                                                |
 | `--phases=<list>`   | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`     | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`    | Acknowledge manual creations or confirm extended API operations.                      |
@@ -675,6 +678,9 @@ php 08_migrate_custom_fields.php --help
    mappings, unsupported field types, or list-style fields without
    `allowedValues` data are routed to
    `MANUAL_INTERVENTION_REQUIRED` with explanatory notes.
+   Cascading select fields retain parent/child identifiers and dependencies so
+   the push phase (or manual workflows) can create a parent list and depending
+   child list with the original Jira option relationships intact.
 4. **Push (`push`)** – when `--use-extended-api` is supplied the script creates
    standard custom fields through `POST /custom_fields.json` and, when the
    `redmine_depending_custom_fields` plugin is available, provisions cascading
@@ -789,7 +795,7 @@ php 11_migrate_issues.php --help
 | Option              | Description                                                                                          |
 |---------------------|------------------------------------------------------------------------------------------------------|
 | `-h`, `--help`      | Print usage information and exit.                                                                    |
-| `-V`, `--version`   | Display the script version (`0.0.26`).                                                                |
+| `-V`, `--version`   | Display the script version (`0.0.29`).                                                                |
 | `--phases=<list>`   | Comma-separated list of phases to run (e.g., `jira`, `transform`, `push`).                           |
 | `--skip=<list>`     | Comma-separated list of phases to skip.                                                              |
 | `--confirm-push`    | Required toggle to allow the push phase to create Redmine issues.                                   |
@@ -835,7 +841,10 @@ php 11_migrate_issues.php --help
   and attachment links are rewritten to Redmine's `attachment:` syntax (with the
   ADF payload used as a fallback) so operators can review the final text. Time
   tracking values are converted from seconds to hours for the
-  `estimated_hours` column. Manual overrides persist
+  `estimated_hours` column. Cascading select values are resolved via a cached
+  child-to-parent lookup so both the Redmine parent field and its depending
+  child list receive the correct labels when the issue payload is prepared.
+  Manual overrides persist
    across reruns thanks to the automation hash signature – clear it when you
    want the script to resume managing the row.
 3. **Push (`push`)** – lists every row in `READY_FOR_CREATION`, highlighting the

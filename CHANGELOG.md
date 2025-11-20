@@ -5,19 +5,56 @@ All notable changes to this project will be documented in this file.
 ## [TODO]
 
 - Migrate custom fields script:
+    - cascading fields: parent records and fields won't create any more.
+    - table migration_mapping_custom_object doesn't truncate when running the transform phase:
+        - This is normal behaviour, the script provides unique keys, but two of them are NULL
+        - path and key_source_path are NULL: investigate
+    - jira_schema_type = object:
+        - proposed_possible_values should be flattened: example [
+          "Geo_Ocean_III",
+          "Geo_Ocean_IV",
+          "Geo_Ocean_IV, Geo_Ocean_VII",
+          "Geo_Ocean_IX",
+          "Geo_Ocean_V",
+          "Geo_Ocean_VI",
+          "Geo_Ocean_VII",
+          "Geo_Ocean_VII, Geo_Ocean_IV, Geo_Ocean_V, Geo_Ocean_VI, Geo_Ocean_VIII, Geo_Ocean_IX",
+          "Geo_Ocean_VIII"
+          ] 
+        - this means we need to split all values to single values, unique them and order them alphabetically.
+    - cascading fields: parent records and fields won't create any more.
+    - jira_schema_type = array
+      - fields proposed_possible_values is always NULL: values could be retrieved fron jira_allowed_values or a better logic could be applied.
+      - if jira_allowed_values = NULL: set migration_status = IGNORED.
+      - proposed_field_format should be set to 'list'
     - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
     - prefer enumerations over lists in Redmine: both lists and depending_lists.
-    - investigate cascading fields (option-with-child) and how to match them with https://github.com/jcatrysse/redmine_depending_custom_fields
-    - examples Error: [manual] Jira custom field ICT Hardware: Cascading Jira custom field does not expose any child options. Usage snapshot (2025-11-19 13:37:07): non-empty values in 2/3230 issues (values present in 2/3230). Will use the redmine_depending_custom_fields API for dependent list creation. Cascading parents: ["Access Point","Firewall","Laptop","Other","Server","Switch","Workstation"]; dependencies: {"Access Point":[],"Firewall":[],"Laptop":[],"Other":[],"Server":[],"Switch":[],"Workstation":[]} Requires the redmine_depending_custom_fields plugin to migrate cascading selects.
 - General: verify if all automation hashes align with the latest database schemas.
 - Fine-tune the attachments, issues, and journals scripts.
 - Verify ADF to Markdown conversion.
 - Migrate issues script:
     - on a rerun, newer issues should be fetched.
     - on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
-    - cascading fields only save the child, fetch the parent field and value to fill in Redmine. Example customfield_10043
 - Create the missing scripts: labels/tags, (document) categories, milestones, watchers, checklists, relations, subtasks, workflows, custom workflows...
 - Validate we can push authors and creation timestamps to Redmine.
+
+## [0.0.52] - 2025-12-22
+
+- Persist cascading parent/child dependencies in `migration_mapping_custom_fields.proposed_value_dependencies` so transform and push
+  phases can reuse the Redmine-ready map instead of re-parsing Jira payloads.
+- Default cascading custom field proposals to `depending_list`, populate parent options in `proposed_possible_values`, and surface
+  parent/child scope metadata alongside the child mapping.
+- Bump the custom field migration script version to `0.0.34` and extend the schema with the dependency column for depending-list
+  automation.
+ 
+## [0.0.51] - 2025-12-21
+
+- Add first-class cascading custom field handling: detect Jira cascading selects during transform, retain parent/child identifiers, and
+  build a child-to-parent lookup so dependent Redmine lists can be populated consistently via the plugin.
+- Populate Redmine parent and child custom field values during issue transforms by mapping Jira child IDs back to their parent labels,
+  ensuring depending-list payloads are ready for creation or extended API calls.
+- Bump the custom field migration script version to `0.0.33` and the issues migration script version to `0.0.29`, updating the
+  README to match the new cascading workflow guidance.
 
 ## [0.0.50] - 2025-12-20
 
