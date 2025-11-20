@@ -780,8 +780,20 @@ function normalizeJiraOption(array $option): ?array
         'children' => [],
     ];
 
+    // Jira gebruikt in sommige contexten "cascadingOptions",
+    // in andere contexten (zoals jouw raw_field) gewoon "children".
+    $childContainers = [];
+
     if (isset($option['cascadingOptions']) && is_array($option['cascadingOptions'])) {
-        foreach ($option['cascadingOptions'] as $child) {
+        $childContainers[] = $option['cascadingOptions'];
+    }
+
+    if (isset($option['children']) && is_array($option['children'])) {
+        $childContainers[] = $option['children'];
+    }
+
+    foreach ($childContainers as $childrenList) {
+        foreach ($childrenList as $child) {
             if (!is_array($child)) {
                 continue;
             }
@@ -797,12 +809,12 @@ function normalizeJiraOption(array $option): ?array
                 'disabled' => normalizeBooleanFlag($child['disabled'] ?? null) ?? false,
             ];
         }
+    }
 
-        if ($normalized['children'] !== []) {
-            usort($normalized['children'], static function (array $left, array $right): int {
-                return strcmp((string)$left['value'], (string)$right['value']);
-            });
-        }
+    if ($normalized['children'] !== []) {
+        usort($normalized['children'], static function (array $left, array $right): int {
+            return strcmp((string)$left['value'], (string)$right['value']);
+        });
     }
 
     return $normalized;
@@ -2103,7 +2115,7 @@ function deriveAllowedValuesDescriptorFromIssues(PDO $pdo, string $fieldId, stri
         SQL);
 
         if ($statement === false) {
-            throw new RuntimeException('Failed to prepare staged issue allowed values probe statement.');
+            throw new RuntimeException('Failed to prepare staged issue field usage statement for deriveAllowedValuesDescriptorFromIssues().');
         }
     }
 
@@ -2122,14 +2134,19 @@ function deriveAllowedValuesDescriptorFromIssues(PDO $pdo, string $fieldId, stri
             continue;
         }
 
+        // Eenvoudige scalar-waarden (string/nummer/bool) rechtstreeks gebruiken
         if (in_array($valueType, ['STRING', 'NUMBER', 'BOOLEAN'], true)) {
             $textValue = trim((string)($row['scalar_value'] ?? ''));
             if ($textValue !== '') {
-                $values[$textValue] = ['id' => null, 'value' => $textValue];
+                $values[$textValue] = [
+                    'id' => null,
+                    'value' => $textValue,
+                ];
             }
             continue;
         }
 
+        // Voor OBJECT / ARRAY: eerst het JSON-value parsen
         $decoded = null;
         $rawJson = $row['value'] ?? null;
         if (is_string($rawJson)) {
@@ -2140,8 +2157,42 @@ function deriveAllowedValuesDescriptorFromIssues(PDO $pdo, string $fieldId, stri
             }
         }
 
+        if ($decoded === null) {
+            continue;
+        }
+
+        // ARRAY: bv. multi-select, of plugin die een array van objecten teruggeeft
         if ($valueType === 'ARRAY' && is_array($decoded)) {
             foreach ($decoded as $item) {
+                // Speciale case: label-manager-achtige objecten met "labels" array
+                if (is_array($item) && array_key_exists('labels', $item) && is_array($item['labels'])) {
+                    $seen = [];
+
+                    foreach ($item['labels'] as $label) {
+                        $labelText = trim((string)$label);
+                        if ($labelText === '') {
+                            continue;
+                        }
+
+                        // binnen één object dubbele labels negeren
+                        if (isset($seen[$labelText])) {
+                            continue;
+                        }
+                        $seen[$labelText] = true;
+
+                        if (!isset($values[$labelText])) {
+                            $values[$labelText] = [
+                                'id' => null,
+                                'value' => $labelText,
+                            ];
+                        }
+                    }
+
+                    // Dit object niet meer door de generieke normalizer sturen
+                    continue;
+                }
+
+                // Generieke fallback voor "normale" array-items
                 $normalized = normalizeIssueFieldValueItem($item);
                 if ($normalized === null) {
                     continue;
@@ -2149,14 +2200,45 @@ function deriveAllowedValuesDescriptorFromIssues(PDO $pdo, string $fieldId, stri
 
                 $values[$normalized['value']] = $normalized;
             }
+
             continue;
         }
 
+        // OBJECT: bv. single object-waarde (ook hier special-case voor "labels")
         if ($valueType === 'OBJECT' && is_array($decoded)) {
+            // Speciale case: één object met "labels" array
+            if (array_key_exists('labels', $decoded) && is_array($decoded['labels'])) {
+                $seen = [];
+
+                foreach ($decoded['labels'] as $label) {
+                    $labelText = trim((string)$label);
+                    if ($labelText === '') {
+                        continue;
+                    }
+
+                    if (isset($seen[$labelText])) {
+                        continue;
+                    }
+                    $seen[$labelText] = true;
+
+                    if (!isset($values[$labelText])) {
+                        $values[$labelText] = [
+                            'id' => null,
+                            'value' => $labelText,
+                        ];
+                    }
+                }
+
+                continue;
+            }
+
+            // Generieke fallback voor "normale" objecten
             $normalized = normalizeIssueFieldValueItem($decoded);
             if ($normalized !== null) {
                 $values[$normalized['value']] = $normalized;
             }
+
+            continue;
         }
     }
 
@@ -2173,6 +2255,7 @@ function deriveAllowedValuesDescriptorFromIssues(PDO $pdo, string $fieldId, stri
         'values' => array_values($values),
     ];
 }
+
 
 function normalizeIssueFieldValueItem(mixed $item): ?array
 {
@@ -2872,6 +2955,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
     $jiraAssignmentSummaries = summarizeJiraFieldAssignments($pdo);
     $jiraSearchability = loadJiraFieldSearchability($pdo);
     $allowedValuesVariations = summarizeAllowedValuesVariations($pdo);
+    $objectMultiplicity = buildObjectFieldMultiplicityLookup($pdo);
 
     $updateStatement = $pdo->prepare(<<<SQL
         UPDATE migration_mapping_custom_fields
@@ -3228,6 +3312,26 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
 
         if ($classification['is_multiple'] !== null) {
             $proposedIsMultiple = $classification['is_multiple'];
+        }
+
+        // Extra logica voor multipliciteit:
+        // - arrays: altijd multiple
+        // - objecten: gebruik target_is_multiple uit migration_mapping_custom_object indien beschikbaar
+        if ($jiraSchemaType !== null) {
+            $normalizedSchemaType = strtolower($jiraSchemaType);
+
+            if ($normalizedSchemaType === 'array') {
+                // Altijd meerdere waardes mogelijk
+                $proposedIsMultiple = true;
+            } elseif ($normalizedSchemaType === 'object') {
+                // Kijk of we een inferred object mapping hebben
+                if (isset($objectMultiplicity[$jiraFieldId])) {
+                    $fromObjectMapping = normalizeBooleanFlag($objectMultiplicity[$jiraFieldId]);
+                    if ($fromObjectMapping !== null) {
+                        $proposedIsMultiple = $fromObjectMapping;
+                    }
+                }
+            }
         }
 
         $autoIgnoreUnused = $usageTotalIssues > 0 && $usageIssuesWithValue === 0 && $usageIssuesWithNonEmpty === 0;
@@ -4071,6 +4175,54 @@ function buildRedmineCustomFieldLookup(PDO $pdo): array
 
     return $lookup;
 }
+
+/**
+ * Bouwt een lookup voor objectvelden op basis van migration_mapping_custom_object.
+ *
+ * @return array<string, bool>  [jira_field_id => target_is_multiple]
+ */
+function buildObjectFieldMultiplicityLookup(PDO $pdo): array
+{
+    $sql = <<<SQL
+        SELECT jira_field_id, target_is_multiple
+        FROM migration_mapping_custom_object
+        WHERE path IS NULL
+          AND source = 'inferred'
+    SQL;
+
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to build object field multiplicity lookup: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement === false) {
+        return [];
+    }
+
+    $lookup = [];
+
+    while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+        $fieldId = isset($row['jira_field_id']) ? trim((string)$row['jira_field_id']) : '';
+        if ($fieldId === '') {
+            continue;
+        }
+
+        // target_is_multiple is een TINYINT(1) of vergelijkbaar; normaliseer naar bool
+        $rawFlag = $row['target_is_multiple'] ?? null;
+        $flag = normalizeBooleanFlag($rawFlag);
+
+        // Alleen opnemen als we een duidelijke waarde hebben
+        if ($flag !== null) {
+            $lookup[$fieldId] = $flag;
+        }
+    }
+
+    $statement->closeCursor();
+
+    return $lookup;
+}
+
 
 /**
  * @return array<int, array<string, mixed>>

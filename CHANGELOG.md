@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 - Migrate custom fields script:
     - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
-    - table staging_jira_project_issue_type_fields: allowed_values_json, ... check if we have differences between projects, this would require multiple fields in Redmine.
+    - prefer enumerations over lists in Redmine: both lists and depending_lists.
     - investigate cascading fields (option-with-child) and how to match them with https://github.com/jcatrysse/redmine_depending_custom_fields
     - examples Error: [manual] Jira custom field ICT Hardware: Cascading Jira custom field does not expose any child options. Usage snapshot (2025-11-19 13:37:07): non-empty values in 2/3230 issues (values present in 2/3230). Will use the redmine_depending_custom_fields API for dependent list creation. Cascading parents: ["Access Point","Firewall","Laptop","Other","Server","Switch","Workstation"]; dependencies: {"Access Point":[],"Firewall":[],"Laptop":[],"Other":[],"Server":[],"Switch":[],"Workstation":[]} Requires the redmine_depending_custom_fields plugin to migrate cascading selects.
 - General: verify if all automation hashes align with the latest database schemas.
@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - Migrate issues script:
     - on a rerun, newer issues should be fetched.
     - on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
+    - cascading fields only save the child, fetch the parent field and value to fill in Redmine. Example customfield_10043
 - Create the missing scripts: labels/tags, (document) categories, milestones, watchers, checklists, relations, subtasks, workflows, custom workflows...
 - Validate we can push authors and creation timestamps to Redmine.
 
@@ -25,6 +26,7 @@ All notable changes to this project will be documented in this file.
   reflect the actual label names.
 - Allow app-sourced Jira custom fields to progress through automated mapping
   when metadata is available instead of forcing manual intervention.
+- Refactor object values extraction from issues to eliminate NULL and combined values.
 - Bump the custom field migration script version to `0.0.31`.
 
 ## [0.0.49] - 2025-12-19
