@@ -10,7 +10,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.56';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.57';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
     'usage' => 'Analyse Jira custom field usage statistics from staging data.',
@@ -3093,6 +3093,17 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         throw new RuntimeException('Failed to prepare cascading parent insert.');
     }
 
+    $cascadingParentLookup = $pdo->prepare(<<<SQL
+        SELECT mapping_id, redmine_custom_field_id
+        FROM migration_mapping_custom_fields
+        WHERE jira_field_id = :jira_field_id
+        LIMIT 1
+    SQL);
+
+    if ($cascadingParentLookup === false) {
+        throw new RuntimeException('Failed to prepare cascading parent lookup.');
+    }
+
     $summary = [
         'matched' => 0,
         'ready_for_creation' => 0,
@@ -3629,10 +3640,14 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                     ?? sprintf('%s (Parent)', $parentNameBase);
 
                 $parentRedmineId = null;
+                $parentMappingId = null;
                 if (isset($existingMappings[$parentMappingKey])) {
                     $parentRow = $existingMappings[$parentMappingKey];
                     if (isset($parentRow['redmine_custom_field_id']) && $parentRow['redmine_custom_field_id'] !== null) {
                         $parentRedmineId = (int)$parentRow['redmine_custom_field_id'];
+                    }
+                    if (isset($parentRow['mapping_id']) && $parentRow['mapping_id'] !== null) {
+                        $parentMappingId = (int)$parentRow['mapping_id'];
                     }
                 } elseif ($cascadingDescriptor['parents'] !== []) {
                     $parentNotes = sprintf('Synthetic parent mapping for cascading Jira field %s.', $jiraFieldId);
@@ -3683,9 +3698,24 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                         'automation_hash' => $parentAutomationHash,
                     ]);
 
+                    $cascadingParentLookup->execute(['jira_field_id' => $parentMappingKey]);
+                    $parentLookupRow = $cascadingParentLookup->fetch(PDO::FETCH_ASSOC) ?: null;
+                    $cascadingParentLookup->closeCursor();
+
+                    if (isset($parentLookupRow['mapping_id']) && $parentLookupRow['mapping_id'] !== null) {
+                        $parentMappingId = (int)$parentLookupRow['mapping_id'];
+                    }
+
+                    if ($parentRedmineId === null && isset($parentLookupRow['redmine_custom_field_id'])
+                        && $parentLookupRow['redmine_custom_field_id'] !== null
+                    ) {
+                        $parentRedmineId = (int)$parentLookupRow['redmine_custom_field_id'];
+                    }
+
                     $existingMappings[$parentMappingKey] = [
                         'jira_field_id' => $parentMappingKey,
-                        'redmine_custom_field_id' => null,
+                        'mapping_id' => $parentMappingId,
+                        'redmine_custom_field_id' => $parentRedmineId,
                         'proposed_redmine_name' => $parentName,
                         'proposed_field_format' => 'depending_list',
                         'proposed_possible_values' => $cascadingDescriptor['parents'],
@@ -3697,6 +3727,9 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 if ($parentRedmineId !== null) {
                     $currentRedmineParentId = $parentRedmineId;
                     $infoNotes[] = sprintf('Linked to existing cascading parent Redmine custom field #%d.', $parentRedmineId);
+                } elseif ($currentRedmineParentId === null && $parentMappingId !== null) {
+                    $currentRedmineParentId = $parentMappingId;
+                    $infoNotes[] = sprintf('Linked to cascading parent mapping entry #%d (pending Redmine ID).', $parentMappingId);
                 }
 
                 $infoNotes[] = sprintf(
