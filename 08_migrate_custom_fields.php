@@ -10,7 +10,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.52';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.53';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
     'usage' => 'Analyse Jira custom field usage statistics from staging data.',
@@ -3033,6 +3033,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         $jiraFieldName = isset($row['jira_field_name']) ? (string)$row['jira_field_name'] : null;
         $jiraSchemaType = isset($row['jira_schema_type']) ? (string)$row['jira_schema_type'] : null;
         $jiraSchemaCustom = isset($row['jira_schema_custom']) ? (string)$row['jira_schema_custom'] : null;
+        $normalizedSchemaType = $jiraSchemaType !== null ? strtolower($jiraSchemaType) : null;
         $currentRedmineId = isset($row['redmine_custom_field_id']) ? (int)$row['redmine_custom_field_id'] : null;
         $currentRedmineParentId = isset($row['redmine_parent_custom_field_id']) ? (int)$row['redmine_parent_custom_field_id'] : null;
         $currentNotes = isset($row['notes']) ? (string)$row['notes'] : null;
@@ -3061,6 +3062,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             : [];
 
         $jiraAllowedValuesRaw = decodeJsonColumn($row['jira_allowed_values'] ?? null);
+        $hasJiraAllowedValues = $jiraAllowedValuesRaw !== null;
         $jiraAllowedValues = is_array($jiraAllowedValuesRaw) ? $jiraAllowedValuesRaw : [];
 
         $proposedPossibleValues = decodeJsonColumn($currentProposedPossibleValuesRaw);
@@ -3358,9 +3360,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         // Extra logica voor multipliciteit:
         // - arrays: altijd multiple
         // - objecten: gebruik target_is_multiple uit migration_mapping_custom_object indien beschikbaar
-        if ($jiraSchemaType !== null) {
-            $normalizedSchemaType = strtolower($jiraSchemaType);
-
+        if ($normalizedSchemaType !== null) {
             if ($normalizedSchemaType === 'array') {
                 // Altijd meerdere waardes mogelijk
                 $proposedIsMultiple = true;
@@ -3373,6 +3373,69 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                     }
                 }
             }
+        }
+
+        if ($normalizedSchemaType === 'array' && !$hasJiraAllowedValues && in_array($currentStatus, $allowedStatuses, true)) {
+            $notesParts = [];
+            if ($currentNotes !== null && trim($currentNotes) !== '') {
+                $notesParts[] = trim($currentNotes);
+            }
+
+            $notesParts[] = 'Automatically ignored: Jira array field has no allowedValues metadata to derive list options.';
+            $notes = implode(' ', array_unique($notesParts));
+
+            $proposedPossibleValuesJson = encodeJsonColumn($proposedPossibleValues);
+            $proposedValueDependenciesJson = encodeJsonColumn($proposedValueDependencies);
+            $proposedTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
+            $proposedRoleIdsJson = encodeJsonColumn($proposedRoleIds);
+            $proposedProjectIdsJson = encodeJsonColumn($proposedProjectIds);
+
+            $automationHash = computeCustomFieldAutomationStateHash(
+                $currentRedmineId,
+                'IGNORED',
+                $proposedName,
+                $proposedFormat,
+                $proposedIsRequired,
+                $proposedIsFilter,
+                $proposedIsForAll,
+                $proposedIsMultiple,
+                $proposedPossibleValuesJson,
+                $proposedValueDependenciesJson,
+                $proposedDefaultValue,
+                $proposedTrackerIdsJson,
+                $proposedRoleIdsJson,
+                $proposedProjectIdsJson,
+                $notes,
+                $currentRedmineParentId
+            );
+
+            $updateStatement->execute([
+                'redmine_custom_field_id' => $currentRedmineId,
+                'migration_status' => 'IGNORED',
+                'notes' => $notes,
+                'proposed_redmine_name' => $proposedName,
+                'proposed_field_format' => $proposedFormat,
+                'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
+                'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
+                'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
+                'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
+                'proposed_possible_values' => $proposedPossibleValuesJson,
+                'proposed_value_dependencies' => $proposedValueDependenciesJson,
+                'proposed_default_value' => $proposedDefaultValue,
+                'proposed_tracker_ids' => $proposedTrackerIdsJson,
+                'proposed_role_ids' => $proposedRoleIdsJson,
+                'proposed_project_ids' => $proposedProjectIdsJson,
+                'automation_hash' => $automationHash,
+                'mapping_id' => (int)$row['mapping_id'],
+            ]);
+
+            if ($automationHash === $currentAutomationHash) {
+                $summary['ignored_unused']++;
+                continue;
+            }
+
+            $summary['ignored_unused']++;
+            continue;
         }
 
         $autoIgnoreUnused = $usageTotalIssues > 0 && $usageIssuesWithValue === 0 && $usageIssuesWithNonEmpty === 0;
@@ -4488,8 +4551,9 @@ function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): ar
                 $result['note'] = 'Requires the redmine_depending_custom_fields plugin to migrate cascading selects.';
                 break;
             case 'array':
-                $result['field_format'] = 'text';
-                $result['note'] = 'Array-type Jira field mapped to Redmine text. Review if a list with multiple values is required.';
+                $result['field_format'] = 'list';
+                $result['requires_possible_values'] = true;
+                $result['note'] = 'Array-type Jira field mapped to a Redmine list; deriving options from Jira allowed values.';
                 break;
             default:
                 $result['requires_manual_review'] = true;
