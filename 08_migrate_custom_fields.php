@@ -3957,7 +3957,7 @@ function updateObjectFieldMappingProposals(PDO $pdo): array
     $existingStatement = $pdo->prepare(<<<SQL
         SELECT proposal_hash
         FROM migration_mapping_custom_object
-        WHERE jira_field_id = :field_id AND path IS NULL AND source = 'inferred'
+        WHERE jira_field_id = :field_id AND path <=> :path AND source = 'inferred'
         LIMIT 1
     SQL);
 
@@ -3981,7 +3981,7 @@ function updateObjectFieldMappingProposals(PDO $pdo): array
             :jira_field_id,
             :jira_field_name,
             :jira_schema_custom,
-            NULL,
+            :path,
             :target_field_name,
             :target_field_format,
             :target_is_multiple,
@@ -4040,6 +4040,7 @@ function updateObjectFieldMappingProposals(PDO $pdo): array
         $isArray = $maxOrdinal > 0;
         $enumLike = in_array('id', $paths, true) && in_array('name', $paths, true);
         $dominantPath = $paths !== [] ? $paths[0] : null;
+        $path = $dominantPath;
 
         if ($kvCount === 0) {
             $summary['missing_samples']++;
@@ -4075,6 +4076,7 @@ function updateObjectFieldMappingProposals(PDO $pdo): array
         $proposalHash = computeObjectProposalHash(
             $fieldId,
             $definition['schema_custom'] ?? null,
+            $path,
             $proposedName,
             $targetFormat,
             $isArray,
@@ -4083,13 +4085,14 @@ function updateObjectFieldMappingProposals(PDO $pdo): array
             implode(' ', $notes)
         );
 
-        $existingStatement->execute(['field_id' => $fieldId]);
+        $existingStatement->execute(['field_id' => $fieldId, 'path' => $path]);
         $existingHash = $existingStatement->fetchColumn();
 
         $upsertStatement->execute([
             'jira_field_id' => $fieldId,
             'jira_field_name' => $definition['name'] ?? null,
             'jira_schema_custom' => $definition['schema_custom'] ?? null,
+            'path' => $path,
             'target_field_name' => $proposedName,
             'target_field_format' => $targetFormat,
             'target_is_multiple' => normalizeBooleanDatabaseValue($isArray),
@@ -4148,6 +4151,7 @@ function loadObjectFieldDefinitionsForCustomFields(PDO $pdo): array
 function computeObjectProposalHash(
     string $fieldId,
     ?string $schemaCustom,
+    ?string $path,
     ?string $targetFieldName,
     string $targetFieldFormat,
     bool $targetIsMultiple,
@@ -4159,6 +4163,7 @@ function computeObjectProposalHash(
     $payload = [
         'field_id' => $fieldId,
         'schema_custom' => $schemaCustom,
+        'path' => $path,
         'target_field_name' => $targetFieldName,
         'target_field_format' => $targetFieldFormat,
         'target_is_multiple' => $targetIsMultiple,
@@ -4238,8 +4243,7 @@ function buildObjectFieldMultiplicityLookup(PDO $pdo): array
     $sql = <<<SQL
         SELECT jira_field_id, target_is_multiple
         FROM migration_mapping_custom_object
-        WHERE path IS NULL
-          AND source = 'inferred'
+        WHERE source = 'inferred'
     SQL;
 
     try {

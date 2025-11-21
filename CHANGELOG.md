@@ -5,10 +5,6 @@ All notable changes to this project will be documented in this file.
 ## [TODO]
 
 - Migrate custom fields script:
-    - cascading fields: parent records and fields won't create any more.
-    - table migration_mapping_custom_object doesn't truncate when running the transform phase:
-        - This is normal behaviour, the script provides unique keys, but two of them are NULL
-        - path and key_source_path are NULL: investigate
     - jira_schema_type = object:
         - proposed_possible_values should be flattened: example [
           "Geo_Ocean_III",
