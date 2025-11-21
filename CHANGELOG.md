@@ -6,16 +6,9 @@ All notable changes to this project will be documented in this file.
 
 - Migrate custom fields script:
     - cascading fields: 
-        - in jira the cascading fields are single field, that only contains the child value.
-        - in Redmine the cascading fields are multiple fields, that contains the parent value and child value. As many fields as we have members of the cascading list.
-        - in Redmine we need to create a parent field and multiple child fields, linked together with the redmine_parent_custom_field_id.
-        - in redmine the children fields contain the values of that child, the relations of those values with the parents values, and the parent_custom_field_id.
-        - we already implemented the cascading fields migration in the push phase, but we need to implement the cascading fields migration in the transform phase.
-        - this is needed because we want to be able to manually modify the parameters of the cascading fields.
-        - this is also needed for easy migration of the issues from jira to redmine, in the issues transform and push phase.
+        - fill proposed_tracker_ids, proposed_role_ids, proposed_is_required, proposed_is_for_all, proposed_project_ids for the cascading-parent.
+        - redmine_parent_custom_field_id must be filled in on the cascading-child.
         - remove the logic for cascading fields from the push phase in the issues transform and push phase.
-        - remove the logic for cascading fields from the push phase in the custom fields transform and push phase.
-        - add a new logic in the custom fields migration transform phase, adding a new record for every cascading field parent we are missing, and add the parent_custom_field_id to the child record, and add the proposed_possible_values.
         - add a new logic in issues migration transform / push phase to align with this logic. It might be possible that the issues migration script is not finished yet.
     - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
     - prefer enumerations over lists in Redmine: both lists and depending_lists.
@@ -27,6 +20,20 @@ All notable changes to this project will be documented in this file.
     - on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
 - Create the missing scripts: labels/tags, (document) categories, milestones, watchers, checklists, relations, subtasks, workflows, custom workflows...
 - Validate we can push authors and creation timestamps to Redmine.
+
+## [0.0.56] - 2025-12-24
+
+- Fix transform-phase updates that wrote `IGNORED` statuses so they also bind
+  `redmine_parent_custom_field_id`, avoiding SQL parameter errors when syncing
+  cascading mappings.
+- Bump the custom field migration script version to `0.0.56`.
+
+## [0.0.55] - 2025-12-23
+
+- Reimplement cascading parent records in `migration_mapping_custom_fields`
+- Flag cascading parent mappings as `depending_list` proposals, carrying over required/filter/scoping hints from the child field.
+- Populate `redmine_parent_custom_field_id` on cascading children and persist parent scopes (projects, trackers, roles) alongside generated parent proposals.
+- Bump the custom field migration script version to `0.0.55` and align the README references.
 
 ## [0.0.52] - 2025-12-22
 

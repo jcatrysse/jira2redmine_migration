@@ -644,7 +644,7 @@ php 08_migrate_custom_fields.php --help
 | Option              | Description                                                                           |
 |---------------------|---------------------------------------------------------------------------------------|
 | `-h`, `--help`      | Print usage information and exit.                                                     |
-| `-V`, `--version`   | Display the script version (`0.0.33`).                                                |
+| `-V`, `--version`   | Display the script version (`0.0.56`).                                                |
 | `--phases=<list>`   | Comma-separated list of phases to run (e.g., `jira`, `redmine`, `transform`, `push`). |
 | `--skip=<list>`     | Comma-separated list of phases to skip.                                               |
 | `--confirm-push`    | Acknowledge manual creations or confirm extended API operations.                      |
@@ -680,7 +680,10 @@ php 08_migrate_custom_fields.php --help
    `MANUAL_INTERVENTION_REQUIRED` with explanatory notes.
    Cascading select fields retain parent/child identifiers and dependencies so
    the push phase (or manual workflows) can create a parent list and depending
-   child list with the original Jira option relationships intact.
+   child list with the original Jira option relationships intact. The transform
+   now seeds a synthetic `depending_list` parent proposal (including required,
+   tracker/role/project scopes) and links the child mapping to any matched
+   Redmine parent through `redmine_parent_custom_field_id`.
 4. **Push (`push`)** – when `--use-extended-api` is supplied the script creates
    standard custom fields through `POST /custom_fields.json` and, when the
    `redmine_depending_custom_fields` plugin is available, provisions cascading
