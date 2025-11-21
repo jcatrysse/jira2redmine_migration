@@ -10,7 +10,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.57';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.58';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
     'usage' => 'Analyse Jira custom field usage statistics from staging data.',
@@ -3649,31 +3649,33 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                     if (isset($parentRow['mapping_id']) && $parentRow['mapping_id'] !== null) {
                         $parentMappingId = (int)$parentRow['mapping_id'];
                     }
-                } elseif ($cascadingDescriptor['parents'] !== []) {
-                    $parentNotes = sprintf('Synthetic parent mapping for cascading Jira field %s.', $jiraFieldId);
-                    $parentPossibleValuesJson = encodeJsonColumn($cascadingDescriptor['parents']);
-                    $parentTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
-                    $parentRoleIdsJson = encodeJsonColumn($proposedRoleIds);
-                    $parentProjectIdsJson = encodeJsonColumn($proposedProjectIds);
-                    $parentAutomationHash = computeCustomFieldAutomationStateHash(
-                        null,
-                        'READY_FOR_CREATION',
-                        $parentName,
-                        'depending_list',
-                        $proposedIsRequired,
-                        $proposedIsFilter,
-                        $proposedIsForAll,
-                        false,
-                        $parentPossibleValuesJson,
-                        null,
-                        null,
-                        $parentTrackerIdsJson,
-                        $parentRoleIdsJson,
-                        $parentProjectIdsJson,
-                        $parentNotes,
-                        null
-                    );
+                }
 
+                $parentPossibleValuesJson = encodeJsonColumn($cascadingDescriptor['parents']);
+                $parentTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
+                $parentRoleIdsJson = encodeJsonColumn($proposedRoleIds);
+                $parentProjectIdsJson = encodeJsonColumn($proposedProjectIds);
+                $parentNotes = sprintf('Synthetic parent mapping for cascading Jira field %s.', $jiraFieldId);
+                $parentAutomationHash = computeCustomFieldAutomationStateHash(
+                    null,
+                    'READY_FOR_CREATION',
+                    $parentName,
+                    'depending_list',
+                    $proposedIsRequired,
+                    $proposedIsFilter,
+                    $proposedIsForAll,
+                    false,
+                    $parentPossibleValuesJson,
+                    null,
+                    null,
+                    $parentTrackerIdsJson,
+                    $parentRoleIdsJson,
+                    $parentProjectIdsJson,
+                    $parentNotes,
+                    null
+                );
+
+                if ($cascadingDescriptor['parents'] !== []) {
                     $cascadingParentInsert->execute([
                         'jira_field_id' => $parentMappingKey,
                         'jira_field_name' => $parentName,
@@ -3721,6 +3723,9 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                         'proposed_possible_values' => $cascadingDescriptor['parents'],
                         'notes' => $parentNotes,
                         'migration_status' => 'READY_FOR_CREATION',
+                        'proposed_tracker_ids' => $proposedTrackerIds,
+                        'proposed_role_ids' => $proposedRoleIds,
+                        'proposed_project_ids' => $proposedProjectIds,
                     ];
                 }
 

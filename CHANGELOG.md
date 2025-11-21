@@ -6,7 +6,6 @@ All notable changes to this project will be documented in this file.
 
 - Migrate custom fields script:
     - cascading fields: 
-        - fill proposed_tracker_ids, proposed_role_ids, proposed_is_required, proposed_is_for_all, proposed_project_ids for the cascading-parent.
         - remove the logic for cascading fields from the push phase in the issues transform and push phase.
         - add a new logic in issues migration transform / push phase to align with this logic. It might be possible that the issues migration script is not finished yet.
     - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
@@ -20,6 +19,12 @@ All notable changes to this project will be documented in this file.
 - Create the missing scripts: labels/tags, (document) categories, milestones, watchers, checklists, relations, subtasks, workflows, custom workflows...
 - Validate we can push authors and creation timestamps to Redmine.
 
+## [0.0.58] - 2025-12-26
+
+- Refresh cascading parent proposals during transform so tracker, role, project,
+  and required/filter flags mirror the child field scopes even on reruns.
+- Bump the custom field migration script version to `0.0.58`.
+
 ## [0.0.57] - 2025-12-25
 
 - Link cascading child mappings to their generated parent entries by storing the
@@ -29,6 +34,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.0.56] - 2025-12-24
 
+- Restore the cascading fields migration script to the working state it was in.
 - Fix transform-phase updates that wrote `IGNORED` statuses so they also bind
   `redmine_parent_custom_field_id`, avoiding SQL parameter errors when syncing
   cascading mappings.
@@ -36,7 +42,6 @@ All notable changes to this project will be documented in this file.
 
 ## [0.0.55] - 2025-12-23
 
-- Reimplement cascading parent records in `migration_mapping_custom_fields`
 - Flag cascading parent mappings as `depending_list` proposals, carrying over required/filter/scoping hints from the child field.
 - Populate `redmine_parent_custom_field_id` on cascading children and persist parent scopes (projects, trackers, roles) alongside generated parent proposals.
 - Bump the custom field migration script version to `0.0.55` and align the README references.
