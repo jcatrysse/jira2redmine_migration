@@ -5,24 +5,18 @@ All notable changes to this project will be documented in this file.
 ## [TODO]
 
 - Migrate custom fields script:
-    - jira_schema_type = object:
-        - proposed_possible_values should be flattened: example [
-          "Geo_Ocean_III",
-          "Geo_Ocean_IV",
-          "Geo_Ocean_IV, Geo_Ocean_VII",
-          "Geo_Ocean_IX",
-          "Geo_Ocean_V",
-          "Geo_Ocean_VI",
-          "Geo_Ocean_VII",
-          "Geo_Ocean_VII, Geo_Ocean_IV, Geo_Ocean_V, Geo_Ocean_VI, Geo_Ocean_VIII, Geo_Ocean_IX",
-          "Geo_Ocean_VIII"
-          ] 
-        - this means we need to split all values to single values, unique them and order them alphabetically.
-    - cascading fields: parent records and fields won't create any more.
-    - jira_schema_type = array
-      - fields proposed_possible_values is always NULL: values could be retrieved fron jira_allowed_values or a better logic could be applied.
-      - if jira_allowed_values = NULL: set migration_status = IGNORED.
-      - proposed_field_format should be set to 'list'
+    - cascading fields: 
+        - in jira the cascading fields are single field, that only contains the child value.
+        - in Redmine the cascading fields are multiple fields, that contains the parent value and child value. As many fields as we have members of the cascading list.
+        - in Redmine we need to create a parent field and multiple child fields, linked together with the redmine_parent_custom_field_id.
+        - in redmine the children fields contain the values of that child, the relations of those values with the parents values, and the parent_custom_field_id.
+        - we already implemented the cascading fields migration in the push phase, but we need to implement the cascading fields migration in the transform phase.
+        - this is needed because we want to be able to manually modify the parameters of the cascading fields.
+        - this is also needed for easy migration of the issues from jira to redmine, in the issues transform and push phase.
+        - remove the logic for cascading fields from the push phase in the issues transform and push phase.
+        - remove the logic for cascading fields from the push phase in the custom fields transform and push phase.
+        - add a new logic in the custom fields migration transform phase, adding a new record for every cascading field parent we are missing, and add the parent_custom_field_id to the child record, and add the proposed_possible_values.
+        - add a new logic in issues migration transform / push phase to align with this logic. It might be possible that the issues migration script is not finished yet.
     - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
     - prefer enumerations over lists in Redmine: both lists and depending_lists.
 - General: verify if all automation hashes align with the latest database schemas.

@@ -3525,6 +3525,25 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             }
         }
 
+        if (is_array($proposedPossibleValues) && $schemaType === 'object') {
+            $flattened = [];
+            foreach ($proposedPossibleValues as $value) {
+                $parts = array_map('trim', explode(',', (string)$value));
+                foreach ($parts as $part) {
+                    if ($part === '') {
+                        continue;
+                    }
+
+                    $flattened[$part] = $part;
+                }
+            }
+
+            if ($flattened !== []) {
+                $proposedPossibleValues = array_values($flattened);
+                sort($proposedPossibleValues, SORT_NATURAL | SORT_FLAG_CASE);
+            }
+        }
+
         if (
             isset($allowedValuesVariations[$jiraFieldId])
             && ($classification['requires_possible_values'] || $isCascadingField)
