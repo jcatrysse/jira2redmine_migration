@@ -11,7 +11,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use League\HTMLToMarkdown\HtmlConverter;
 
-const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.29';
+const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.30';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issues into staging_jira_issues (and related staging tables).',
     'transform' => 'Reconcile Jira issues with Redmine dependencies to populate migration mappings.',
@@ -1078,6 +1078,7 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
         $proposedEstimatedHours = $issueTimeOriginalEstimate !== null ? round($issueTimeOriginalEstimate / 3600, 2) : null;
         $proposedIsPrivate = $defaultIsPrivate;
         $proposedCustomFieldPayload = null;
+        $notes = [];
 
         if ($issueRawPayload !== null) {
             $decodedIssue = json_decode($issueRawPayload, true);
@@ -1086,14 +1087,16 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
                 if ($security !== null) {
                     $proposedIsPrivate = true;
                 }
-                $proposedCustomFields = buildCascadingCustomFieldPayload($decodedIssue, $cascadingFieldIndex);
+                $cascadingWarnings = [];
+                $proposedCustomFields = buildCascadingCustomFieldPayload($decodedIssue, $cascadingFieldIndex, $cascadingWarnings);
                 $proposedCustomFieldPayload = $proposedCustomFields !== []
                     ? encodeJsonColumn($proposedCustomFields)
                     : null;
+                if ($cascadingWarnings !== []) {
+                    $notes[] = sprintf('Cascading selection could not be mapped for fields: %s.', implode(', ', array_unique($cascadingWarnings)));
+                }
             }
         }
-
-        $notes = [];
 
         if ($row['redmine_issue_id'] !== null) {
             $nextStatus = 'MATCH_FOUND';
@@ -1979,12 +1982,22 @@ function buildAttachmentMetadataIndex(PDO $pdo): array
 function buildCascadingFieldIndex(PDO $pdo): array
 {
     $sql = <<<SQL
-        SELECT jira_field_id, jira_field_name, jira_allowed_values, redmine_custom_field_id, redmine_parent_custom_field_id
-        FROM migration_mapping_custom_fields
-        WHERE proposed_field_format = 'depending_list'
-          AND redmine_custom_field_id IS NOT NULL
-          AND redmine_parent_custom_field_id IS NOT NULL
-          AND migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS', 'READY_FOR_UPDATE', 'READY_FOR_CREATION')
+        SELECT
+            child.jira_field_id,
+            child.jira_field_name,
+            child.jira_allowed_values,
+            child.redmine_custom_field_id AS child_redmine_custom_field_id,
+            child.redmine_parent_custom_field_id,
+            parent.mapping_id AS parent_mapping_id,
+            parent.redmine_custom_field_id AS parent_redmine_custom_field_id
+        FROM migration_mapping_custom_fields child
+        LEFT JOIN migration_mapping_custom_fields parent
+            ON parent.mapping_id = child.redmine_parent_custom_field_id
+            OR parent.redmine_custom_field_id = child.redmine_parent_custom_field_id
+        WHERE child.proposed_field_format = 'depending_list'
+          AND child.redmine_custom_field_id IS NOT NULL
+          AND child.redmine_parent_custom_field_id IS NOT NULL
+          AND child.migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS', 'READY_FOR_UPDATE', 'READY_FOR_CREATION')
     SQL;
 
     try {
@@ -2014,6 +2027,19 @@ function buildCascadingFieldIndex(PDO $pdo): array
             continue;
         }
 
+        $parentRedmineId = isset($row['parent_redmine_custom_field_id']) ? (int)$row['parent_redmine_custom_field_id'] : null;
+        $childRedmineId = isset($row['child_redmine_custom_field_id']) ? (int)$row['child_redmine_custom_field_id'] : null;
+        if ($parentRedmineId === null && isset($row['parent_mapping_id'])) {
+            $resolvedParentId = resolveParentRedmineFieldId($pdo, (int)$row['parent_mapping_id']);
+            if ($resolvedParentId !== null) {
+                $parentRedmineId = $resolvedParentId;
+            }
+        }
+
+        if ($parentRedmineId === null || $childRedmineId === null) {
+            continue;
+        }
+
         $descriptor = parseCascadingAllowedValues($allowedValues);
         if ($descriptor === null) {
             continue;
@@ -2026,8 +2052,8 @@ function buildCascadingFieldIndex(PDO $pdo): array
         }
 
         $index[$jiraFieldId] = [
-            'parent_field_id' => (int)$row['redmine_parent_custom_field_id'],
-            'child_field_id' => (int)$row['redmine_custom_field_id'],
+            'parent_field_id' => $parentRedmineId,
+            'child_field_id' => $childRedmineId,
             'child_lookup' => $childLookup,
             'child_label_lookup' => $childLabelLookup,
         ];
@@ -2041,9 +2067,10 @@ function buildCascadingFieldIndex(PDO $pdo): array
 /**
  * @param array<string, mixed> $issuePayload
  * @param array<string, array{parent_field_id: int, child_field_id: int, child_lookup: array<string, array{parent_label: string, parent_id: string|null, child_label: string, child_id: string}>, child_label_lookup: array<string, array<int, string>>}> $cascadingIndex
+ * @param array<int, string> $warnings
  * @return array<int, array{id: int, value: string}>
  */
-function buildCascadingCustomFieldPayload(array $issuePayload, array $cascadingIndex): array
+function buildCascadingCustomFieldPayload(array $issuePayload, array $cascadingIndex, array &$warnings = []): array
 {
     if ($cascadingIndex === []) {
         return [];
@@ -2078,6 +2105,7 @@ function buildCascadingCustomFieldPayload(array $issuePayload, array $cascadingI
         }
 
         if ($parentLabel === null || $childLabel === null) {
+            $warnings[] = $jiraFieldId;
             continue;
         }
 
@@ -2092,6 +2120,35 @@ function buildCascadingCustomFieldPayload(array $issuePayload, array $cascadingI
     }
 
     return $result;
+}
+
+/**
+ * @return int|null
+ */
+function resolveParentRedmineFieldId(PDO $pdo, int $parentMappingId): ?int
+{
+    $sql = <<<SQL
+        SELECT redmine_custom_field_id
+        FROM migration_mapping_custom_fields
+        WHERE mapping_id = :mapping_id
+          AND redmine_custom_field_id IS NOT NULL
+          AND migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS', 'READY_FOR_UPDATE', 'READY_FOR_CREATION')
+    SQL;
+
+    $statement = $pdo->prepare($sql);
+    if ($statement === false) {
+        throw new RuntimeException('Failed to resolve parent Redmine custom field identifier.');
+    }
+
+    $statement->execute(['mapping_id' => $parentMappingId]);
+    $row = $statement->fetch(PDO::FETCH_ASSOC) ?: null;
+    $statement->closeCursor();
+
+    if (!is_array($row)) {
+        return null;
+    }
+
+    return isset($row['redmine_custom_field_id']) ? (int)$row['redmine_custom_field_id'] : null;
 }
 
 /**
