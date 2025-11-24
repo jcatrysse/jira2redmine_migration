@@ -10,7 +10,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.58';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.61';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
     'usage' => 'Analyse Jira custom field usage statistics from staging data.',
@@ -2804,6 +2804,7 @@ function fetchAndStoreRedmineCustomFields(Client $client, PDO $pdo, bool $useExt
             $name = isset($customField['name']) ? trim((string)$customField['name']) : (string)$id;
             $customizedType = isset($customField['customized_type']) ? trim((string)$customField['customized_type']) : null;
             $fieldFormat = isset($customField['field_format']) ? trim((string)$customField['field_format']) : null;
+            $fieldFormat = normalizeRedmineFieldFormat($fieldFormat);
             $isRequired = normalizeBooleanDatabaseValue($customField['is_required'] ?? null);
             $isFilter = normalizeBooleanDatabaseValue($customField['is_filter'] ?? null);
             $isForAll = normalizeBooleanDatabaseValue($customField['is_for_all'] ?? null);
@@ -3138,9 +3139,13 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         }
         $currentRedmineId = isset($row['redmine_custom_field_id']) ? (int)$row['redmine_custom_field_id'] : null;
         $currentRedmineParentId = isset($row['redmine_parent_custom_field_id']) ? (int)$row['redmine_parent_custom_field_id'] : null;
+        $currentRedmineEnumerations = isset($row['redmine_custom_field_enumerations'])
+            ? (string)$row['redmine_custom_field_enumerations']
+            : null;
         $currentNotes = isset($row['notes']) ? (string)$row['notes'] : null;
         $currentProposedName = isset($row['proposed_redmine_name']) ? (string)$row['proposed_redmine_name'] : null;
         $currentProposedFormat = isset($row['proposed_field_format']) ? (string)$row['proposed_field_format'] : null;
+        $currentProposedFormat = normalizeRedmineFieldFormat($currentProposedFormat);
         $currentProposedIsRequired = normalizeBooleanFlag($row['proposed_is_required'] ?? null);
         $currentProposedIsFilter = normalizeBooleanFlag($row['proposed_is_filter'] ?? null);
         $currentProposedIsForAll = normalizeBooleanFlag($row['proposed_is_for_all'] ?? null);
@@ -3253,7 +3258,8 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             $currentProposedRoleIdsRaw,
             $currentProposedProjectIdsRaw,
             $currentNotes,
-            $currentRedmineParentId
+            $currentRedmineParentId,
+            $currentRedmineEnumerations
         );
 
         if ($storedAutomationHash !== null && $storedAutomationHash !== $currentAutomationHash) {
@@ -3340,7 +3346,8 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 $proposedRoleIdsJson,
                 $proposedProjectIdsJson,
                 $notes,
-                $currentRedmineParentId
+                $currentRedmineParentId,
+                $currentRedmineEnumerations
             );
 
             $updateStatement->execute([
@@ -3406,7 +3413,8 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 $proposedRoleIdsJson,
                 $proposedProjectIdsJson,
                 $notes,
-                $currentRedmineParentId
+                $currentRedmineParentId,
+                $currentRedmineEnumerations
             );
 
             $updateStatement->execute([
@@ -3510,7 +3518,8 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 $proposedRoleIdsJson,
                 $proposedProjectIdsJson,
                 $notes,
-                $currentRedmineParentId
+                $currentRedmineParentId,
+                $currentRedmineEnumerations
             );
 
             $updateStatement->execute([
@@ -3575,7 +3584,8 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 $proposedRoleIdsJson,
                 $proposedProjectIdsJson,
                 $notes,
-                $currentRedmineParentId
+                $currentRedmineParentId,
+                $currentRedmineEnumerations
             );
 
             $updateStatement->execute([
@@ -3618,7 +3628,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             if ($cascadingDescriptor === null) {
                 $manualReasons[] = 'Unable to parse cascading Jira custom field options for dependent field creation.';
             } else {
-                $proposedFormat = 'depending_list';
+                $proposedFormat = 'depending_enumeration';
 
                 if ($cascadingDescriptor['child_values'] === []) {
                     $manualReasons[] = 'Cascading Jira custom field does not expose any child options.';
@@ -3660,7 +3670,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                     null,
                     'READY_FOR_CREATION',
                     $parentName,
-                    'depending_list',
+                    'depending_enumeration',
                     $proposedIsRequired,
                     $proposedIsFilter,
                     $proposedIsForAll,
@@ -3672,6 +3682,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                     $parentRoleIdsJson,
                     $parentProjectIdsJson,
                     $parentNotes,
+                    null,
                     null
                 );
 
@@ -3684,7 +3695,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                         'jira_issue_type_ids' => encodeJsonColumn($jiraIssueTypeIds),
                         'jira_allowed_values' => encodeJsonColumn($jiraAllowedValues),
                         'proposed_redmine_name' => $parentName,
-                        'proposed_field_format' => 'depending_list',
+                        'proposed_field_format' => 'depending_enumeration',
                         'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
                         'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
                         'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
@@ -3719,7 +3730,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                         'mapping_id' => $parentMappingId,
                         'redmine_custom_field_id' => $parentRedmineId,
                         'proposed_redmine_name' => $parentName,
-                        'proposed_field_format' => 'depending_list',
+                        'proposed_field_format' => 'depending_enumeration',
                         'proposed_possible_values' => $cascadingDescriptor['parents'],
                         'notes' => $parentNotes,
                         'migration_status' => 'READY_FOR_CREATION',
@@ -4006,7 +4017,8 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             $proposedRoleIdsJson,
             $proposedProjectIdsJson,
             $notes,
-            $currentRedmineParentId
+            $currentRedmineParentId,
+            $currentRedmineEnumerations
         );
 
         $updateStatement->execute([
@@ -4591,6 +4603,7 @@ function fetchCustomFieldMappingsForTransform(PDO $pdo): array
             map.jira_allowed_values,
             map.redmine_custom_field_id,
             map.redmine_parent_custom_field_id,
+            map.redmine_custom_field_enumerations,
             map.migration_status,
             map.notes,
             map.proposed_redmine_name,
@@ -4639,6 +4652,24 @@ function deriveIsMultipleFromSchemaType(?string $schemaType): ?bool
         'array', 'object' => true,
         'any', 'team', 'option', 'sd-customerrequesttype', 'option-with-child', 'option2', 'sd-approvals' => false,
         default => null,
+    };
+}
+
+function normalizeRedmineFieldFormat(?string $fieldFormat): ?string
+{
+    if ($fieldFormat === null) {
+        return null;
+    }
+
+    $normalized = strtolower(trim($fieldFormat));
+    if ($normalized === '') {
+        return null;
+    }
+
+    return match ($normalized) {
+        'list' => 'enumeration',
+        'depending_list' => 'depending_enumeration',
+        default => $normalized,
     };
 }
 
@@ -4693,7 +4724,7 @@ function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): ar
         }
 
         if (str_contains($normalizedCustom, ':labels') || str_contains($normalizedCustom, ':multiselect') || str_contains($normalizedCustom, ':select') || str_contains($normalizedCustom, ':checkboxes') || str_contains($normalizedCustom, ':radiobuttons')) {
-            $result['field_format'] = 'list';
+            $result['field_format'] = 'enumeration';
             $result['requires_possible_values'] = true;
             if (str_contains($normalizedCustom, ':multiselect') || str_contains($normalizedCustom, ':checkboxes')) {
                 $result['is_multiple'] = true;
@@ -4702,7 +4733,7 @@ function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): ar
         }
 
         if (str_contains($normalizedCustom, ':cascadingselect')) {
-            $result['field_format'] = 'depending_list';
+            $result['field_format'] = 'depending_enumeration';
             $result['requires_possible_values'] = true;
             $result['is_cascading'] = true;
             $result['note'] = 'Requires the redmine_depending_custom_fields plugin to migrate cascading selects.';
@@ -4716,29 +4747,29 @@ function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): ar
         }
     }
 
-    if ($normalizedType !== null) {
-        switch ($normalizedType) {
-            case 'object':
-                $result['field_format'] = 'list';
-                $result['requires_possible_values'] = true;
-                $result['note'] = 'Object-type Jira field; using allowed values from Jira create metadata.';
-                break;
-            case 'team':
-            case 'sd-customerrequesttype':
-                $result['field_format'] = 'list';
-                $result['requires_possible_values'] = true;
-                $result['note'] = 'App/Service Desk selector; will derive option labels from Jira allowed values. Consider a key/value list if you need stable IDs.';
-                break;
-            case 'option':
-            case 'option2':
-                $result['field_format'] = 'list';
-                $result['requires_possible_values'] = true;
-                $result['note'] = 'Single-select option field; populating Redmine list from Jira allowed values.';
-                break;
-            case 'sd-approvals':
-                $result['field_format'] = 'text';
-                $result['note'] = 'Service Desk approvals payload; defaulting to text. Consider manual mapping if approvals must be preserved.';
-                break;
+        if ($normalizedType !== null) {
+            switch ($normalizedType) {
+                case 'object':
+                    $result['field_format'] = 'enumeration';
+                    $result['requires_possible_values'] = true;
+                    $result['note'] = 'Object-type Jira field; using allowed values from Jira create metadata.';
+                    break;
+                case 'team':
+                case 'sd-customerrequesttype':
+                    $result['field_format'] = 'enumeration';
+                    $result['requires_possible_values'] = true;
+                    $result['note'] = 'App/Service Desk selector; will derive option labels from Jira allowed values. Consider a key/value list if you need stable IDs.';
+                    break;
+                case 'option':
+                case 'option2':
+                    $result['field_format'] = 'enumeration';
+                    $result['requires_possible_values'] = true;
+                    $result['note'] = 'Single-select option field; populating Redmine enumeration from Jira allowed values.';
+                    break;
+                case 'sd-approvals':
+                    $result['field_format'] = 'text';
+                    $result['note'] = 'Service Desk approvals payload; defaulting to text. Consider manual mapping if approvals must be preserved.';
+                    break;
             case 'any':
                 $result['field_format'] = 'text';
                 $result['note'] = 'Generic "any" schema from Jira; defaulting to text capture.';
@@ -4755,17 +4786,17 @@ function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): ar
             case 'date':
                 $result['field_format'] = 'date';
                 break;
-            case 'option-with-child':
-                $result['field_format'] = 'depending_list';
-                $result['requires_possible_values'] = true;
-                $result['is_cascading'] = true;
-                $result['note'] = 'Requires the redmine_depending_custom_fields plugin to migrate cascading selects.';
-                break;
-            case 'array':
-                $result['field_format'] = 'list';
-                $result['requires_possible_values'] = true;
-                $result['note'] = 'Array-type Jira field mapped to a Redmine list; deriving options from Jira allowed values.';
-                break;
+                case 'option-with-child':
+                    $result['field_format'] = 'depending_enumeration';
+                    $result['requires_possible_values'] = true;
+                    $result['is_cascading'] = true;
+                    $result['note'] = 'Requires the redmine_depending_custom_fields plugin to migrate cascading selects.';
+                    break;
+                case 'array':
+                    $result['field_format'] = 'enumeration';
+                    $result['requires_possible_values'] = true;
+                    $result['note'] = 'Array-type Jira field mapped to a Redmine enumeration; deriving options from Jira allowed values.';
+                    break;
             default:
                 $result['requires_manual_review'] = true;
                 $result['note'] = sprintf('Unhandled Jira schema type "%s"; review manually.', $schemaType ?? 'unknown');
@@ -4799,8 +4830,11 @@ function computeCustomFieldAutomationStateHash(
     ?string $proposedRoleIds,
     ?string $proposedProjectIds,
     ?string $notes,
-    ?int $redmineParentCustomFieldId = null
+    ?int $redmineParentCustomFieldId = null,
+    ?string $redmineCustomFieldEnumerations = null
 ): string {
+    $proposedFieldFormat = normalizeRedmineFieldFormat($proposedFieldFormat);
+
     // Notes are intentionally excluded from the automation hash to avoid noise from manual iterations.
     $payload = [
         'redmine_custom_field_id' => $redmineCustomFieldId,
@@ -4818,6 +4852,7 @@ function computeCustomFieldAutomationStateHash(
         'proposed_role_ids' => normalizeJsonForHash($proposedRoleIds),
         'proposed_project_ids' => normalizeJsonForHash($proposedProjectIds),
         'redmine_parent_custom_field_id' => $redmineParentCustomFieldId,
+        'redmine_custom_field_enumerations' => normalizeJsonForHash($redmineCustomFieldEnumerations),
     ];
 
     try {
@@ -5230,7 +5265,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             $jiraName = $field['jira_field_name'] ?? null;
             $jiraId = (string)$field['jira_field_id'];
             $proposedName = $field['proposed_redmine_name'] ?? null;
-            $proposedFormat = $field['proposed_field_format'] ?? null;
+            $proposedFormat = normalizeRedmineFieldFormat($field['proposed_field_format'] ?? null);
             $proposedIsRequired = normalizeBooleanFlag($field['proposed_is_required'] ?? null) ?? false;
             $proposedIsFilter = normalizeBooleanFlag($field['proposed_is_filter'] ?? null) ?? true;
             $proposedIsForAll = normalizeBooleanFlag($field['proposed_is_for_all'] ?? null) ?? true;
@@ -5252,7 +5287,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
 
             $effectiveName = $proposedName ?? ($jiraName ?? $jiraId);
             $effectiveFormat = $proposedFormat ?? 'string';
-            $isDependingPreview = strtolower($effectiveFormat) === 'depending_list';
+            $isDependingPreview = $effectiveFormat === 'depending_enumeration';
             $dependingPreviewDescriptor = $isDependingPreview ? parseCascadingAllowedValues($jiraAllowedValuesPreview) : null;
             if ($isDependingPreview && $dependingPreviewDescriptor === null && is_array($proposedValueDependencies)) {
                 $normalizedDependencies = [];
@@ -5359,6 +5394,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             SET
                 redmine_custom_field_id = :redmine_custom_field_id,
                 redmine_parent_custom_field_id = :redmine_parent_custom_field_id,
+                redmine_custom_field_enumerations = :redmine_custom_field_enumerations,
                 migration_status = :migration_status,
                 notes = :notes,
                 proposed_redmine_name = :proposed_redmine_name,
@@ -5390,7 +5426,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             $jiraId = (string)$field['jira_field_id'];
             $jiraName = $field['jira_field_name'] ?? null;
             $proposedName = $field['proposed_redmine_name'] ?? null;
-            $proposedFormat = $field['proposed_field_format'] ?? null;
+            $proposedFormat = normalizeRedmineFieldFormat($field['proposed_field_format'] ?? null);
             $proposedIsRequired = normalizeBooleanFlag($field['proposed_is_required'] ?? null) ?? false;
             $proposedIsFilter = normalizeBooleanFlag($field['proposed_is_filter'] ?? null) ?? true;
             $proposedIsForAll = normalizeBooleanFlag($field['proposed_is_for_all'] ?? null) ?? true;
@@ -5413,7 +5449,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
 
             $effectiveName = $proposedName ?? ($jiraName ?? $jiraId);
             $effectiveFormat = $proposedFormat ?? 'string';
-            $isDependingField = strtolower($effectiveFormat) === 'depending_list';
+            $isDependingField = $effectiveFormat === 'depending_enumeration';
 
             if ($isDependingField) {
                 $manualMessage = 'Cascading custom fields must be created manually using the transform-generated parent mapping.';
@@ -5433,12 +5469,14 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                     encodeJsonColumn($proposedRoleIds),
                     encodeJsonColumn($proposedProjectIds),
                     $manualMessage,
-                    $redmineParentId
+                    $redmineParentId,
+                    null
                 );
 
                 $updateStatement->execute([
                     'redmine_custom_field_id' => null,
                     'redmine_parent_custom_field_id' => $redmineParentId,
+                    'redmine_custom_field_enumerations' => null,
                     'migration_status' => 'MANUAL_INTERVENTION_REQUIRED',
                     'notes' => $manualMessage,
                     'proposed_redmine_name' => $effectiveName,
@@ -5502,6 +5540,8 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                 $response = $redmineClient->post($endpoint, ['json' => $payload]);
                 $decoded = decodeJsonResponse($response);
                 $newFieldId = extractCreatedCustomFieldId($decoded);
+                $newEnumerations = extractCreatedCustomFieldEnumerations($decoded);
+                $encodedEnumerations = encodeJsonColumn($newEnumerations);
 
                 $automationHash = computeCustomFieldAutomationStateHash(
                     $newFieldId,
@@ -5519,12 +5559,14 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                     encodeJsonColumn($proposedRoleIds),
                     encodeJsonColumn($proposedProjectIds),
                     null,
-                    null
+                    $redmineParentId,
+                    $encodedEnumerations
                 );
 
                 $updateStatement->execute([
                     'redmine_custom_field_id' => $newFieldId,
                     'redmine_parent_custom_field_id' => null,
+                    'redmine_custom_field_enumerations' => $encodedEnumerations,
                     'migration_status' => 'CREATION_SUCCESS',
                     'notes' => null,
                     'proposed_redmine_name' => $effectiveName,
@@ -5570,12 +5612,14 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                     encodeJsonColumn($proposedRoleIds),
                     encodeJsonColumn($proposedProjectIds),
                     $errorMessage,
+                    $redmineParentId,
                     null
                 );
 
                 $updateStatement->execute([
                     'redmine_custom_field_id' => null,
                     'redmine_parent_custom_field_id' => null,
+                    'redmine_custom_field_enumerations' => null,
                     'migration_status' => 'CREATION_FAILED',
                     'notes' => $errorMessage,
                     'proposed_redmine_name' => $effectiveName,
@@ -5658,7 +5702,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
         $jiraName = $field['jira_field_name'] ?? null;
         $jiraId = (string)$field['jira_field_id'];
         $proposedName = $field['proposed_redmine_name'] ?? null;
-        $proposedFormat = $field['proposed_field_format'] ?? null;
+        $proposedFormat = normalizeRedmineFieldFormat($field['proposed_field_format'] ?? null);
         $proposedIsRequired = normalizeBooleanFlag($field['proposed_is_required'] ?? null) ?? false;
         $proposedIsFilter = normalizeBooleanFlag($field['proposed_is_filter'] ?? null) ?? true;
         $proposedIsForAll = normalizeBooleanFlag($field['proposed_is_for_all'] ?? null) ?? true;
@@ -5680,7 +5724,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
 
         $effectiveName = $proposedName ?? ($jiraName ?? $jiraId);
         $effectiveFormat = $proposedFormat ?? 'string';
-        $isDependingPreview = strtolower($effectiveFormat) === 'depending_list';
+        $isDependingPreview = $effectiveFormat === 'depending_enumeration';
         $dependingPreviewDescriptor = $isDependingPreview ? parseCascadingAllowedValues($previewAllowedValues) : null;
 
         printf(
@@ -5755,11 +5799,12 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             $jiraId = (string)$field['jira_field_id'];
             $jiraName = $field['jira_field_name'] ?? null;
 
+            $proposedFormat = normalizeRedmineFieldFormat($field['proposed_field_format'] ?? 'string');
             $automationHash = computeCustomFieldAutomationStateHash(
                 null,
                 'CREATION_SUCCESS',
                 $field['proposed_redmine_name'] ?? ($jiraName ?? $jiraId),
-                $field['proposed_field_format'] ?? 'string',
+                $proposedFormat ?? 'string',
                 normalizeBooleanFlag($field['proposed_is_required'] ?? null) ?? false,
                 normalizeBooleanFlag($field['proposed_is_filter'] ?? null) ?? true,
                 normalizeBooleanFlag($field['proposed_is_for_all'] ?? null) ?? true,
@@ -5864,7 +5909,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
         $trackers = $item['target_tracker_ids'] ?? [];
         $currentStatus = $item['current_status'] ?? 'MATCH_FOUND';
         $nextStatus = $currentStatus === 'READY_FOR_UPDATE' ? 'MATCH_FOUND' : $currentStatus;
-        $format = $item['proposed_field_format'] ?? null;
+        $format = normalizeRedmineFieldFormat($item['proposed_field_format'] ?? null);
 
         $payload = ['custom_field' => []];
         if ($projects !== []) {
@@ -5875,7 +5920,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
         }
 
         $path = buildExtendedApiPath($extendedPrefix, sprintf('custom_fields/%d.json', $redmineId));
-        $isDependingField = strtolower((string)$format) === 'depending_list';
+        $isDependingField = $format === 'depending_enumeration';
 
         if ($isDependingField) {
             verifyDependingCustomFieldsApi($client);
@@ -6324,6 +6369,33 @@ function extractCreatedCustomFieldId(mixed $decoded): int
     }
 
     throw new RuntimeException('Unable to determine the new Redmine custom field ID from the extended API response.');
+}
+
+/**
+ * @return array<int, mixed>|null
+ */
+function extractCreatedCustomFieldEnumerations(mixed $decoded): ?array
+{
+    if (!is_array($decoded)) {
+        return null;
+    }
+
+    $candidates = [];
+    if (isset($decoded['custom_field']) && is_array($decoded['custom_field'])) {
+        $candidates[] = $decoded['custom_field']['enumerations'] ?? null;
+    }
+    if (isset($decoded['depending_custom_field']) && is_array($decoded['depending_custom_field'])) {
+        $candidates[] = $decoded['depending_custom_field']['enumerations'] ?? null;
+    }
+    $candidates[] = $decoded['enumerations'] ?? null;
+
+    foreach ($candidates as $candidate) {
+        if (is_array($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return null;
 }
 
 function extractExtendedApiErrorDetails(ResponseInterface $response): ?string

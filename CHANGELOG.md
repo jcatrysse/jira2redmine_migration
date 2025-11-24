@@ -6,12 +6,6 @@ All notable changes to this project will be documented in this file.
 
 - Migrate custom fields script:
     - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
-    - prefer enumerations to lists in Redmine: both lists and depending_lists.
-      - a new field redmine_custom_field_enumerations should be added to the migration_mapping_custom_fields, so on the push phase we capture the return value from the Redmine API, the enumerations id part where the id's of the values are kept.
-      - this based on the https://github.com/jcatrysse/redmine_depending_custom_fields to create custum fields with enumerations / depending_enumerations
-      - example json payload for depending_enumerations and enumerations and
-      - /depending_custom_fields/31.json: {"id":31,"name":"Keyed list child 1.1","description":"Keyed list child 1.1 description","type":"IssueCustomField","field_format":"depending_enumeration","is_required":false,"is_filter":true,"searchable":false,"visible":false,"multiple":true,"default_value":null,"url_pattern":"f","edit_tag_style":"","is_for_all":false,"trackers":[{"id":3,"name":"Support"}],"projects":[{"id":1,"name":"Test"},{"id":7,"name":"test - tim"}],"roles":[{"id":3,"name":"Manager"}],"enumerations":[{"id":6,"name":"Child 1.1 value 1.1","position":0,"active":true},{"id":7,"name":"Child 1.1 value 1.2","position":1,"active":true},{"id":18,"name":"Child 1.1 value 1.3","position":2,"active":true},{"id":12,"name":"Child 1.1 value 2.1","position":3,"active":true},{"id":13,"name":"Child 1.1 value 2.2","position":4,"active":true},{"id":19,"name":"Child 1.1 value 2.3","position":5,"active":true}],"parent_custom_field_id":30,"value_dependencies":{"10":["6","7","18"],"11":["12","13","19"]},"default_value_dependencies":{"10":"6","11":"12"},"hide_when_disabled":true}
-      - /depending_custom_fields/23.json: {"id":23,"name":"Phase","description":"Phase of the project","type":"IssueCustomField","field_format":"enumeration","is_required":true,"is_filter":true,"searchable":false,"visible":true,"multiple":false,"default_value":"","url_pattern":"","edit_tag_style":"","is_for_all":true,"trackers":[{"id":8,"name":"Change Request"},{"id":9,"name":"test_MSE"}],"projects":[],"roles":[],"enumerations":[{"id":1,"name":"Commercial Handover","position":0,"active":true},{"id":2,"name":"Preparation/MOB","position":1,"active":true},{"id":3,"name":"Site Operations","position":2,"active":true},{"id":4,"name":"Final Delivery","position":3,"active":true},{"id":5,"name":"Client","position":4,"active":true}]}
 - General: verify if all automation hashes align with the latest database schemas.
 - Fine-tune the attachments, issues, and journals scripts.
 - Verify ADF to Markdown conversion.
@@ -32,6 +26,21 @@ All notable changes to this project will be documented in this file.
   issue transform so push phase previews no longer rely on push-time cascading
   logic.
 - Bump the issues migration script version to `0.0.30`.
+
+## [0.0.61] - 2025-12-28
+
+- Prefer Redmine `enumeration` / `depending_enumeration` formats over the older
+  list variants when proposing and creating custom fields, normalizing legacy
+  values during push and manual review flows.
+- Bump the custom field migration script version to `0.0.61`.
+
+## [0.0.60] - 2025-12-28
+
+- Capture Redmine enumeration IDs when creating list and depending list custom
+  fields via the extended API, persisting them in
+  `migration_mapping_custom_fields.redmine_custom_field_enumerations` for
+  downstream mapping.
+- Bump the custom field migration script version to `0.0.60`.
 
 ## [0.0.58] - 2025-12-26
 
