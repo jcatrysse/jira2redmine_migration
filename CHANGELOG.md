@@ -4,8 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [TODO]
 
+- Changelog: dates are not correct, check commits for correct dates.
 - Migrate custom fields script:
     - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
+    - WARNING after push: [warning] Missing Redmine snapshot entry for custom field #24; re-run the redmine phase. No existing Redmine custom fields require association updates.
+         - Script should not use staging redmine table, but the updated vales from the mapping table.
+    - Enumeration and depending_enumerations are still created as lists.
+    - Enumeration id's from redmine are not returned in the mapping table.
 - General: verify if all automation hashes align with the latest database schemas.
 - Fine-tune the attachments, issues, and journals scripts.
 - Verify ADF to Markdown conversion.
@@ -15,7 +20,12 @@ All notable changes to this project will be documented in this file.
 - Create the missing scripts: labels/tags, (document) categories, milestones, watchers, checklists, relations, subtasks, workflows, custom workflows...
 - Validate we can push authors and creation timestamps to Redmine.
 
-## [0.0.59] - 2025-12-27
+## [0.0.62] - 2025-11-27
+
+- First attempt to implement the push phase for the custom fields migration script.
+- Some issues remain to be resolved.
+
+## [0.0.59] - 2025-11-27
 
 - Refactor issues migration: restore cascading fields logic (untested)
 - Resolve cascading parent custom field identifiers during the issue transform
@@ -27,14 +37,14 @@ All notable changes to this project will be documented in this file.
   logic.
 - Bump the issues migration script version to `0.0.30`.
 
-## [0.0.61] - 2025-12-28
+## [0.0.61] - 2025-11-28
 
 - Prefer Redmine `enumeration` / `depending_enumeration` formats over the older
   list variants when proposing and creating custom fields, normalizing legacy
   values during push and manual review flows.
 - Bump the custom field migration script version to `0.0.61`.
 
-## [0.0.60] - 2025-12-28
+## [0.0.60] - 2025-11-28
 
 - Capture Redmine enumeration IDs when creating list and depending list custom
   fields via the extended API, persisting them in
@@ -42,20 +52,20 @@ All notable changes to this project will be documented in this file.
   downstream mapping.
 - Bump the custom field migration script version to `0.0.60`.
 
-## [0.0.58] - 2025-12-26
+## [0.0.58] - 2025-11-26
 
 - Refresh cascading parent proposals during transform so tracker, role, project,
   and required/filter flags mirror the child field scopes even on reruns.
 - Bump the custom field migration script version to `0.0.58`.
 
-## [0.0.57] - 2025-12-25
+## [0.0.57] - 2025-11-25
 
 - Link cascading child mappings to their generated parent entries by storing the
   parent mapping identifier when a Redmine custom field ID is not yet
   available.
 - Bump the custom field migration script version to `0.0.57`.
 
-## [0.0.56] - 2025-12-24
+## [0.0.56] - 2025-11-24
 
 - Restore cascading fields logic for parents in the transform phase
 - Fix transform-phase updates that wrote `IGNORED` statuses so they also bind
@@ -63,13 +73,13 @@ All notable changes to this project will be documented in this file.
   cascading mappings.
 - Bump the custom field migration script version to `0.0.56`.
 
-## [0.0.55] - 2025-12-23
+## [0.0.55] - 2025-11-23
 
 - Flag cascading parent mappings as `depending_list` proposals, carrying over required/filter/scoping hints from the child field.
 - Populate `redmine_parent_custom_field_id` on cascading children and persist parent scopes (projects, trackers, roles) alongside generated parent proposals.
 - Bump the custom field migration script version to `0.0.55` and align the README references.
 
-## [0.0.52] - 2025-12-22
+## [0.0.52] - 2025-11-22
 
 - Persist cascading parent/child dependencies in `migration_mapping_custom_fields.proposed_value_dependencies` so transform and push
   phases can reuse the Redmine-ready map instead of re-parsing Jira payloads.
@@ -78,7 +88,7 @@ All notable changes to this project will be documented in this file.
 - Bump the custom field migration script version to `0.0.34` and extend the schema with the dependency column for depending-list
   automation.
  
-## [0.0.51] - 2025-12-21
+## [0.0.51] - 2025-11-21
 
 - Add first-class cascading custom field handling: detect Jira cascading selects during transform, retain parent/child identifiers, and
   build a child-to-parent lookup so dependent Redmine lists can be populated consistently via the plugin.
@@ -87,7 +97,7 @@ All notable changes to this project will be documented in this file.
 - Bump the custom field migration script version to `0.0.33` and the issues migration script version to `0.0.29`, updating the
   README to match the new cascading workflow guidance.
 
-## [0.0.50] - 2025-12-20
+## [0.0.50] - 2025-11-20
 
 - Decode Jira app custom object option payloads that embed JSON strings and
   extract their label lists so `jira_allowed_values` and downstream proposals
@@ -97,19 +107,19 @@ All notable changes to this project will be documented in this file.
 - Refactor object values extraction from issues to eliminate NULL and combined values.
 - Bump the custom field migration script version to `0.0.31`.
 
-## [0.0.49] - 2025-12-19
+## [0.0.49] - 2025-11-19
 
 - Allow object-schema Jira fields to derive list proposals from create-metadata allowed values, enabling automation instead of forced ignores.
 - Bump the custom field migration script version to `0.0.30`.
 
-## [0.0.48] - 2025-12-18
+## [0.0.48] - 2025-11-18
 
 - Concatenate Jira option lists from projects/issue types with divergent `allowedValues`
   into `proposed_default_value` so Redmine creations always see the union of values
   (parents/children flattened for cascading selects) instead of a `NULL` placeholder.
 - Bump the custom field migration script version to `0.0.29`.
 
-## [0.0.47] - 2025-12-17
+## [0.0.47] - 2025-11-17
 
 - Derive `proposed_is_required`, `proposed_is_filter`, `proposed_is_multiple`, and
   `proposed_default_value` from Jira create-metadata payloads so
@@ -121,7 +131,7 @@ All notable changes to this project will be documented in this file.
 - Surface the new derivations in the README and bump the custom field migration
   script version to `0.0.28`.
 
-## [0.0.46] - 2025-12-15
+## [0.0.46] - 2025-11-15
 
 - Automatically mark Jira custom fields with the `object` schema type as ignored
   during the transform phase when automation is allowed, keeping existing notes
@@ -133,7 +143,7 @@ All notable changes to this project will be documented in this file.
 - Added a post-create-metadata backfill step that enriches project/issue-type field assignments with data derived from staged Jira issues.
 - Implemented helpers to harvest missing field assignments and allowed values from staged issues, including metadata loading and normalization of observed values for storage
 
-## [0.0.45] - 2025-12-14
+## [0.0.45] - 2025-11-14
 
 - Automatically mark custom field mappings as ignored when Jira project or issue type scopes are empty
 - Treat `migration_mapping_trackers` and `migration_mapping_projects` as the
@@ -147,7 +157,7 @@ All notable changes to this project will be documented in this file.
 - Bump `07_migrate_trackers.php` to version `0.0.18` and update the README
   references.
 
-## [0.0.44] - 2025-12-13
+## [0.0.44] - 2025-11-13
 
 - Normalise and persist Jira `allowedValues` for every project/issue-type
   assignment, including cascading selects, by reusing the raw field payload when
@@ -163,7 +173,7 @@ All notable changes to this project will be documented in this file.
   `proposed_tracker_ids`, `proposed_possible_values`, `proposed_role_ids`, and
   `proposed_is_required`.
 
-## [0.0.43] - 2025-12-12
+## [0.0.43] - 2025-11-12
 
 - Persist `allowed_values_json` for every Jira field that exposes
   `allowedValues`, including system types such as project, issue type,
@@ -176,7 +186,7 @@ All notable changes to this project will be documented in this file.
 - Bump the custom field migration script version to `0.0.24` and align the
   README to reflect the new capability.
 
-## [0.0.42] - 2025-12-11
+## [0.0.42] - 2025-11-11
 
 - Ensure the Jira create-metadata extractor always requests expanded field
   definitions so project/issue-type rows capture allowed values, even for
@@ -186,7 +196,7 @@ All notable changes to this project will be documented in this file.
   Redmine project/tracker links. Bump the custom field migration script to
   version `0.0.23` and align the README reference.
 
-## [0.0.41] - 2025-12-10
+## [0.0.41] - 2025-11-10
 
 - Remove the unused Jira field context extraction tables and logic in favour of
   the project/issue-type create metadata flow, trimming the schema accordingly.
@@ -200,7 +210,7 @@ All notable changes to this project will be documented in this file.
 - Bump the custom field migration script version to `0.0.22` and align the
   README with the simplified extraction scope.
 
-## [0.0.37] - 2025-12-09
+## [0.0.37] - 2025-11-09
 
 - Capture Jira field schema hints and normalised allowed values in `staging_jira_project_issue_type_fields`, including
   `schema_type`, `schema_custom`, and `allowed_values_json`, so the transform phase can reason about select-like fields
@@ -211,14 +221,14 @@ All notable changes to this project will be documented in this file.
 - Harden custom field detection to avoid PHP version quirks, bump the custom field migration script version to `0.0.18`, and
   align the README references.
 
-## [0.0.36] - 2025-12-08
+## [0.0.36] - 2025-11-08
 
 - Switch the Jira create-metadata extraction to the scoped endpoints (`/issue/createmeta/{project}/issuetypes[/ {id}]`) so
   `staging_jira_project_issue_type_fields` reliably captures per-project issue type fields on Jira Cloud.
 - Add logging around project/issue-type discovery for easier debugging when create permissions or API responses are empty.
 - Bump the custom field migration script version to `0.0.17` and refresh the README references.
 
-## [0.0.35] - 2025-12-07
+## [0.0.35] - 2025-11-07
 
 - Iterate over staged Jira projects and their issue types via `/rest/api/3/issue/createmeta` to capture the fields exposed on
   each create screen in `staging_jira_project_issue_type_fields`, including required flags.
@@ -226,7 +236,7 @@ All notable changes to this project will be documented in this file.
   when Jira contexts are global.
 - Bump the custom field migration script version to `0.0.16` and refresh the README with the new extraction step.
 
-## [0.0.34] - 2025-12-06
+## [0.0.34] - 2025-11-06
 
 - Add an update path for custom field associations by extending `migration_mapping_custom_fields.migration_status` with
   `READY_FOR_UPDATE`, detecting missing project/tracker links during transform, and persisting the desired associations in the
@@ -237,7 +247,7 @@ All notable changes to this project will be documented in this file.
 - Surface the planned association changes in manual mode when the extended API is disabled and bump the custom field migration
   script version to `0.0.14` with refreshed documentation.
 
-## [0.0.33] - 2025-12-05
+## [0.0.33] - 2025-11-05
 
 - Capture Jira issue type usage per project by expanding `/rest/api/3/project/search` and store the associations in
   `staging_jira_issue_type_projects`, defaulting missing scopes to `GLOBAL` so mappings clearly distinguish project-scoped and
@@ -248,7 +258,7 @@ All notable changes to this project will be documented in this file.
 - Allow the project-link push plan to use the recorded project lists regardless of Jira scope so existing Redmine trackers are
   added to every mapped project, and bump the tracker CLI version to `0.0.16` with refreshed README guidance.
 
-## [0.0.32] - 2025-12-04
+## [0.0.32] - 2025-11-04
 
 - Capture Jira issue type scope and project IDs by fetching detailed payloads
   when the list response omits scope metadata, ensuring
@@ -259,7 +269,7 @@ All notable changes to this project will be documented in this file.
   update plan.
 - Bump the tracker CLI version to `0.0.15`.
 
-## [0.0.31] - 2025-12-03
+## [0.0.31] - 2025-11-03
 
 - Refresh the tracker snapshot via the extended API when available so project
   links, custom fields, and other tracker attributes are captured in
@@ -267,7 +277,7 @@ All notable changes to this project will be documented in this file.
   is unreachable.
 - Bump the tracker CLI version to `0.0.14`.
 
-## [0.0.30] - 2025-12-02
+## [0.0.30] - 2025-11-02
 
 - Record the mapped Redmine project IDs for project-scoped trackers in
   `migration_mapping_trackers.proposed_redmine_project_ids` so they can be
@@ -276,7 +286,7 @@ All notable changes to this project will be documented in this file.
   surface warnings if mappings are missing from the database snapshot.
 - Bump the tracker CLI version to `0.0.13`.
 
-## [0.0.29] - 2025-12-01
+## [0.0.29] - 2025-11-01
 
 - Link trackers to their mapped Redmine projects during the push phase, adding
   missing associations for project-scoped Jira issue types after tracker

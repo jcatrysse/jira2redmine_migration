@@ -10,7 +10,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.61';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.62';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
     'usage' => 'Analyse Jira custom field usage statistics from staging data.',
@@ -3283,7 +3283,12 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         $proposedFormat = $currentProposedFormat;
         $proposedIsRequired = $currentProposedIsRequired ?? false;
         $proposedIsFilter = $currentProposedIsFilter ?? true;
-        $proposedIsForAll = $currentProposedIsForAll ?? true;
+        $proposedIsForAll = normalizeBooleanFlag($row['proposed_is_for_all'] ?? null);
+
+        if ($proposedIsForAll === null) {
+            $proposedIsForAll = empty($currentProposedProjectIds);
+        }
+
         $proposedIsMultiple = $currentProposedIsMultiple ?? false;
         $proposedDefaultValue = $currentProposedDefaultValue;
 
@@ -5239,6 +5244,26 @@ function renderCustomFieldUpdatePlan(array $plan, bool $useExtendedApi): void
 function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi): void
 {
     $pendingFields = fetchCustomFieldsReadyForCreation($pdo);
+    usort(
+        $pendingFields,
+        static function (array $left, array $right): int {
+            $leftIsParent = isset($left['jira_field_id']) && str_starts_with((string)$left['jira_field_id'], 'cascading_parent:');
+            $rightIsParent = isset($right['jira_field_id']) && str_starts_with((string)$right['jira_field_id'], 'cascading_parent:');
+
+            if ($leftIsParent !== $rightIsParent) {
+                return $leftIsParent ? -1 : 1;
+            }
+
+            $leftDepending = normalizeRedmineFieldFormat($left['proposed_field_format'] ?? null) === 'depending_enumeration';
+            $rightDepending = normalizeRedmineFieldFormat($right['proposed_field_format'] ?? null) === 'depending_enumeration';
+
+            if ($leftDepending !== $rightDepending) {
+                return $leftDepending ? 1 : -1;
+            }
+
+            return strcmp((string)($left['jira_field_name'] ?? $left['jira_field_id']), (string)($right['jira_field_name'] ?? $right['jira_field_id']));
+        }
+    );
     $pendingCount = count($pendingFields);
 
     if ($useExtendedApi) {
@@ -5373,10 +5398,6 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                 } else {
                     printf("    Dependencies: [unavailable]%s", PHP_EOL);
                 }
-                printf(
-                    "    [manual] Cascading custom fields are prepared during transform; create parent/child fields in Redmine before confirming push.%s",
-                    PHP_EOL
-                );
             }
             if ($notes !== null) {
                 printf("    Notes: %s%s", $notes, PHP_EOL);
@@ -5420,6 +5441,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
         $successCount = 0;
         $failureCount = 0;
         $dependingApiChecked = false;
+        $createdFieldCache = [];
 
         foreach ($pendingFields as $field) {
             $mappingId = (int)$field['mapping_id'];
@@ -5443,80 +5465,323 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
 
             $rawParentId = $field['redmine_parent_custom_field_id'] ?? null;
             $redmineParentId = null;
+            $parentMappingId = null;
+            $parentEnumerations = [];
             if ($rawParentId !== null && trim((string)$rawParentId) !== '') {
-                $redmineParentId = (int)$rawParentId;
+                $normalizedParent = (int)$rawParentId;
+                if (isset($createdFieldCache[$normalizedParent])) {
+                    $redmineParentId = $createdFieldCache[$normalizedParent]['id'];
+                    $parentEnumerations = $createdFieldCache[$normalizedParent]['enumerations'] ?? [];
+                    $parentMappingId = $normalizedParent;
+                } else {
+                    $parentLookup = fetchCustomFieldMappingById($pdo, $normalizedParent);
+                    if ($parentLookup !== null) {
+                        $parentMappingId = $normalizedParent;
+                        if (isset($parentLookup['redmine_custom_field_id']) && $parentLookup['redmine_custom_field_id'] !== null) {
+                            $redmineParentId = (int)$parentLookup['redmine_custom_field_id'];
+                        }
+                        $parentEnumerationsRaw = $parentLookup['redmine_custom_field_enumerations'] ?? null;
+                        $parentEnumerationsDecoded = decodeJsonColumn($parentEnumerationsRaw);
+                        if (is_array($parentEnumerationsDecoded)) {
+                            $parentEnumerations = $parentEnumerationsDecoded;
+                        }
+                    } else {
+                        $redmineParentId = $normalizedParent;
+                    }
+                }
             }
 
+            $isCascadingParent = isset($field['jira_field_id']) && str_starts_with((string)$field['jira_field_id'], 'cascading_parent:');
             $effectiveName = $proposedName ?? ($jiraName ?? $jiraId);
-            $effectiveFormat = $proposedFormat ?? 'string';
-            $isDependingField = $effectiveFormat === 'depending_enumeration';
+            $effectiveFormat = $isCascadingParent ? 'list' : ($proposedFormat ?? 'string');
+            $isDependingField = !$isCascadingParent && $effectiveFormat === 'depending_enumeration';
 
             if ($isDependingField) {
-                $manualMessage = 'Cascading custom fields must be created manually using the transform-generated parent mapping.';
-                $automationHash = computeCustomFieldAutomationStateHash(
-                    null,
-                    'MANUAL_INTERVENTION_REQUIRED',
-                    $effectiveName,
-                    $effectiveFormat,
-                    $proposedIsRequired,
-                    $proposedIsFilter,
-                    $proposedIsForAll,
-                    $proposedIsMultiple,
-                    encodeJsonColumn($proposedPossibleValues),
-                    encodeJsonColumn($proposedValueDependencies),
-                    $proposedDefaultValue,
-                    encodeJsonColumn($proposedTrackerIds),
-                    encodeJsonColumn($proposedRoleIds),
-                    encodeJsonColumn($proposedProjectIds),
-                    $manualMessage,
-                    $redmineParentId,
-                    null
-                );
+                if (!$dependingApiChecked) {
+                    verifyDependingCustomFieldsApi($redmineClient);
+                    $dependingApiChecked = true;
+                }
 
-                $updateStatement->execute([
-                    'redmine_custom_field_id' => null,
-                    'redmine_parent_custom_field_id' => $redmineParentId,
-                    'redmine_custom_field_enumerations' => null,
-                    'migration_status' => 'MANUAL_INTERVENTION_REQUIRED',
-                    'notes' => $manualMessage,
-                    'proposed_redmine_name' => $effectiveName,
-                    'proposed_field_format' => $effectiveFormat,
-                    'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
-                    'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
-                    'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
-                    'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
-                    'proposed_possible_values' => encodeJsonColumn($proposedPossibleValues),
-                    'proposed_value_dependencies' => encodeJsonColumn($proposedValueDependencies),
-                    'proposed_default_value' => $proposedDefaultValue,
-                    'proposed_tracker_ids' => encodeJsonColumn($proposedTrackerIds),
-                    'proposed_role_ids' => encodeJsonColumn($proposedRoleIds),
-                    'proposed_project_ids' => encodeJsonColumn($proposedProjectIds),
-                    'automation_hash' => $automationHash,
-                    'mapping_id' => $mappingId,
-                ]);
+                $enumerationPayload = [];
+                if (is_array($proposedPossibleValues)) {
+                    $position = 1;
+                    foreach ($proposedPossibleValues as $value) {
+                        $label = is_array($value)
+                            ? ($value['value'] ?? ($value['name'] ?? null))
+                            : $value;
+                        if ($label === null) {
+                            continue;
+                        }
+                        $enumerationPayload[] = ['name' => (string)$label, 'position' => $position++];
+                    }
+                }
 
-                printf(
-                    "  [manual] Jira custom field %s (%s): %s%s",
-                    $jiraName ?? $jiraId,
-                    $jiraId,
-                    $manualMessage,
-                    PHP_EOL
-                );
+                if ($redmineParentId === null && $parentMappingId !== null && !$isDryRun) {
+                    $parentRow = fetchCustomFieldMappingById($pdo, $parentMappingId);
+                    if ($parentRow !== null) {
+                        $parentCreation = createStandardCustomField(
+                            $pdo,
+                            $redmineClient,
+                            $endpoint,
+                            $parentRow,
+                            $updateStatement,
+                            $createdFieldCache,
+                            $isDryRun,
+                            true,
+                            true
+                        );
+                        if ($parentCreation !== null) {
+                            $redmineParentId = $parentCreation['id'];
+                            $parentEnumerations = $parentCreation['enumerations'];
+                        }
+                    }
+                }
 
-                $failureCount++;
+                if ($redmineParentId === null) {
+                    $manualMessage = 'Cascading custom fields require a resolved parent custom field before creation.';
+                    $automationHash = computeCustomFieldAutomationStateHash(
+                        null,
+                        'CREATION_FAILED',
+                        $effectiveName,
+                        $effectiveFormat,
+                        $proposedIsRequired,
+                        $proposedIsFilter,
+                        $proposedIsForAll,
+                        $proposedIsMultiple,
+                        encodeJsonColumn($proposedPossibleValues),
+                        encodeJsonColumn($proposedValueDependencies),
+                        $proposedDefaultValue,
+                        encodeJsonColumn($proposedTrackerIds),
+                        encodeJsonColumn($proposedRoleIds),
+                        encodeJsonColumn($proposedProjectIds),
+                        $manualMessage,
+                        $parentMappingId,
+                        null
+                    );
+
+                    $updateStatement->execute([
+                        'redmine_custom_field_id' => null,
+                        'redmine_parent_custom_field_id' => $parentMappingId,
+                        'redmine_custom_field_enumerations' => null,
+                        'migration_status' => 'CREATION_FAILED',
+                        'notes' => $manualMessage,
+                        'proposed_redmine_name' => $effectiveName,
+                        'proposed_field_format' => $effectiveFormat,
+                        'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
+                        'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
+                        'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
+                        'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
+                        'proposed_possible_values' => encodeJsonColumn($proposedPossibleValues),
+                        'proposed_value_dependencies' => encodeJsonColumn($proposedValueDependencies),
+                        'proposed_default_value' => $proposedDefaultValue,
+                        'proposed_tracker_ids' => encodeJsonColumn($proposedTrackerIds),
+                        'proposed_role_ids' => encodeJsonColumn($proposedRoleIds),
+                        'proposed_project_ids' => encodeJsonColumn($proposedProjectIds),
+                        'automation_hash' => $automationHash,
+                        'mapping_id' => $mappingId,
+                    ]);
+
+                    printf(
+                        "  [failed] Jira custom field %s (%s): unable to resolve cascading parent ID.%s",
+                        $jiraName ?? $jiraId,
+                        $jiraId,
+                        PHP_EOL
+                    );
+                    $failureCount++;
+                    continue;
+                }
+
+                $parentLabelToId = [];
+                foreach ($parentEnumerations as $parentEnum) {
+                    $parentName = trim((string)($parentEnum['name'] ?? ($parentEnum['value'] ?? '')));
+                    if ($parentName === '') {
+                        continue;
+                    }
+                    $parentId = $parentEnum['id'] ?? null;
+                    if ($parentId !== null) {
+                        $parentLabelToId[$parentName] = (int)$parentId;
+                    }
+                }
+
+                $normalizedDependencies = [];
+                if (is_array($proposedValueDependencies)) {
+                    foreach ($proposedValueDependencies as $parentLabel => $children) {
+                        $parentKey = $parentLabel;
+                        if (isset($parentLabelToId[$parentLabel])) {
+                            $parentKey = (string)$parentLabelToId[$parentLabel];
+                        }
+                        $normalizedDependencies[$parentKey] = [];
+                        if (!is_array($children)) {
+                            continue;
+                        }
+                        foreach ($children as $childValue) {
+                            $childLabel = is_array($childValue)
+                                ? ($childValue['value'] ?? ($childValue['name'] ?? null))
+                                : $childValue;
+                            if ($childLabel === null) {
+                                continue;
+                            }
+                            $normalizedDependencies[$parentKey][] = (string)$childLabel;
+                        }
+                    }
+                }
+
+                $dependingPayload = [
+                    'custom_field' => [
+                        'name' => $effectiveName,
+                        'type' => 'IssueCustomField',
+                        'field_format' => $effectiveFormat,
+                        'enumerations' => $enumerationPayload,
+                        'is_required' => $proposedIsRequired,
+                        'is_filter' => $proposedIsFilter,
+                        'is_for_all' => $proposedIsForAll,
+                        'multiple' => $proposedIsMultiple,
+                        'parent_custom_field_id' => $redmineParentId,
+                    ],
+                ];
+
+                if ($normalizedDependencies !== []) {
+                    $dependingPayload['custom_field']['value_dependencies'] = $normalizedDependencies;
+                }
+                if ($proposedTrackerIds !== null) {
+                    $dependingPayload['custom_field']['tracker_ids'] = $proposedTrackerIds;
+                }
+                if ($proposedRoleIds !== null) {
+                    $dependingPayload['custom_field']['role_ids'] = $proposedRoleIds;
+                }
+                if ($proposedProjectIds !== null) {
+                    $dependingPayload['custom_field']['project_ids'] = $proposedProjectIds;
+                }
+
+                try {
+                    $response = $redmineClient->post('/depending_custom_fields.json', ['json' => $dependingPayload]);
+                    $decoded = decodeJsonResponse($response);
+                    $newFieldId = extractCreatedCustomFieldId($decoded);
+                    $newEnumerations = extractCreatedCustomFieldEnumerations($decoded);
+                    $encodedEnumerations = encodeJsonColumn($newEnumerations);
+
+                    $automationHash = computeCustomFieldAutomationStateHash(
+                        $newFieldId,
+                        'CREATION_SUCCESS',
+                        $effectiveName,
+                        $effectiveFormat,
+                        $proposedIsRequired,
+                        $proposedIsFilter,
+                        $proposedIsForAll,
+                        $proposedIsMultiple,
+                        encodeJsonColumn($proposedPossibleValues),
+                        encodeJsonColumn($proposedValueDependencies),
+                        $proposedDefaultValue,
+                        encodeJsonColumn($proposedTrackerIds),
+                        encodeJsonColumn($proposedRoleIds),
+                        encodeJsonColumn($proposedProjectIds),
+                        null,
+                        $redmineParentId,
+                        $encodedEnumerations
+                    );
+
+                    $updateStatement->execute([
+                        'redmine_custom_field_id' => $newFieldId,
+                        'redmine_parent_custom_field_id' => $redmineParentId,
+                        'redmine_custom_field_enumerations' => $encodedEnumerations,
+                        'migration_status' => 'CREATION_SUCCESS',
+                        'notes' => null,
+                        'proposed_redmine_name' => $effectiveName,
+                        'proposed_field_format' => $effectiveFormat,
+                        'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
+                        'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
+                        'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
+                        'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
+                        'proposed_possible_values' => encodeJsonColumn($proposedPossibleValues),
+                        'proposed_value_dependencies' => encodeJsonColumn($proposedValueDependencies),
+                        'proposed_default_value' => $proposedDefaultValue,
+                        'proposed_tracker_ids' => encodeJsonColumn($proposedTrackerIds),
+                        'proposed_role_ids' => encodeJsonColumn($proposedRoleIds),
+                        'proposed_project_ids' => encodeJsonColumn($proposedProjectIds),
+                        'automation_hash' => $automationHash,
+                        'mapping_id' => $mappingId,
+                    ]);
+
+                    $createdFieldCache[$mappingId] = ['id' => $newFieldId, 'enumerations' => $newEnumerations];
+
+                    printf(
+                        "  [created] Jira custom field %s (%s) -> Redmine depending field #%d (parent #%d).%s",
+                        $jiraName ?? $jiraId,
+                        $jiraId,
+                        $newFieldId,
+                        $redmineParentId,
+                        PHP_EOL
+                    );
+
+                    $successCount++;
+                } catch (Throwable $exception) {
+                    $errorMessage = summarizeExtendedApiError($exception);
+                    $automationHash = computeCustomFieldAutomationStateHash(
+                        null,
+                        'CREATION_FAILED',
+                        $effectiveName,
+                        $effectiveFormat,
+                        $proposedIsRequired,
+                        $proposedIsFilter,
+                        $proposedIsForAll,
+                        $proposedIsMultiple,
+                        encodeJsonColumn($proposedPossibleValues),
+                        encodeJsonColumn($proposedValueDependencies),
+                        $proposedDefaultValue,
+                        encodeJsonColumn($proposedTrackerIds),
+                        encodeJsonColumn($proposedRoleIds),
+                        encodeJsonColumn($proposedProjectIds),
+                        $errorMessage,
+                        $redmineParentId,
+                        null
+                    );
+
+                    $updateStatement->execute([
+                        'redmine_custom_field_id' => null,
+                        'redmine_parent_custom_field_id' => $redmineParentId,
+                        'redmine_custom_field_enumerations' => null,
+                        'migration_status' => 'CREATION_FAILED',
+                        'notes' => $errorMessage,
+                        'proposed_redmine_name' => $effectiveName,
+                        'proposed_field_format' => $effectiveFormat,
+                        'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
+                        'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
+                        'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
+                        'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
+                        'proposed_possible_values' => encodeJsonColumn($proposedPossibleValues),
+                        'proposed_value_dependencies' => encodeJsonColumn($proposedValueDependencies),
+                        'proposed_default_value' => $proposedDefaultValue,
+                        'proposed_tracker_ids' => encodeJsonColumn($proposedTrackerIds),
+                        'proposed_role_ids' => encodeJsonColumn($proposedRoleIds),
+                        'proposed_project_ids' => encodeJsonColumn($proposedProjectIds),
+                        'automation_hash' => $automationHash,
+                        'mapping_id' => $mappingId,
+                    ]);
+
+                    printf(
+                        "  [failed] Jira custom field %s (%s): %s%s",
+                        $jiraName ?? $jiraId,
+                        $jiraId,
+                        $errorMessage,
+                        PHP_EOL
+                    );
+
+                    $failureCount++;
+                }
+
                 continue;
             }
 
             // Standard custom field creation via extended API
             $payload = [
+                'type' => 'IssueCustomField',   // <-- ROOT, niet in custom_field
                 'custom_field' => [
-                    'name' => $effectiveName,
+                    'name'         => $effectiveName,
                     'field_format' => $effectiveFormat,
-                    'customized_type' => 'issue',
-                    'is_required' => $proposedIsRequired,
-                    'is_filter' => $proposedIsFilter,
-                    'is_for_all' => $proposedIsForAll,
-                    'multiple' => $proposedIsMultiple,
+                    'is_required'  => $proposedIsRequired,
+                    'is_filter'    => $proposedIsFilter,
+                    'multiple'     => $proposedIsMultiple,
+                    // is_for_all vullen we hieronder afhankelijk van project_ids
                 ],
             ];
 
@@ -5529,11 +5794,17 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             if ($proposedTrackerIds !== null) {
                 $payload['custom_field']['tracker_ids'] = $proposedTrackerIds;
             }
-            if ($proposedRoleIds !== null) {
+            if ($proposedRoleIds !== null && $proposedRoleIds !== []) {
                 $payload['custom_field']['role_ids'] = $proposedRoleIds;
             }
-            if ($proposedProjectIds !== null) {
+
+            if ($proposedProjectIds !== null && $proposedProjectIds !== []) {
+                // veld enkel voor bepaalde projecten
                 $payload['custom_field']['project_ids'] = $proposedProjectIds;
+                $payload['custom_field']['is_for_all']   = false;
+            } else {
+                // geen expliciete projecten → laat voorstel beslissen, of default naar true
+                $payload['custom_field']['is_for_all'] = $proposedIsForAll ?? true;
             }
 
             try {
@@ -5584,6 +5855,8 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                     'automation_hash' => $automationHash,
                     'mapping_id' => $mappingId,
                 ]);
+
+                $createdFieldCache[$mappingId] = ['id' => $newFieldId, 'enumerations' => $newEnumerations];
 
                 printf(
                     "  [created] Jira custom field %s (%s) -> Redmine custom field #%d.%s",
@@ -5872,6 +6145,246 @@ function fetchCustomFieldsReadyForCreation(PDO $pdo): array
     }
 
     return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+/**
+ * @return array<string, mixed>|null
+ */
+function fetchCustomFieldMappingById(PDO $pdo, int $mappingId): ?array
+{
+    $sql = <<<SQL
+        SELECT
+            mapping_id,
+            jira_field_id,
+            jira_field_name,
+            proposed_redmine_name,
+            proposed_field_format,
+            proposed_is_required,
+            proposed_is_filter,
+            proposed_is_for_all,
+            proposed_is_multiple,
+            proposed_possible_values,
+            proposed_value_dependencies,
+            proposed_default_value,
+            proposed_tracker_ids,
+            proposed_role_ids,
+            proposed_project_ids,
+            notes,
+            jira_allowed_values,
+            redmine_parent_custom_field_id,
+            redmine_custom_field_id,
+            redmine_custom_field_enumerations,
+            migration_status
+        FROM migration_mapping_custom_fields
+        WHERE mapping_id = :mapping_id
+        LIMIT 1
+    SQL;
+
+    $statement = $pdo->prepare($sql);
+    if ($statement === false) {
+        throw new RuntimeException('Failed to prepare custom field mapping lookup statement.');
+    }
+
+    $statement->execute(['mapping_id' => $mappingId]);
+    $row = $statement->fetch(PDO::FETCH_ASSOC) ?: null;
+    $statement->closeCursor();
+
+    return $row !== false ? $row : null;
+}
+
+/**
+ * Bootstrap creation of a standard Redmine custom field via the extended API.
+ *
+ * @param array<string, mixed> $field
+ * @param array<int, array{id: int, enumerations: array<int, mixed>|null}> $createdFieldCache
+ * @return array{id: int, enumerations: array<int, mixed>|null}|null
+ */
+function createStandardCustomField(
+    PDO $pdo,
+    Client $redmineClient,
+    string $endpoint,
+    array $field,
+    PDOStatement $updateStatement,
+    array &$createdFieldCache,
+    bool $isDryRun,
+    bool $suppressOutput = false,
+    bool $forceListFormat = false
+): ?array {
+    $mappingId = (int)$field['mapping_id'];
+    $jiraId = (string)($field['jira_field_id'] ?? $mappingId);
+    $jiraName = $field['jira_field_name'] ?? null;
+    $proposedName = $field['proposed_redmine_name'] ?? null;
+    $proposedFormat = normalizeRedmineFieldFormat($field['proposed_field_format'] ?? null);
+    $proposedIsRequired = normalizeBooleanFlag($field['proposed_is_required'] ?? null) ?? false;
+    $proposedIsFilter = normalizeBooleanFlag($field['proposed_is_filter'] ?? null) ?? true;
+    $proposedIsForAll = normalizeBooleanFlag($field['proposed_is_for_all'] ?? null) ?? true;
+    $proposedIsMultiple = normalizeBooleanFlag($field['proposed_is_multiple'] ?? null) ?? false;
+    $proposedPossibleValues = decodeJsonColumn($field['proposed_possible_values'] ?? null);
+    $proposedValueDependencies = decodeJsonColumn($field['proposed_value_dependencies'] ?? null);
+    $proposedDefaultValue = $field['proposed_default_value'] ?? null;
+    $proposedTrackerIds = decodeJsonColumn($field['proposed_tracker_ids'] ?? null);
+    $proposedRoleIds = decodeJsonColumn($field['proposed_role_ids'] ?? null);
+    $proposedProjectIds = decodeJsonColumn($field['proposed_project_ids'] ?? null);
+    $notes = $field['notes'] ?? null;
+
+    $effectiveName = $proposedName ?? ($jiraName ?? $jiraId);
+    $effectiveFormat = $forceListFormat ? 'list' : ($proposedFormat ?? 'string');
+
+    $payload = [
+        'type' => 'IssueCustomField',
+        'custom_field' => [
+            'name' => $effectiveName,
+            'field_format' => $effectiveFormat,
+            'customized_type' => 'issue',
+            'is_required' => $proposedIsRequired,
+            'is_filter' => $proposedIsFilter,
+            'multiple' => $proposedIsMultiple,
+        ],
+    ];
+
+    if ($proposedProjectIds !== null && $proposedProjectIds !== []) {
+        $payload['custom_field']['project_ids'] = $proposedProjectIds;
+        $payload['custom_field']['is_for_all'] = false;
+    } else {
+        // geen project_ids → alle projecten
+        $payload['custom_field']['is_for_all'] = true;
+    }
+
+    if ($proposedPossibleValues !== null) {
+        $payload['custom_field']['possible_values'] = $proposedPossibleValues;
+    }
+    if ($proposedDefaultValue !== null) {
+        $payload['custom_field']['default_value'] = $proposedDefaultValue;
+    }
+    if ($proposedTrackerIds !== null) {
+        $payload['custom_field']['tracker_ids'] = $proposedTrackerIds;
+    }
+    if ($proposedRoleIds !== null && $proposedRoleIds !== []) {
+        $payload['custom_field']['role_ids'] = $proposedRoleIds;
+    }
+
+    if ($isDryRun) {
+        return null;
+    }
+
+    try {
+        $response = $redmineClient->post($endpoint, ['json' => $payload]);
+        $decoded = decodeJsonResponse($response);
+        $newFieldId = extractCreatedCustomFieldId($decoded);
+        $newEnumerations = extractCreatedCustomFieldEnumerations($decoded);
+        $encodedEnumerations = encodeJsonColumn($newEnumerations);
+
+        $automationHash = computeCustomFieldAutomationStateHash(
+            $newFieldId,
+            'CREATION_SUCCESS',
+            $effectiveName,
+            $effectiveFormat,
+            $proposedIsRequired,
+            $proposedIsFilter,
+            $proposedIsForAll,
+            $proposedIsMultiple,
+            encodeJsonColumn($proposedPossibleValues),
+            encodeJsonColumn($proposedValueDependencies),
+            $proposedDefaultValue,
+            encodeJsonColumn($proposedTrackerIds),
+            encodeJsonColumn($proposedRoleIds),
+            encodeJsonColumn($proposedProjectIds),
+            null,
+            null,
+            $encodedEnumerations
+        );
+
+        $updateStatement->execute([
+            'redmine_custom_field_id' => $newFieldId,
+            'redmine_parent_custom_field_id' => null,
+            'redmine_custom_field_enumerations' => $encodedEnumerations,
+            'migration_status' => 'CREATION_SUCCESS',
+            'notes' => $notes,
+            'proposed_redmine_name' => $effectiveName,
+            'proposed_field_format' => $effectiveFormat,
+            'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
+            'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
+            'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
+            'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
+            'proposed_possible_values' => encodeJsonColumn($proposedPossibleValues),
+            'proposed_value_dependencies' => encodeJsonColumn($proposedValueDependencies),
+            'proposed_default_value' => $proposedDefaultValue,
+            'proposed_tracker_ids' => encodeJsonColumn($proposedTrackerIds),
+            'proposed_role_ids' => encodeJsonColumn($proposedRoleIds),
+            'proposed_project_ids' => encodeJsonColumn($proposedProjectIds),
+            'automation_hash' => $automationHash,
+            'mapping_id' => $mappingId,
+        ]);
+
+        $createdFieldCache[$mappingId] = ['id' => $newFieldId, 'enumerations' => $newEnumerations];
+
+        if (!$suppressOutput) {
+            printf(
+                "  [created] Jira custom field %s (%s) -> Redmine custom field #%d.%s",
+                $jiraName ?? $jiraId,
+                $jiraId,
+                $newFieldId,
+                PHP_EOL
+            );
+        }
+
+        return ['id' => $newFieldId, 'enumerations' => $newEnumerations];
+    } catch (Throwable $exception) {
+        $errorMessage = summarizeExtendedApiError($exception);
+        $automationHash = computeCustomFieldAutomationStateHash(
+            null,
+            'CREATION_FAILED',
+            $effectiveName,
+            $effectiveFormat,
+            $proposedIsRequired,
+            $proposedIsFilter,
+            $proposedIsForAll,
+            $proposedIsMultiple,
+            encodeJsonColumn($proposedPossibleValues),
+            encodeJsonColumn($proposedValueDependencies),
+            $proposedDefaultValue,
+            encodeJsonColumn($proposedTrackerIds),
+            encodeJsonColumn($proposedRoleIds),
+            encodeJsonColumn($proposedProjectIds),
+            $errorMessage,
+            null,
+            null
+        );
+
+        $updateStatement->execute([
+            'redmine_custom_field_id' => null,
+            'redmine_parent_custom_field_id' => null,
+            'redmine_custom_field_enumerations' => null,
+            'migration_status' => 'CREATION_FAILED',
+            'notes' => $errorMessage,
+            'proposed_redmine_name' => $effectiveName,
+            'proposed_field_format' => $effectiveFormat,
+            'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
+            'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
+            'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
+            'proposed_is_multiple' => normalizeBooleanDatabaseValue($proposedIsMultiple),
+            'proposed_possible_values' => encodeJsonColumn($proposedPossibleValues),
+            'proposed_value_dependencies' => encodeJsonColumn($proposedValueDependencies),
+            'proposed_default_value' => $proposedDefaultValue,
+            'proposed_tracker_ids' => encodeJsonColumn($proposedTrackerIds),
+            'proposed_role_ids' => encodeJsonColumn($proposedRoleIds),
+            'proposed_project_ids' => encodeJsonColumn($proposedProjectIds),
+            'automation_hash' => $automationHash,
+            'mapping_id' => $mappingId,
+        ]);
+
+        if (!$suppressOutput) {
+            printf(
+                "  [failed] Jira custom field %s (%s): %s%s",
+                $jiraName ?? $jiraId,
+                $jiraId,
+                $errorMessage,
+                PHP_EOL
+            );
+        }
+    }
+
+    return null;
 }
 
 /**
@@ -6239,7 +6752,20 @@ function decodeJsonResponse(ResponseInterface $response): mixed
     try {
         return json_decode($body, true, 512, JSON_THROW_ON_ERROR);
     } catch (JsonException $exception) {
-        throw new RuntimeException('Failed to decode JSON response: ' . $exception->getMessage(), 0, $exception);
+        $preview = preg_replace('/\s+/', ' ', substr($body, 0, 300));
+        if ($preview === false) {
+            $preview = '';
+        }
+        if (strlen($body) > 300) {
+            $preview .= '...';
+        }
+
+        $message = 'Failed to decode JSON response: ' . $exception->getMessage();
+        if ($preview !== '') {
+            $message .= ' (body preview: ' . $preview . ')';
+        }
+
+        throw new RuntimeException($message, 0, $exception);
     }
 }
 
