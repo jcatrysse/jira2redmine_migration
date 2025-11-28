@@ -10,7 +10,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.62';
+const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.65';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira custom fields into staging_jira_fields.',
     'usage' => 'Analyse Jira custom field usage statistics from staging data.',
@@ -2989,7 +2989,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         UPDATE migration_mapping_custom_fields
         SET
             redmine_custom_field_id = :redmine_custom_field_id,
-            redmine_parent_custom_field_id = :redmine_parent_custom_field_id,
+            mapping_parent_custom_field_id = :mapping_parent_custom_field_id,
             migration_status = :migration_status,
             notes = :notes,
             proposed_redmine_name = :proposed_redmine_name,
@@ -3021,7 +3021,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             jira_issue_type_ids,
             jira_allowed_values,
             redmine_custom_field_id,
-            redmine_parent_custom_field_id,
+            mapping_parent_custom_field_id,
             proposed_redmine_name,
             proposed_field_format,
             proposed_is_required,
@@ -3138,7 +3138,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             continue;
         }
         $currentRedmineId = isset($row['redmine_custom_field_id']) ? (int)$row['redmine_custom_field_id'] : null;
-        $currentRedmineParentId = isset($row['redmine_parent_custom_field_id']) ? (int)$row['redmine_parent_custom_field_id'] : null;
+        $currentParentMappingId = isset($row['mapping_parent_custom_field_id']) ? (int)$row['mapping_parent_custom_field_id'] : null;
         $currentRedmineEnumerations = isset($row['redmine_custom_field_enumerations'])
             ? (string)$row['redmine_custom_field_enumerations']
             : null;
@@ -3258,7 +3258,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             $currentProposedRoleIdsRaw,
             $currentProposedProjectIdsRaw,
             $currentNotes,
-            $currentRedmineParentId,
+            $currentParentMappingId,
             $currentRedmineEnumerations
         );
 
@@ -3351,13 +3351,13 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 $proposedRoleIdsJson,
                 $proposedProjectIdsJson,
                 $notes,
-                $currentRedmineParentId,
+                $currentParentMappingId,
                 $currentRedmineEnumerations
             );
 
             $updateStatement->execute([
                 'redmine_custom_field_id' => $currentRedmineId,
-                'redmine_parent_custom_field_id' => $currentRedmineParentId,
+                'mapping_parent_custom_field_id' => $currentParentMappingId,
                 'migration_status' => 'IGNORED',
                 'notes' => $notes,
                 'proposed_redmine_name' => $proposedName,
@@ -3418,13 +3418,13 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 $proposedRoleIdsJson,
                 $proposedProjectIdsJson,
                 $notes,
-                $currentRedmineParentId,
+                $currentParentMappingId,
                 $currentRedmineEnumerations
             );
 
             $updateStatement->execute([
                 'redmine_custom_field_id' => $currentRedmineId,
-                'redmine_parent_custom_field_id' => $currentRedmineParentId,
+                'mapping_parent_custom_field_id' => $currentParentMappingId,
                 'migration_status' => 'IGNORED',
                 'notes' => $notes,
                 'proposed_redmine_name' => $proposedName,
@@ -3523,13 +3523,13 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 $proposedRoleIdsJson,
                 $proposedProjectIdsJson,
                 $notes,
-                $currentRedmineParentId,
+                $currentParentMappingId,
                 $currentRedmineEnumerations
             );
 
             $updateStatement->execute([
                 'redmine_custom_field_id' => $currentRedmineId,
-                'redmine_parent_custom_field_id' => $currentRedmineParentId,
+                'mapping_parent_custom_field_id' => $currentParentMappingId,
                 'migration_status' => 'IGNORED',
                 'notes' => $notes,
                 'proposed_redmine_name' => $proposedName,
@@ -3589,13 +3589,13 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 $proposedRoleIdsJson,
                 $proposedProjectIdsJson,
                 $notes,
-                $currentRedmineParentId,
+                $currentParentMappingId,
                 $currentRedmineEnumerations
             );
 
             $updateStatement->execute([
                 'redmine_custom_field_id' => $currentRedmineId,
-                'redmine_parent_custom_field_id' => $currentRedmineParentId,
+                'mapping_parent_custom_field_id' => $currentParentMappingId,
                 'migration_status' => 'IGNORED',
                 'notes' => $notes,
                 'proposed_redmine_name' => $proposedName,
@@ -3746,11 +3746,14 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 }
 
                 if ($parentRedmineId !== null) {
-                    $currentRedmineParentId = $parentRedmineId;
                     $infoNotes[] = sprintf('Linked to existing cascading parent Redmine custom field #%d.', $parentRedmineId);
-                } elseif ($currentRedmineParentId === null && $parentMappingId !== null) {
-                    $currentRedmineParentId = $parentMappingId;
-                    $infoNotes[] = sprintf('Linked to cascading parent mapping entry #%d (pending Redmine ID).', $parentMappingId);
+                }
+
+                if ($parentMappingId !== null) {
+                    $currentParentMappingId = $parentMappingId;
+                    if ($parentRedmineId === null) {
+                        $infoNotes[] = sprintf('Linked to cascading parent mapping entry #%d (pending Redmine ID).', $parentMappingId);
+                    }
                 }
 
                 $infoNotes[] = sprintf(
@@ -3879,7 +3882,7 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             $newStatus = 'MATCH_FOUND';
             $newRedmineId = (int)$matchedRedmine['id'];
             $proposedName = normalizeString($matchedRedmine['name'], 255) ?? $proposedName;
-            $proposedFormat = $matchedRedmine['field_format'] ?? $proposedFormat;
+            $proposedFormat = normalizeRedmineFieldFormat($matchedRedmine['field_format'] ?? $proposedFormat);
             $proposedIsRequired = normalizeBooleanFlag($matchedRedmine['is_required'] ?? null) ?? $proposedIsRequired;
             $proposedIsFilter = normalizeBooleanFlag($matchedRedmine['is_filter'] ?? null) ?? $proposedIsFilter;
             $proposedIsForAll = normalizeBooleanFlag($matchedRedmine['is_for_all'] ?? null) ?? $proposedIsForAll;
@@ -3911,6 +3914,9 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                 $proposedProjectIds = array_values($existingProjectIds);
             }
         }
+
+        // Normalize legacy Redmine "list"/"depending_list" formats before hashing and persistence.
+        $proposedFormat = normalizeRedmineFieldFormat($proposedFormat);
 
         $derivedProjectIds = [];
         $missingProjectIds = [];
@@ -4022,13 +4028,13 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             $proposedRoleIdsJson,
             $proposedProjectIdsJson,
             $notes,
-            $currentRedmineParentId,
+            $currentParentMappingId,
             $currentRedmineEnumerations
         );
 
         $updateStatement->execute([
             'redmine_custom_field_id' => $newRedmineId,
-            'redmine_parent_custom_field_id' => $currentRedmineParentId,
+            'mapping_parent_custom_field_id' => $currentParentMappingId,
             'migration_status' => $newStatus,
             'notes' => $notes,
             'proposed_redmine_name' => $proposedName,
@@ -4607,7 +4613,7 @@ function fetchCustomFieldMappingsForTransform(PDO $pdo): array
             map.jira_issue_type_ids,
             map.jira_allowed_values,
             map.redmine_custom_field_id,
-            map.redmine_parent_custom_field_id,
+            map.mapping_parent_custom_field_id,
             map.redmine_custom_field_enumerations,
             map.migration_status,
             map.notes,
@@ -4835,7 +4841,7 @@ function computeCustomFieldAutomationStateHash(
     ?string $proposedRoleIds,
     ?string $proposedProjectIds,
     ?string $notes,
-    ?int $redmineParentCustomFieldId = null,
+    ?int $mappingParentCustomFieldId = null,
     ?string $redmineCustomFieldEnumerations = null
 ): string {
     $proposedFieldFormat = normalizeRedmineFieldFormat($proposedFieldFormat);
@@ -4856,7 +4862,7 @@ function computeCustomFieldAutomationStateHash(
         'proposed_tracker_ids' => normalizeJsonForHash($proposedTrackerIds),
         'proposed_role_ids' => normalizeJsonForHash($proposedRoleIds),
         'proposed_project_ids' => normalizeJsonForHash($proposedProjectIds),
-        'redmine_parent_custom_field_id' => $redmineParentCustomFieldId,
+        'mapping_parent_custom_field_id' => $mappingParentCustomFieldId,
         'redmine_custom_field_enumerations' => normalizeJsonForHash($redmineCustomFieldEnumerations),
     ];
 
@@ -4980,7 +4986,15 @@ function fetchCustomFieldMigrationStatusCounts(PDO $pdo): array
  */
 function loadRedmineCustomFieldAssociationSnapshot(PDO $pdo): array
 {
-    $sql = 'SELECT id, name, project_ids, tracker_ids FROM staging_redmine_custom_fields';
+    $sql = <<<SQL
+        SELECT
+            redmine_custom_field_id,
+            COALESCE(proposed_redmine_name, jira_field_name, jira_field_id) AS label,
+            proposed_project_ids,
+            proposed_tracker_ids
+        FROM migration_mapping_custom_fields
+        WHERE redmine_custom_field_id IS NOT NULL
+    SQL;
 
     try {
         $statement = $pdo->query($sql);
@@ -4997,15 +5011,15 @@ function loadRedmineCustomFieldAssociationSnapshot(PDO $pdo): array
     $snapshot = [];
 
     foreach ($rows as $row) {
-        $id = normalizeInteger($row['id'] ?? null);
+        $id = normalizeInteger($row['redmine_custom_field_id'] ?? null);
         if ($id === null) {
             continue;
         }
 
         $snapshot[$id] = [
-            'name' => isset($row['name']) ? (string)$row['name'] : sprintf('Custom field #%d', $id),
-            'project_ids' => normalizeIntegerListColumn($row['project_ids'] ?? null),
-            'tracker_ids' => normalizeIntegerListColumn($row['tracker_ids'] ?? null),
+            'name' => isset($row['label']) ? (string)$row['label'] : sprintf('Custom field #%d', $id),
+            'project_ids' => normalizeIntegerListColumn($row['proposed_project_ids'] ?? null),
+            'tracker_ids' => normalizeIntegerListColumn($row['proposed_tracker_ids'] ?? null),
         ];
     }
 
@@ -5064,29 +5078,32 @@ function collectCustomFieldUpdatePlan(PDO $pdo): array
 
     $sql = <<<SQL
         SELECT
-            mapping_id,
-            jira_field_id,
-            jira_field_name,
-            redmine_custom_field_id,
-            redmine_parent_custom_field_id,
-            proposed_redmine_name,
-            proposed_field_format,
-            proposed_is_required,
-            proposed_is_filter,
-            proposed_is_for_all,
-            proposed_is_multiple,
-            proposed_possible_values,
-            proposed_value_dependencies,
-            proposed_default_value,
-            proposed_tracker_ids,
-            proposed_role_ids,
-            proposed_project_ids,
-            migration_status,
-            notes
-        FROM migration_mapping_custom_fields
+            map.mapping_id,
+            map.jira_field_id,
+            map.jira_field_name,
+            map.redmine_custom_field_id,
+            map.mapping_parent_custom_field_id,
+            parent.redmine_custom_field_id AS parent_redmine_custom_field_id,
+            map.proposed_redmine_name,
+            map.proposed_field_format,
+            map.proposed_is_required,
+            map.proposed_is_filter,
+            map.proposed_is_for_all,
+            map.proposed_is_multiple,
+            map.proposed_possible_values,
+            map.proposed_value_dependencies,
+            map.proposed_default_value,
+            map.proposed_tracker_ids,
+            map.proposed_role_ids,
+            map.proposed_project_ids,
+            map.migration_status,
+            map.notes
+        FROM migration_mapping_custom_fields map
+        LEFT JOIN migration_mapping_custom_fields parent
+            ON parent.mapping_id = map.mapping_parent_custom_field_id
         WHERE
-            redmine_custom_field_id IS NOT NULL
-            AND migration_status IN ('READY_FOR_UPDATE', 'CREATION_SUCCESS')
+            map.redmine_custom_field_id IS NOT NULL
+            AND map.migration_status IN ('READY_FOR_UPDATE', 'CREATION_SUCCESS')
     SQL;
 
     try {
@@ -5107,7 +5124,8 @@ function collectCustomFieldUpdatePlan(PDO $pdo): array
 
     foreach ($rows as $row) {
         $redmineId = normalizeInteger($row['redmine_custom_field_id'] ?? null);
-        $parentId = normalizeInteger($row['redmine_parent_custom_field_id'] ?? null);
+        $parentMappingId = normalizeInteger($row['mapping_parent_custom_field_id'] ?? null);
+        $parentRedmineId = normalizeInteger($row['parent_redmine_custom_field_id'] ?? null);
 
         if ($redmineId === null) {
             continue;
@@ -5135,19 +5153,27 @@ function collectCustomFieldUpdatePlan(PDO $pdo): array
         $parentMissingProjects = [];
         $parentMissingTrackers = [];
 
-        if ($parentId !== null) {
-            if (!isset($snapshot[$parentId])) {
+        if ($parentMappingId !== null) {
+            if ($parentRedmineId === null) {
                 $warnings[] = sprintf(
-                    'Missing Redmine snapshot entry for parent custom field #%d; re-run the redmine phase.',
-                    $parentId
+                    'Missing Redmine ID for parent mapping #%d; ensure the cascading parent was created.',
+                    $parentMappingId
                 );
                 continue;
             }
 
-            $parentProjects = mergeIntegerLists($snapshot[$parentId]['project_ids'], $mergedProjects);
-            $parentTrackers = mergeIntegerLists($snapshot[$parentId]['tracker_ids'], $mergedTrackers);
-            $parentMissingProjects = array_diff($parentProjects, $snapshot[$parentId]['project_ids']);
-            $parentMissingTrackers = array_diff($parentTrackers, $snapshot[$parentId]['tracker_ids']);
+            if (!isset($snapshot[$parentRedmineId])) {
+                $warnings[] = sprintf(
+                    'Missing Redmine snapshot entry for parent custom field #%d; re-run the redmine phase.',
+                    $parentRedmineId
+                );
+                continue;
+            }
+
+            $parentProjects = mergeIntegerLists($snapshot[$parentRedmineId]['project_ids'], $mergedProjects);
+            $parentTrackers = mergeIntegerLists($snapshot[$parentRedmineId]['tracker_ids'], $mergedTrackers);
+            $parentMissingProjects = array_diff($parentProjects, $snapshot[$parentRedmineId]['project_ids']);
+            $parentMissingTrackers = array_diff($parentTrackers, $snapshot[$parentRedmineId]['tracker_ids']);
         }
 
         if ($missingProjects === [] && $missingTrackers === [] && $parentMissingProjects === [] && $parentMissingTrackers === []) {
@@ -5159,7 +5185,8 @@ function collectCustomFieldUpdatePlan(PDO $pdo): array
             'jira_field_id' => (string)$row['jira_field_id'],
             'jira_field_name' => $row['jira_field_name'] ?? null,
             'redmine_custom_field_id' => $redmineId,
-            'redmine_parent_custom_field_id' => $parentId,
+            'mapping_parent_custom_field_id' => $parentMappingId,
+            'parent_redmine_custom_field_id' => $parentRedmineId,
             'proposed_redmine_name' => $row['proposed_redmine_name'] ?? null,
             'proposed_field_format' => $row['proposed_field_format'] ?? null,
             'proposed_is_required' => normalizeBooleanFlag($row['proposed_is_required'] ?? null),
@@ -5228,12 +5255,17 @@ function renderCustomFieldUpdatePlan(array $plan, bool $useExtendedApi): void
             }
         }
 
-        if (isset($item['redmine_parent_custom_field_id']) && $item['redmine_parent_custom_field_id'] !== null) {
+        if (isset($item['mapping_parent_custom_field_id']) && $item['mapping_parent_custom_field_id'] !== null) {
             $parentProjects = $item['parent_project_ids'] === [] ? '[none]' : json_encode($item['parent_project_ids']);
             $parentTrackers = $item['parent_tracker_ids'] === [] ? '[none]' : json_encode($item['parent_tracker_ids']);
+            $parentRedmineLabel = $item['parent_redmine_custom_field_id'] !== null
+                ? sprintf('#%d', $item['parent_redmine_custom_field_id'])
+                : '[pending]';
+
             printf(
-                '    Parent custom field #%d: projects %s; trackers %s%s',
-                $item['redmine_parent_custom_field_id'],
+                '    Parent custom field %s (mapping #%d): projects %s; trackers %s%s',
+                $parentRedmineLabel,
+                $item['mapping_parent_custom_field_id'],
                 $parentProjects,
                 $parentTrackers,
                 PHP_EOL
@@ -5304,7 +5336,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             $notes = $field['notes'] ?? null;
             $jiraAllowedValuesPreview = decodeJsonColumn($field['jira_allowed_values'] ?? null);
             $jiraAllowedValuesPreview = is_array($jiraAllowedValuesPreview) ? $jiraAllowedValuesPreview : [];
-            $rawPreviewParentId = $field['redmine_parent_custom_field_id'] ?? null;
+            $rawPreviewParentId = $field['mapping_parent_custom_field_id'] ?? null;
             $existingPreviewParentId = null;
             if ($rawPreviewParentId !== null && trim((string)$rawPreviewParentId) !== '') {
                 $existingPreviewParentId = (int)$rawPreviewParentId;
@@ -5414,7 +5446,6 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             UPDATE migration_mapping_custom_fields
             SET
                 redmine_custom_field_id = :redmine_custom_field_id,
-                redmine_parent_custom_field_id = :redmine_parent_custom_field_id,
                 redmine_custom_field_enumerations = :redmine_custom_field_enumerations,
                 migration_status = :migration_status,
                 notes = :notes,
@@ -5463,7 +5494,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             $jiraAllowedValues = decodeJsonColumn($field['jira_allowed_values'] ?? null);
             $jiraAllowedValues = is_array($jiraAllowedValues) ? $jiraAllowedValues : [];
 
-            $rawParentId = $field['redmine_parent_custom_field_id'] ?? null;
+            $rawParentId = $field['mapping_parent_custom_field_id'] ?? null;
             $redmineParentId = null;
             $parentMappingId = null;
             $parentEnumerations = [];
@@ -5493,7 +5524,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
 
             $isCascadingParent = isset($field['jira_field_id']) && str_starts_with((string)$field['jira_field_id'], 'cascading_parent:');
             $effectiveName = $proposedName ?? ($jiraName ?? $jiraId);
-            $effectiveFormat = $isCascadingParent ? 'list' : ($proposedFormat ?? 'string');
+            $effectiveFormat = $isCascadingParent ? 'enumeration' : ($proposedFormat ?? 'string');
             $isDependingField = !$isCascadingParent && $effectiveFormat === 'depending_enumeration';
 
             if ($isDependingField) {
@@ -5528,7 +5559,9 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                             $createdFieldCache,
                             $isDryRun,
                             true,
-                            true
+                            true,
+                            $useExtendedApi,
+                            $extendedApiPrefix
                         );
                         if ($parentCreation !== null) {
                             $redmineParentId = $parentCreation['id'];
@@ -5561,7 +5594,6 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
 
                     $updateStatement->execute([
                         'redmine_custom_field_id' => null,
-                        'redmine_parent_custom_field_id' => $parentMappingId,
                         'redmine_custom_field_enumerations' => null,
                         'migration_status' => 'CREATION_FAILED',
                         'notes' => $manualMessage,
@@ -5658,6 +5690,14 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                     $decoded = decodeJsonResponse($response);
                     $newFieldId = extractCreatedCustomFieldId($decoded);
                     $newEnumerations = extractCreatedCustomFieldEnumerations($decoded);
+                    if ($newEnumerations === null) {
+                        $newEnumerations = fetchRedmineCustomFieldEnumerations(
+                            $redmineClient,
+                            $newFieldId,
+                            $useExtendedApi,
+                            $extendedApiPrefix
+                        );
+                    }
                     $encodedEnumerations = encodeJsonColumn($newEnumerations);
 
                     $automationHash = computeCustomFieldAutomationStateHash(
@@ -5676,13 +5716,12 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                         encodeJsonColumn($proposedRoleIds),
                         encodeJsonColumn($proposedProjectIds),
                         null,
-                        $redmineParentId,
+                        $parentMappingId,
                         $encodedEnumerations
                     );
 
                     $updateStatement->execute([
                         'redmine_custom_field_id' => $newFieldId,
-                        'redmine_parent_custom_field_id' => $redmineParentId,
                         'redmine_custom_field_enumerations' => $encodedEnumerations,
                         'migration_status' => 'CREATION_SUCCESS',
                         'notes' => null,
@@ -5732,13 +5771,12 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                         encodeJsonColumn($proposedRoleIds),
                         encodeJsonColumn($proposedProjectIds),
                         $errorMessage,
-                        $redmineParentId,
+                        $parentMappingId,
                         null
                     );
 
                     $updateStatement->execute([
                         'redmine_custom_field_id' => null,
-                        'redmine_parent_custom_field_id' => $redmineParentId,
                         'redmine_custom_field_enumerations' => null,
                         'migration_status' => 'CREATION_FAILED',
                         'notes' => $errorMessage,
@@ -5788,6 +5826,12 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             if ($proposedPossibleValues !== null) {
                 $payload['custom_field']['possible_values'] = $proposedPossibleValues;
             }
+            if ($effectiveFormat === 'enumeration') {
+                $enumerationPayload = buildEnumerationPayloadFromPossibleValues($proposedPossibleValues);
+                if ($enumerationPayload !== []) {
+                    $payload['custom_field']['enumerations'] = $enumerationPayload;
+                }
+            }
             if ($proposedDefaultValue !== null) {
                 $payload['custom_field']['default_value'] = $proposedDefaultValue;
             }
@@ -5812,6 +5856,14 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                 $decoded = decodeJsonResponse($response);
                 $newFieldId = extractCreatedCustomFieldId($decoded);
                 $newEnumerations = extractCreatedCustomFieldEnumerations($decoded);
+                if ($newEnumerations === null) {
+                    $newEnumerations = fetchRedmineCustomFieldEnumerations(
+                        $redmineClient,
+                        $newFieldId,
+                        $useExtendedApi,
+                        $extendedApiPrefix
+                    );
+                }
                 $encodedEnumerations = encodeJsonColumn($newEnumerations);
 
                 $automationHash = computeCustomFieldAutomationStateHash(
@@ -5830,13 +5882,12 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                     encodeJsonColumn($proposedRoleIds),
                     encodeJsonColumn($proposedProjectIds),
                     null,
-                    $redmineParentId,
+                    null,
                     $encodedEnumerations
                 );
 
                 $updateStatement->execute([
                     'redmine_custom_field_id' => $newFieldId,
-                    'redmine_parent_custom_field_id' => null,
                     'redmine_custom_field_enumerations' => $encodedEnumerations,
                     'migration_status' => 'CREATION_SUCCESS',
                     'notes' => null,
@@ -5885,13 +5936,12 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                     encodeJsonColumn($proposedRoleIds),
                     encodeJsonColumn($proposedProjectIds),
                     $errorMessage,
-                    $redmineParentId,
+                    null,
                     null
                 );
 
                 $updateStatement->execute([
                     'redmine_custom_field_id' => null,
-                    'redmine_parent_custom_field_id' => null,
                     'redmine_custom_field_enumerations' => null,
                     'migration_status' => 'CREATION_FAILED',
                     'notes' => $errorMessage,
@@ -5989,7 +6039,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
         $notes = $field['notes'] ?? null;
         $previewAllowedValues = decodeJsonColumn($field['jira_allowed_values'] ?? null);
         $previewAllowedValues = is_array($previewAllowedValues) ? $previewAllowedValues : [];
-        $rawPreviewParentId = $field['redmine_parent_custom_field_id'] ?? null;
+        $rawPreviewParentId = $field['mapping_parent_custom_field_id'] ?? null;
         $existingPreviewParentId = null;
         if ($rawPreviewParentId !== null && trim((string)$rawPreviewParentId) !== '') {
             $existingPreviewParentId = (int)$rawPreviewParentId;
@@ -6089,8 +6139,8 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                 $field['proposed_role_ids'] ?? null,
                 $field['proposed_project_ids'] ?? null,
                 null,
-                isset($field['redmine_parent_custom_field_id']) && trim((string)$field['redmine_parent_custom_field_id']) !== ''
-                    ? (int)$field['redmine_parent_custom_field_id']
+                isset($field['mapping_parent_custom_field_id']) && trim((string)$field['mapping_parent_custom_field_id']) !== ''
+                    ? (int)$field['mapping_parent_custom_field_id']
                     : null
             );
 
@@ -6128,7 +6178,7 @@ function fetchCustomFieldsReadyForCreation(PDO $pdo): array
             proposed_project_ids,
             notes,
             jira_allowed_values,
-            redmine_parent_custom_field_id
+            mapping_parent_custom_field_id
         FROM migration_mapping_custom_fields
         WHERE migration_status = 'READY_FOR_CREATION'
         ORDER BY jira_field_name IS NULL, jira_field_name, jira_field_id
@@ -6171,7 +6221,7 @@ function fetchCustomFieldMappingById(PDO $pdo, int $mappingId): ?array
             proposed_project_ids,
             notes,
             jira_allowed_values,
-            redmine_parent_custom_field_id,
+            mapping_parent_custom_field_id,
             redmine_custom_field_id,
             redmine_custom_field_enumerations,
             migration_status
@@ -6199,6 +6249,30 @@ function fetchCustomFieldMappingById(PDO $pdo, int $mappingId): ?array
  * @param array<int, array{id: int, enumerations: array<int, mixed>|null}> $createdFieldCache
  * @return array{id: int, enumerations: array<int, mixed>|null}|null
  */
+function buildEnumerationPayloadFromPossibleValues(mixed $possibleValues): array
+{
+    $values = is_array($possibleValues) ? $possibleValues : decodeJsonColumn($possibleValues);
+    if (!is_array($values)) {
+        return [];
+    }
+
+    $enumerations = [];
+    $position = 1;
+    foreach ($values as $value) {
+        $label = is_array($value)
+            ? ($value['value'] ?? ($value['name'] ?? null))
+            : $value;
+
+        if ($label === null) {
+            continue;
+        }
+
+        $enumerations[] = ['name' => (string)$label, 'position' => $position++];
+    }
+
+    return $enumerations;
+}
+
 function createStandardCustomField(
     PDO $pdo,
     Client $redmineClient,
@@ -6208,7 +6282,9 @@ function createStandardCustomField(
     array &$createdFieldCache,
     bool $isDryRun,
     bool $suppressOutput = false,
-    bool $forceListFormat = false
+    bool $forceEnumerationFormat = false,
+    bool $useExtendedApi = false,
+    ?string $extendedApiPrefix = null
 ): ?array {
     $mappingId = (int)$field['mapping_id'];
     $jiraId = (string)($field['jira_field_id'] ?? $mappingId);
@@ -6228,7 +6304,7 @@ function createStandardCustomField(
     $notes = $field['notes'] ?? null;
 
     $effectiveName = $proposedName ?? ($jiraName ?? $jiraId);
-    $effectiveFormat = $forceListFormat ? 'list' : ($proposedFormat ?? 'string');
+    $effectiveFormat = $forceEnumerationFormat ? 'enumeration' : ($proposedFormat ?? 'string');
 
     $payload = [
         'type' => 'IssueCustomField',
@@ -6253,6 +6329,12 @@ function createStandardCustomField(
     if ($proposedPossibleValues !== null) {
         $payload['custom_field']['possible_values'] = $proposedPossibleValues;
     }
+    if ($effectiveFormat === 'enumeration') {
+        $enumerationPayload = buildEnumerationPayloadFromPossibleValues($proposedPossibleValues);
+        if ($enumerationPayload !== []) {
+            $payload['custom_field']['enumerations'] = $enumerationPayload;
+        }
+    }
     if ($proposedDefaultValue !== null) {
         $payload['custom_field']['default_value'] = $proposedDefaultValue;
     }
@@ -6272,6 +6354,14 @@ function createStandardCustomField(
         $decoded = decodeJsonResponse($response);
         $newFieldId = extractCreatedCustomFieldId($decoded);
         $newEnumerations = extractCreatedCustomFieldEnumerations($decoded);
+        if ($newEnumerations === null) {
+            $newEnumerations = fetchRedmineCustomFieldEnumerations(
+                $redmineClient,
+                $newFieldId,
+                $useExtendedApi,
+                $extendedApiPrefix
+            );
+        }
         $encodedEnumerations = encodeJsonColumn($newEnumerations);
 
         $automationHash = computeCustomFieldAutomationStateHash(
@@ -6296,7 +6386,6 @@ function createStandardCustomField(
 
         $updateStatement->execute([
             'redmine_custom_field_id' => $newFieldId,
-            'redmine_parent_custom_field_id' => null,
             'redmine_custom_field_enumerations' => $encodedEnumerations,
             'migration_status' => 'CREATION_SUCCESS',
             'notes' => $notes,
@@ -6353,7 +6442,6 @@ function createStandardCustomField(
 
         $updateStatement->execute([
             'redmine_custom_field_id' => null,
-            'redmine_parent_custom_field_id' => null,
             'redmine_custom_field_enumerations' => null,
             'migration_status' => 'CREATION_FAILED',
             'notes' => $errorMessage,
@@ -6415,8 +6503,11 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
     foreach ($plan as $item) {
         $mappingId = (int)$item['mapping_id'];
         $redmineId = (int)$item['redmine_custom_field_id'];
-        $parentId = isset($item['redmine_parent_custom_field_id']) && $item['redmine_parent_custom_field_id'] !== null
-            ? (int)$item['redmine_parent_custom_field_id']
+        $parentMappingId = isset($item['mapping_parent_custom_field_id']) && $item['mapping_parent_custom_field_id'] !== null
+            ? (int)$item['mapping_parent_custom_field_id']
+            : null;
+        $parentRedmineId = isset($item['parent_redmine_custom_field_id']) && $item['parent_redmine_custom_field_id'] !== null
+            ? (int)$item['parent_redmine_custom_field_id']
             : null;
         $projects = $item['target_project_ids'] ?? [];
         $trackers = $item['target_tracker_ids'] ?? [];
@@ -6440,7 +6531,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
             $path = sprintf('/depending_custom_fields/%d.json', $redmineId);
         }
 
-        if ($parentId !== null) {
+        if ($parentMappingId !== null) {
             $parentPayload = ['custom_field' => []];
             if ($projects !== []) {
                 $parentPayload['custom_field']['project_ids'] = $projects;
@@ -6449,17 +6540,19 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
                 $parentPayload['custom_field']['tracker_ids'] = $trackers;
             }
 
+            $parentLabel = $parentRedmineId !== null ? sprintf('#%d', $parentRedmineId) : '[pending]';
             printf(
-                "  [plan] Updating parent custom field #%d projects %s, trackers %s%s",
-                $parentId,
+                "  [plan] Updating parent custom field %s (mapping #%d) projects %s, trackers %s%s",
+                $parentLabel,
+                $parentMappingId,
                 $projects === [] ? '[none]' : json_encode($projects),
                 $trackers === [] ? '[none]' : json_encode($trackers),
                 PHP_EOL
             );
 
-            if (!$isDryRun) {
+            if (!$isDryRun && $parentRedmineId !== null) {
                 try {
-                    $parentPath = buildExtendedApiPath($extendedPrefix, sprintf('custom_fields/%d.json', $parentId));
+                    $parentPath = buildExtendedApiPath($extendedPrefix, sprintf('custom_fields/%d.json', $parentRedmineId));
                     $client->put($parentPath, ['json' => $parentPayload]);
                 } catch (Throwable $exception) {
                     $errorMessage = summarizeExtendedApiError($exception);
@@ -6479,7 +6572,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
                         $item['proposed_role_ids'] ?? null,
                         encodeJsonColumn($projects),
                         $errorMessage,
-                        $parentId
+                        $parentMappingId
                     );
 
                     $updateStatement->execute([
@@ -6491,7 +6584,8 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
                         'mapping_id' => $mappingId,
                     ]);
 
-                    printf("  [failed] Parent update for custom field #%d: %s%s", $parentId, $errorMessage, PHP_EOL);
+                    $failedParentLabel = $parentRedmineId !== null ? sprintf('#%d', $parentRedmineId) : sprintf('mapping #%d', $parentMappingId);
+                    printf("  [failed] Parent update for custom field %s: %s%s", $failedParentLabel, $errorMessage, PHP_EOL);
                     continue;
                 }
             }
@@ -6922,6 +7016,26 @@ function extractCreatedCustomFieldEnumerations(mixed $decoded): ?array
     }
 
     return null;
+}
+
+function fetchRedmineCustomFieldEnumerations(
+    Client $client,
+    int $customFieldId,
+    bool $useExtendedApi,
+    ?string $extendedApiPrefix
+): ?array {
+    $path = $useExtendedApi && $extendedApiPrefix !== null
+        ? buildExtendedApiPath($extendedApiPrefix, sprintf('custom_fields/%d.json', $customFieldId))
+        : sprintf('/custom_fields/%d.json', $customFieldId);
+
+    try {
+        $response = $client->get($path);
+        $decoded = decodeJsonResponse($response);
+
+        return extractCreatedCustomFieldEnumerations($decoded);
+    } catch (Throwable $exception) {
+        return null;
+    }
 }
 
 function extractExtendedApiErrorDetails(ResponseInterface $response): ?string

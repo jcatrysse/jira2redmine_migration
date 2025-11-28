@@ -434,7 +434,7 @@ CREATE TABLE `migration_mapping_custom_fields` (
                                                    `jira_issue_type_ids` JSON NULL,
                                                    `jira_allowed_values` JSON NULL,
                                                    `redmine_custom_field_id` INT NULL,
-                                                   `redmine_parent_custom_field_id` INT NULL,
+                                                   `mapping_parent_custom_field_id` INT NULL,
                                                    `redmine_custom_field_enumerations` JSON NULL,
                                                    `proposed_redmine_name` VARCHAR(255) NULL,
                                                    `proposed_field_format` VARCHAR(255) NULL,

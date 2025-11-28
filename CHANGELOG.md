@@ -6,11 +6,30 @@ All notable changes to this project will be documented in this file.
 
 - Changelog: dates are not correct, check commits for correct dates.
 - Migrate custom fields script:
+    - Depending enumeration / depending list: while pushing the parent / chile value relations are not set.
+    - Error about unset variable.
+    -   [created] Jira custom field ICT Hardware (Parent) (cascading_parent:customfield_10043) -> Redmine custom field #67.
+        [created] Jira custom field Action Type (customfield_10073) -> Redmine custom field #68.
+        [created] Jira custom field Checklist Completed (customfield_10082) -> Redmine custom field #69.
+        [created] Jira custom field Cost of Repair (customfield_10093) -> Redmine custom field #70.
+        [created] Jira custom field Document Type (customfield_10074) -> Redmine custom field #71.
+        [created] Jira custom field Drone Vessel (customfield_10034) -> Redmine custom field #72.
+        [created] Jira custom field Flagged (customfield_10021) -> Redmine custom field #73.
+        [created] Jira custom field ICT Hardware (customfield_10043) -> Redmine depending field #74 (parent #67).
+        Completed extended API push. Success: 8, Failed: 0.
+        1 custom field(s) will receive project/tracker association updates.
+  - Jira custom field ICT Hardware (Redmine #74): projects [8]; trackers [3,74,77,78,94,97,98]
+    Parent custom field #67 (mapping #106): projects [8]; trackers [3,74,77,78,94,97,98]
+    [plan] Updating parent custom field #67 (mapping #106) projects [8], trackers [3,74,77,78,94,97,98]
+    [plan] Updating Redmine custom field #74 projects [8], trackers [3,74,77,78,94,97,98]
+    PHP Warning:  Undefined variable $parentId in /var/php_cron/jira2redmine_migration/08_migrate_custom_fields.php on line 6625
+    1 custom field(s) require project/tracker association updates.
+  - Jira custom field ICT Hardware (Redmine #74): projects [8]; trackers [3,74,77,78,94,97,98]
+    Parent custom field #67 (mapping #106): projects [8]; trackers [3,74,77,78,94,97,98]
+    Apply the above project/tracker associations manually or rerun with --use-extended-api to push them automatically.
+
+    - Question: do I need to specify --use-extended-api? Message: Apply the above project/tracker associations manually or rerun with --use-extended-api to push them automatically.
     - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
-    - WARNING after push: [warning] Missing Redmine snapshot entry for custom field #24; re-run the redmine phase. No existing Redmine custom fields require association updates.
-         - Script should not use staging redmine table, but the updated vales from the mapping table.
-    - Enumeration and depending_enumerations are still created as lists.
-    - Enumeration id's from redmine are not returned in the mapping table.
 - General: verify if all automation hashes align with the latest database schemas.
 - Fine-tune the attachments, issues, and journals scripts.
 - Verify ADF to Markdown conversion.
@@ -20,22 +39,36 @@ All notable changes to this project will be documented in this file.
 - Create the missing scripts: labels/tags, (document) categories, milestones, watchers, checklists, relations, subtasks, workflows, custom workflows...
 - Validate we can push authors and creation timestamps to Redmine.
 
+## [0.0.65] - 2025-12-01
+
+- Populate enumeration values when creating Redmine custom fields through the
+  extended API so select-list options are present immediately after creation.
+- Prevent parent association updates from targeting mapping identifiers by
+  resolving cascading parents to their Redmine IDs during the push phase.
+
+## [0.0.64] - 2025-11-30
+
+- Rename `migration_mapping_custom_fields.mapping_parent_custom_field_id` to
+  reflect it stores the parent mapping identifier, resolving association lookups
+  against the parent mapping's Redmine ID.
+- Keep parent mapping identifiers immutable during the push phase while
+  dependent field creation resolves parent Redmine IDs via mapping lookups.
+
+## [0.0.63] - 2025-11-29
+
+- Resolve custom field push warnings by sourcing project and tracker associations
+  from the migration mapping table instead of the Redmine snapshot.
+- Prefer the extended API `enumeration`/`depending_enumeration` formats over list
+  payloads when creating custom fields, aligning dependent fields with the
+  plugin expectations.
+- Capture Redmine enumeration identifiers in the mapping table even when the
+  initial create response omits them by reloading enumeration data after
+  creation.
+
 ## [0.0.62] - 2025-11-27
 
 - First attempt to implement the push phase for the custom fields migration script.
 - Some issues remain to be resolved.
-
-## [0.0.59] - 2025-11-27
-
-- Refactor issues migration: restore cascading fields logic (untested)
-- Resolve cascading parent custom field identifiers during the issue transform
-  by following mapping links when Redmine IDs were stored as mapping
-  references, ensuring cascading selections are only populated when both parent
-  and child Redmine fields exist.
-- Surface unmappable cascading selections as manual-review notes during the
-  issue transform so push phase previews no longer rely on push-time cascading
-  logic.
-- Bump the issues migration script version to `0.0.30`.
 
 ## [0.0.61] - 2025-11-28
 
@@ -51,6 +84,18 @@ All notable changes to this project will be documented in this file.
   `migration_mapping_custom_fields.redmine_custom_field_enumerations` for
   downstream mapping.
 - Bump the custom field migration script version to `0.0.60`.
+
+## [0.0.59] - 2025-11-27
+
+- Refactor issues migration: restore cascading fields logic (untested)
+- Resolve cascading parent custom field identifiers during the issue transform
+  by following mapping links when Redmine IDs were stored as mapping
+  references, ensuring cascading selections are only populated when both parent
+  and child Redmine fields exist.
+- Surface unmappable cascading selections as manual-review notes during the
+  issue transform so push phase previews no longer rely on push-time cascading
+  logic.
+- Bump the issues migration script version to `0.0.30`.
 
 ## [0.0.58] - 2025-11-26
 

@@ -1987,16 +1987,15 @@ function buildCascadingFieldIndex(PDO $pdo): array
             child.jira_field_name,
             child.jira_allowed_values,
             child.redmine_custom_field_id AS child_redmine_custom_field_id,
-            child.redmine_parent_custom_field_id,
+            child.mapping_parent_custom_field_id,
             parent.mapping_id AS parent_mapping_id,
             parent.redmine_custom_field_id AS parent_redmine_custom_field_id
         FROM migration_mapping_custom_fields child
         LEFT JOIN migration_mapping_custom_fields parent
-            ON parent.mapping_id = child.redmine_parent_custom_field_id
-            OR parent.redmine_custom_field_id = child.redmine_parent_custom_field_id
+            ON parent.mapping_id = child.mapping_parent_custom_field_id
         WHERE child.proposed_field_format = 'depending_list'
           AND child.redmine_custom_field_id IS NOT NULL
-          AND child.redmine_parent_custom_field_id IS NOT NULL
+          AND child.mapping_parent_custom_field_id IS NOT NULL
           AND child.migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS', 'READY_FOR_UPDATE', 'READY_FOR_CREATION')
     SQL;
 
