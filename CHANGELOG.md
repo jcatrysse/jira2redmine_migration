@@ -6,36 +6,17 @@ All notable changes to this project will be documented in this file.
 
 - Changelog: dates are not correct, check commits for correct dates.
 - Migrate custom fields script:
-    - Depending enumeration / depending list: while pushing the parent / chile value relations are not set.
-    - Error about unset variable.
-    -   [created] Jira custom field ICT Hardware (Parent) (cascading_parent:customfield_10043) -> Redmine custom field #67.
-        [created] Jira custom field Action Type (customfield_10073) -> Redmine custom field #68.
-        [created] Jira custom field Checklist Completed (customfield_10082) -> Redmine custom field #69.
-        [created] Jira custom field Cost of Repair (customfield_10093) -> Redmine custom field #70.
-        [created] Jira custom field Document Type (customfield_10074) -> Redmine custom field #71.
-        [created] Jira custom field Drone Vessel (customfield_10034) -> Redmine custom field #72.
-        [created] Jira custom field Flagged (customfield_10021) -> Redmine custom field #73.
-        [created] Jira custom field ICT Hardware (customfield_10043) -> Redmine depending field #74 (parent #67).
-        Completed extended API push. Success: 8, Failed: 0.
-        1 custom field(s) will receive project/tracker association updates.
-  - Jira custom field ICT Hardware (Redmine #74): projects [8]; trackers [3,74,77,78,94,97,98]
-    Parent custom field #67 (mapping #106): projects [8]; trackers [3,74,77,78,94,97,98]
-    [plan] Updating parent custom field #67 (mapping #106) projects [8], trackers [3,74,77,78,94,97,98]
-    [plan] Updating Redmine custom field #74 projects [8], trackers [3,74,77,78,94,97,98]
-    PHP Warning:  Undefined variable $parentId in /var/php_cron/jira2redmine_migration/08_migrate_custom_fields.php on line 6625
-    1 custom field(s) require project/tracker association updates.
-  - Jira custom field ICT Hardware (Redmine #74): projects [8]; trackers [3,74,77,78,94,97,98]
-    Parent custom field #67 (mapping #106): projects [8]; trackers [3,74,77,78,94,97,98]
-    Apply the above project/tracker associations manually or rerun with --use-extended-api to push them automatically.
-
-    - Question: do I need to specify --use-extended-api? Message: Apply the above project/tracker associations manually or rerun with --use-extended-api to push them automatically.
-    - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
+    - proposed_default_value in the migration_mapping_custom_fields table is NULL by default, don't set in the migration_mapping_custom_fields table.
+    - when the parent is created in the migration_mapping_custom_fields table, the proposed_project_ids and proposed_role_ids should be copied from the child.
 - General: verify if all automation hashes align with the latest database schemas.
 - Fine-tune the attachments, issues, and journals scripts.
 - Verify ADF to Markdown conversion.
 - Migrate issues script:
     - on a rerun, newer issues should be fetched.
     - on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
+    - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
+        - I manually added in the database, after the transform phase but before the push phase: INSERT INTO `migration_mapping_custom_fields` (`mapping_id`, `jira_field_id`, `jira_field_name`, `jira_schema_type`, `jira_schema_custom`, `jira_project_ids`, `jira_issue_type_ids`, `jira_allowed_values`, `redmine_custom_field_id`, `mapping_parent_custom_field_id`, `redmine_custom_field_enumerations`, `proposed_redmine_name`, `proposed_field_format`, `proposed_is_required`, `proposed_is_filter`, `proposed_is_for_all`, `proposed_is_multiple`, `proposed_possible_values`, `proposed_value_dependencies`, `proposed_default_value`, `proposed_tracker_ids`, `proposed_role_ids`, `proposed_project_ids`, `migration_status`, `notes`, `automation_hash`, `created_at`, `last_updated_at`) VALUES (NULL, 'resolution', 'resolution', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'Resolution', 'text', NULL, NULL, '1', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'READY_FOR_CREATION', NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), (NULL, 'resolutiondate', 'resolutiondate', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'Resolution date', 'date', NULL, '1', '1', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'READY_FOR_CREATION', NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        - Ensure this logic fits the issue migration logic.
 - Create the missing scripts: labels/tags, (document) categories, milestones, watchers, checklists, relations, subtasks, workflows, custom workflows...
 - Validate we can push authors and creation timestamps to Redmine.
 

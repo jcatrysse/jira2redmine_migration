@@ -468,7 +468,7 @@ CREATE TABLE `migration_mapping_custom_object` (
                                                    `value_source_path` VARCHAR(255) NULL,
                                                    `key_source_path` VARCHAR(255) NULL,
                                                    `source` ENUM('inferred', 'manual') NOT NULL DEFAULT 'inferred',
-                                                   `notes` TEXT NULL,
+                                                   `notes` MEDIUMTEXT NULL,
                                                    `proposal_hash` CHAR(64) NULL,
                                                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                                    `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

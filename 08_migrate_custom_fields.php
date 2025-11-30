@@ -5084,6 +5084,8 @@ function collectCustomFieldUpdatePlan(PDO $pdo): array
             map.redmine_custom_field_id,
             map.mapping_parent_custom_field_id,
             parent.redmine_custom_field_id AS parent_redmine_custom_field_id,
+            map.redmine_custom_field_enumerations,
+            parent.redmine_custom_field_enumerations AS parent_redmine_custom_field_enumerations,
             map.proposed_redmine_name,
             map.proposed_field_format,
             map.proposed_is_required,
@@ -5197,6 +5199,8 @@ function collectCustomFieldUpdatePlan(PDO $pdo): array
             'proposed_value_dependencies' => $row['proposed_value_dependencies'] ?? null,
             'proposed_default_value' => $row['proposed_default_value'] ?? null,
             'proposed_role_ids' => $row['proposed_role_ids'] ?? null,
+            'redmine_custom_field_enumerations' => $row['redmine_custom_field_enumerations'] ?? null,
+            'parent_redmine_custom_field_enumerations' => $row['parent_redmine_custom_field_enumerations'] ?? null,
             'target_project_ids' => $mergedProjects,
             'target_tracker_ids' => $mergedTrackers,
             'parent_project_ids' => $parentProjects,
@@ -6516,6 +6520,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
         $format = normalizeRedmineFieldFormat($item['proposed_field_format'] ?? null);
 
         $payload = ['custom_field' => []];
+        $proposedValueDependencies = decodeJsonColumn($item['proposed_value_dependencies'] ?? null);
         if ($projects !== []) {
             $payload['custom_field']['project_ids'] = $projects;
         }
@@ -6529,6 +6534,39 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
         if ($isDependingField) {
             verifyDependingCustomFieldsApi($client);
             $path = sprintf('/depending_custom_fields/%d.json', $redmineId);
+
+            $childEnumerations = decodeJsonColumn($item['redmine_custom_field_enumerations'] ?? null);
+            $parentEnumerations = decodeJsonColumn($item['parent_redmine_custom_field_enumerations'] ?? null);
+
+            if (!is_array($childEnumerations)) {
+                $mappingRow = fetchCustomFieldMappingById($pdo, $mappingId);
+                $childEnumerations = decodeJsonColumn($mappingRow['redmine_custom_field_enumerations'] ?? null);
+            }
+
+            if (!is_array($parentEnumerations) && $parentMappingId !== null) {
+                $parentRow = fetchCustomFieldMappingById($pdo, $parentMappingId);
+                $parentEnumerations = decodeJsonColumn($parentRow['redmine_custom_field_enumerations'] ?? null);
+            }
+
+            if (!is_array($childEnumerations)) {
+                $childEnumerations = fetchRedmineCustomFieldEnumerations($client, $redmineId, true, $extendedPrefix) ?? [];
+            }
+
+            if (!is_array($parentEnumerations) && $parentRedmineId !== null) {
+                $parentEnumerations = fetchRedmineCustomFieldEnumerations($client, $parentRedmineId, true, $extendedPrefix) ?? [];
+            }
+
+            if ($parentRedmineId !== null) {
+                $payload['custom_field']['parent_custom_field_id'] = $parentRedmineId;
+            }
+
+            if (is_array($proposedValueDependencies) && $proposedValueDependencies !== []) {
+                $payload['custom_field']['value_dependencies'] = normalizeDependingValueDependencies(
+                    $proposedValueDependencies,
+                    $parentEnumerations,
+                    $childEnumerations
+                );
+            }
         }
 
         if ($parentMappingId !== null) {
@@ -6622,7 +6660,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
                 $item['proposed_role_ids'] ?? null,
                 encodeJsonColumn($projects),
                 null,
-                $parentId
+                $parentMappingId
             );
 
             $updateStatement->execute([
@@ -6651,7 +6689,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
                 $item['proposed_role_ids'] ?? null,
                 encodeJsonColumn($projects),
                 $errorMessage,
-                $parentId
+                $parentMappingId
             );
 
             $updateStatement->execute([
@@ -6671,6 +6709,80 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
             );
         }
     }
+}
+
+/**
+ * @param array<int, array<string, mixed>> $enumerations
+ *
+ * @return array<string, int>
+ */
+function buildEnumerationLabelToIdMap(array $enumerations): array
+{
+    $map = [];
+
+    foreach ($enumerations as $enumeration) {
+        $label = trim((string)($enumeration['name'] ?? ($enumeration['value'] ?? '')));
+        $id = isset($enumeration['id']) ? normalizeInteger($enumeration['id']) : null;
+
+        if ($label === '' || $id === null) {
+            continue;
+        }
+
+        $map[$label] = $id;
+    }
+
+    return $map;
+}
+
+/**
+ * Normalize depending value dependencies to the enumeration identifiers expected by the plugin API.
+ *
+ * @param array<string, mixed> $dependencies
+ * @param array<int, array<string, mixed>> $parentEnumerations
+ * @param array<int, array<string, mixed>> $childEnumerations
+ *
+ * @return array<string, array<int|string>>
+ */
+function normalizeDependingValueDependencies(array $dependencies, array $parentEnumerations, array $childEnumerations): array
+{
+    $parentMap = buildEnumerationLabelToIdMap($parentEnumerations);
+    $childMap = buildEnumerationLabelToIdMap($childEnumerations);
+    $normalized = [];
+
+    foreach ($dependencies as $parentKey => $children) {
+        $resolvedParentId = normalizeInteger($parentKey);
+
+        if ($resolvedParentId === null && isset($parentMap[$parentKey])) {
+            $resolvedParentId = $parentMap[$parentKey];
+        }
+
+        $normalizedParentKey = $resolvedParentId !== null ? (string)$resolvedParentId : (string)$parentKey;
+        $normalized[$normalizedParentKey] = [];
+
+        if (!is_array($children)) {
+            continue;
+        }
+
+        foreach ($children as $childValue) {
+            $childLabel = is_array($childValue)
+                ? ($childValue['value'] ?? ($childValue['name'] ?? null))
+                : $childValue;
+
+            if ($childLabel === null) {
+                continue;
+            }
+
+            $resolvedChildId = normalizeInteger($childLabel);
+
+            if ($resolvedChildId === null && isset($childMap[$childLabel])) {
+                $resolvedChildId = $childMap[$childLabel];
+            }
+
+            $normalized[$normalizedParentKey][] = $resolvedChildId !== null ? $resolvedChildId : (string)$childLabel;
+        }
+    }
+
+    return $normalized;
 }
 
 /**
