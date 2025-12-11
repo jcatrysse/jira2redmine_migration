@@ -3274,6 +3274,8 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
 
         $defaultName = $jiraFieldName !== null ? normalizeString($jiraFieldName, 255) : null;
 
+        $cascadingParentContext = null;
+
         $proposedName = $currentProposedName;
         if ($proposedName === null) {
             $proposedName = $defaultName ?? $jiraFieldId;
@@ -3305,13 +3307,6 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                     $assignmentSummary['total_assignments']
                 );
                 $proposedIsRequired = false;
-            }
-
-            $uniqueDefaultValues = $assignmentSummary['default_values'];
-            if (count($uniqueDefaultValues) === 1) {
-                $proposedDefaultValue = array_values($uniqueDefaultValues)[0];
-            } elseif (count($uniqueDefaultValues) > 1) {
-                $manualReasons[] = 'Multiple default values detected across Jira projects/issue types.';
             }
         }
 
@@ -3656,7 +3651,8 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
 
                 $parentRedmineId = null;
                 $parentMappingId = null;
-                if (isset($existingMappings[$parentMappingKey])) {
+                $parentExisted = isset($existingMappings[$parentMappingKey]);
+                if ($parentExisted) {
                     $parentRow = $existingMappings[$parentMappingKey];
                     if (isset($parentRow['redmine_custom_field_id']) && $parentRow['redmine_custom_field_id'] !== null) {
                         $parentRedmineId = (int)$parentRow['redmine_custom_field_id'];
@@ -3742,6 +3738,16 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
                         'proposed_tracker_ids' => $proposedTrackerIds,
                         'proposed_role_ids' => $proposedRoleIds,
                         'proposed_project_ids' => $proposedProjectIds,
+                    ];
+
+                    $cascadingParentContext = [
+                        'mapping_key' => $parentMappingKey,
+                        'mapping_id' => $parentMappingId,
+                        'redmine_custom_field_id' => $parentRedmineId,
+                        'was_created' => !$parentExisted && $parentMappingId !== null,
+                        'name' => $parentName,
+                        'possible_values' => $cascadingDescriptor['parents'],
+                        'notes' => $parentNotes,
                     ];
                 }
 
@@ -3836,22 +3842,6 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             }
         }
 
-        if (
-            isset($allowedValuesVariations[$jiraFieldId])
-            && ($classification['requires_possible_values'] || $isCascadingField)
-            && $allowedValuesVariations[$jiraFieldId]['distinct_sets'] > 1
-            && $allowedValuesVariations[$jiraFieldId]['concatenated_values'] !== []
-        ) {
-            $concatenatedDefault = implode("\n", $allowedValuesVariations[$jiraFieldId]['concatenated_values']);
-            if ($concatenatedDefault !== '') {
-                $proposedDefaultValue = $concatenatedDefault;
-                $infoNotes[] = sprintf(
-                    'Concatenated allowed values from %d distinct Jira option set(s).',
-                    $allowedValuesVariations[$jiraFieldId]['distinct_sets']
-                );
-            }
-        }
-
         $lookupCandidates = [];
         if ($proposedName !== null) {
             $lookupCandidates[] = strtolower($proposedName);
@@ -3891,10 +3881,6 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             $matchedPossibleValues = decodeJsonColumn($matchedRedmine['possible_values'] ?? null);
             if (is_array($matchedPossibleValues)) {
                 $proposedPossibleValues = array_values($matchedPossibleValues);
-            }
-
-            if (isset($matchedRedmine['default_value']) && $matchedRedmine['default_value'] !== null) {
-                $proposedDefaultValue = (string)$matchedRedmine['default_value'];
             }
 
             $matchedTrackerIds = decodeJsonColumn($matchedRedmine['tracker_ids'] ?? null);
@@ -4011,6 +3997,68 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         $proposedTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
         $proposedRoleIdsJson = encodeJsonColumn($proposedRoleIds);
         $proposedProjectIdsJson = encodeJsonColumn($proposedProjectIds);
+
+        if (
+            $cascadingParentContext !== null
+            && ($cascadingParentContext['was_created'] ?? false)
+            && ($cascadingParentContext['mapping_id'] ?? null) !== null
+        ) {
+            $parentPossibleValuesJson = encodeJsonColumn($cascadingParentContext['possible_values'] ?? null);
+            $parentTrackerIdsJson = encodeJsonColumn($proposedTrackerIds);
+            $parentRoleIdsJson = encodeJsonColumn($proposedRoleIds);
+            $parentProjectIdsJson = encodeJsonColumn($proposedProjectIds);
+            $parentAutomationHash = computeCustomFieldAutomationStateHash(
+                $cascadingParentContext['redmine_custom_field_id'] ?? null,
+                'READY_FOR_CREATION',
+                $cascadingParentContext['name'] ?? null,
+                'depending_enumeration',
+                $proposedIsRequired,
+                $proposedIsFilter,
+                $proposedIsForAll,
+                false,
+                $parentPossibleValuesJson,
+                null,
+                null,
+                $parentTrackerIdsJson,
+                $parentRoleIdsJson,
+                $parentProjectIdsJson,
+                $cascadingParentContext['notes'] ?? null,
+                null,
+                null
+            );
+
+            $updateStatement->execute([
+                'redmine_custom_field_id' => $cascadingParentContext['redmine_custom_field_id'] ?? null,
+                'mapping_parent_custom_field_id' => null,
+                'migration_status' => 'READY_FOR_CREATION',
+                'notes' => $cascadingParentContext['notes'] ?? null,
+                'proposed_redmine_name' => $cascadingParentContext['name'] ?? null,
+                'proposed_field_format' => 'depending_enumeration',
+                'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
+                'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
+                'proposed_is_for_all' => normalizeBooleanDatabaseValue($proposedIsForAll),
+                'proposed_is_multiple' => normalizeBooleanDatabaseValue(false),
+                'proposed_possible_values' => $parentPossibleValuesJson,
+                'proposed_value_dependencies' => null,
+                'proposed_default_value' => null,
+                'proposed_tracker_ids' => $parentTrackerIdsJson,
+                'proposed_role_ids' => $parentRoleIdsJson,
+                'proposed_project_ids' => $parentProjectIdsJson,
+                'automation_hash' => $parentAutomationHash,
+                'mapping_id' => (int)$cascadingParentContext['mapping_id'],
+            ]);
+
+            $existingMappings[$cascadingParentContext['mapping_key']] = array_merge(
+                $existingMappings[$cascadingParentContext['mapping_key']] ?? [],
+                [
+                    'jira_field_id' => $cascadingParentContext['mapping_key'],
+                    'mapping_id' => $cascadingParentContext['mapping_id'],
+                    'redmine_custom_field_id' => $cascadingParentContext['redmine_custom_field_id'] ?? null,
+                    'proposed_role_ids' => $proposedRoleIds,
+                    'proposed_project_ids' => $proposedProjectIds,
+                ]
+            );
+        }
 
         $automationHash = computeCustomFieldAutomationStateHash(
             $newRedmineId,
