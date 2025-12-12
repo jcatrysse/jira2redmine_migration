@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_ROLES_SCRIPT_VERSION = '0.0.11';
+const MIGRATE_ROLES_SCRIPT_VERSION = '0.0.13';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira project roles and their actors into the staging tables.',
     'redmine' => 'Refresh the Redmine roles snapshot from the REST API.',
@@ -790,32 +790,52 @@ SQL;
 function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo): void
 {
     $sql = <<<SQL
-INSERT INTO migration_mapping_project_role_groups (
-    jira_project_id,
-    jira_project_key,
-    jira_project_name,
-    jira_role_id,
-    jira_role_name,
-    jira_group_id,
-    jira_group_name
-)
-SELECT DISTINCT
-    actors.project_id,
-    actors.project_key,
-    actors.project_name,
-    actors.role_id,
-    actors.role_name,
-    actors.actor_id,
-    COALESCE(jgroups.name, actors.actor_display)
-FROM staging_jira_project_role_actors AS actors
-LEFT JOIN staging_jira_groups AS jgroups ON jgroups.group_id = actors.actor_id
-WHERE actors.actor_type = 'atlassian-group-role-actor'
-ON DUPLICATE KEY UPDATE
-    jira_project_key = VALUES(jira_project_key),
-    jira_project_name = VALUES(jira_project_name),
-    jira_role_name = VALUES(jira_role_name),
-    jira_group_name = VALUES(jira_group_name)
-SQL;
+        INSERT INTO migration_mapping_project_role_groups (
+            jira_project_id,
+            jira_project_key,
+            jira_project_name,
+            jira_role_id,
+            jira_role_name,
+            jira_group_id,
+            jira_group_name
+        )
+        SELECT DISTINCT
+            actors.project_id,
+            actors.project_key,
+            actors.project_name,
+            actors.role_id,
+            actors.role_name,
+            actors.actor_id,
+            COALESCE(jgroups.name, actors.actor_display)
+        FROM staging_jira_project_role_actors AS actors
+        LEFT JOIN staging_jira_groups AS jgroups ON jgroups.group_id = actors.actor_id
+        WHERE actors.actor_type = 'atlassian-group-role-actor'
+        
+        UNION DISTINCT
+        
+        SELECT DISTINCT
+            pra.project_id,
+            pra.project_key,
+            pra.project_name,
+            pra.role_id,
+            pra.role_name,
+            gm.jira_group_id,
+            COALESCE(jg.name, gm.jira_group_name) AS jira_group_name
+        FROM staging_jira_project_role_actors AS pra
+        JOIN migration_mapping_group_members AS gm
+              ON gm.jira_account_id = pra.actor_id
+        JOIN migration_mapping_groups AS g
+              ON g.jira_group_id = gm.jira_group_id
+        LEFT JOIN staging_jira_groups AS jg
+              ON jg.group_id = gm.jira_group_id
+        WHERE pra.actor_type = 'atlassian-user-role-actor'
+        
+        ON DUPLICATE KEY UPDATE
+            jira_project_key   = VALUES(jira_project_key),
+            jira_project_name  = VALUES(jira_project_name),
+            jira_role_name     = VALUES(jira_role_name),
+            jira_group_name    = VALUES(jira_group_name)
+        SQL;
 
     try {
         $pdo->exec($sql);
@@ -1655,6 +1675,15 @@ SQL;
  * @return void
  * @throws Throwable
  */
+/**
+ * @param PDO $pdo
+ * @param bool $confirmPush
+ * @param bool $isDryRun
+ * @param array<string,mixed> $redmineConfig
+ * @param bool $useExtendedApi
+ * @return void
+ * @throws Throwable
+ */
 function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi): void
 {
     $pendingAssignments = fetchPendingRoleAssignments($pdo);
@@ -1679,6 +1708,7 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
         verifyExtendedApiAvailability($redmineClient, $extendedApiPrefix, 'roles.json');
 
         printf("  %d assignment(s) queued for automatic creation.%s", $pendingCount, PHP_EOL);
+
         foreach ($pendingAssignments as $assignment) {
             printf(
                 "  - Project: %s | Jira role: %s | Jira group: %s%s",
@@ -1746,6 +1776,10 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
 
         $successCount = 0;
         $failureCount = 0;
+        $duplicateCount = 0;
+
+        // key: "projectId|groupId|roleId" -> primary mapping_id
+        $processedTargets = [];
 
         foreach ($pendingAssignments as $assignment) {
             $mappingId = (int)$assignment['mapping_id'];
@@ -1792,17 +1826,63 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
                 continue;
             }
 
+            $targetKey = $projectId . '|' . $groupId . '|' . $roleId;
+
+            // Deduplicatie: als deze combinatie al verwerkt is, geen tweede POST, maar wel status bijwerken
+            if (isset($processedTargets[$targetKey])) {
+                $primaryMappingId = $processedTargets[$targetKey];
+
+                $automationHash = computeProjectRoleAssignmentAutomationHash(
+                    $projectId,
+                    $groupId,
+                    $roleId,
+                    $proposedRoleId,
+                    $proposedRoleName,
+                    'ASSIGNMENT_RECORDED',
+                    $notes
+                );
+
+                $updateStatement->execute([
+                    'redmine_project_id' => $projectId,
+                    'redmine_group_id' => $groupId,
+                    'redmine_role_id' => $roleId,
+                    'proposed_redmine_role_id' => $proposedRoleId,
+                    'proposed_redmine_role_name' => $proposedRoleName,
+                    'migration_status' => 'ASSIGNMENT_RECORDED',
+                    'notes' => $notes,
+                    'automation_hash' => $automationHash,
+                    'mapping_id' => $mappingId,
+                ]);
+
+                printf(
+                    "  [duplicate] Project %s -> group #%d with role #%d already created by mapping #%d, marking mapping #%d as ASSIGNMENT_RECORDED without extra API call.%s",
+                    formatJiraProjectReference($assignment['jira_project_key'], $assignment['jira_project_name'], $assignment['jira_project_id']),
+                    $groupId,
+                    $roleId,
+                    $primaryMappingId,
+                    $mappingId,
+                    PHP_EOL
+                );
+
+                $duplicateCount++;
+                continue;
+            }
+
+            // Markeer deze combinatie als primair voordat we posten
+            $processedTargets[$targetKey] = $mappingId;
+
             $endpoint = buildExtendedApiPath(
                 $extendedApiPrefix,
                 sprintf('projects/%d/memberships.json', $projectId)
             );
 
+            // Payload conform Redmine REST API:
+            // membership[user_id] = id van user of group
+            // membership[role_ids] = array van role ids
             $payload = [
                 'membership' => [
-                    'project_id' => $projectId,
-                    'group_id' => $groupId,
-                    'role_ids' => [$roleId],
-                    'notify' => false,
+                    'user_id' => $groupId,
+                    'role_ids' => [$roleId]
                 ],
             ];
 
@@ -1885,14 +1965,19 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
         }
 
         printf(
-            "  Completed extended API push. Success: %d, Failed: %d.%s",
+            "  Completed extended API push. Success: %d, Duplicates: %d, Failed: %d.%s",
             $successCount,
+            $duplicateCount,
             $failureCount,
             PHP_EOL
         );
 
         return;
     }
+
+    // -----------------------------
+    // Klassieke push fase (manual)
+    // -----------------------------
 
     printf("[%s] Starting push phase (manual assignment preview)...%s", formatCurrentTimestamp(), PHP_EOL);
 

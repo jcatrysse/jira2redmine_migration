@@ -16,12 +16,20 @@ All notable changes to this project will be documented in this file.
 - Create the missing scripts: labels/tags, (document) categories, milestones, watchers, checklists, relations, subtasks, workflows, custom workflows...
 - Validate we can push authors and creation timestamps to Redmine.
 
+## [0.0.67]
+
+- Include atlassian-user-role-actor in the role assignment script.
+- Bump the role migration script version to `0.0.13` to reflect
+  the newly included actors.
+
 ## [0.0.66]
 
 - Stream Redmine attachment uploads to avoid loading large files fully into
   memory when pushing binaries up to 2 GB via the REST API.
 - Bump the attachment migration script version to `0.0.18` to reflect the
   upload pipeline change.
+- Bump the role migration script version to `0.0.12` to reflect
+  a payload correction for the Redmine push.
 
 ## [0.0.65]
 
