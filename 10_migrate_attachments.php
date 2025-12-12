@@ -9,9 +9,10 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Pool;
+use GuzzleHttp\Psr7\Utils;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.17';
+const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.18';
 const AVAILABLE_PHASES = [
     'jira' => 'Synchronise Jira attachment metadata with the migration mapping table.',
     'pull' => 'Download Jira attachment binaries into the working directory.',
@@ -883,18 +884,21 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
             continue;
         }
 
+        $bodyStream = Utils::streamFor($handle);
+
         try {
             $response = $client->post('/uploads.json', [
                 'headers' => [
                     'Content-Type' => $mimeType !== '' ? $mimeType : 'application/octet-stream',
                     'X-File-Name' => basename($filename !== '' ? $filename : $localPath),
+                    'Content-Length' => (string)$stat['size'],
                 ],
-                'body' => stream_get_contents($handle) ?: '',
+                'body' => $bodyStream,
             ]);
 
-            fclose($handle);
+            $bodyStream->close();
         } catch (BadResponseException $exception) {
-            fclose($handle);
+            $bodyStream->close();
             $response = $exception->getResponse();
             $message = 'Failed to upload attachment to Redmine';
             if ($response instanceof ResponseInterface) {
@@ -914,7 +918,7 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
             $failed++;
             continue;
         } catch (GuzzleException $exception) {
-            fclose($handle);
+            $bodyStream->close();
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
                 'redmine_upload_token' => null,

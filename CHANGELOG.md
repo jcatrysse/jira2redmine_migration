@@ -16,6 +16,13 @@ All notable changes to this project will be documented in this file.
 - Create the missing scripts: labels/tags, (document) categories, milestones, watchers, checklists, relations, subtasks, workflows, custom workflows...
 - Validate we can push authors and creation timestamps to Redmine.
 
+## [0.0.66]
+
+- Stream Redmine attachment uploads to avoid loading large files fully into
+  memory when pushing binaries up to 2 GB via the REST API.
+- Bump the attachment migration script version to `0.0.18` to reflect the
+  upload pipeline change.
+
 ## [0.0.65]
 
 - Populate enumeration values when creating Redmine custom fields through the
