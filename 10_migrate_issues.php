@@ -1273,7 +1273,7 @@ function runIssuePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $r
             printf("      • %d attachment(s) prepared for association.%s", $readyCount, PHP_EOL);
         }
         if ($blockedCount > 0) {
-            printf("      • %d attachment(s) still require download/upload via 10_migrate_attachments.php.%s", $blockedCount, PHP_EOL);
+            printf("      • %d attachment(s) still require download/upload via 09_migrate_attachments.php.%s", $blockedCount, PHP_EOL);
         }
     }
 
@@ -1323,6 +1323,17 @@ function runIssuePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $r
         }
 
         $preparedAttachments = $attachmentsByIssue[$jiraIssueId] ?? [];
+        $redmineUploads = array_values(array_filter(
+            $preparedAttachments,
+            static fn($attachment) => $attachment['redmine_upload_token'] !== ''
+        ));
+        $sharePointLinks = array_values(array_filter(
+            $preparedAttachments,
+            static fn($attachment) => ($attachment['sharepoint_url'] ?? '') !== ''
+        ));
+
+        $description = $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null;
+        $descriptionWithSharePoint = appendSharePointLinksToDescription($description, $sharePointLinks);
 
         $payload = [
             'issue' => array_filter([
@@ -1331,7 +1342,7 @@ function runIssuePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $r
                 'status_id' => $statusId,
                 'priority_id' => $candidate['proposed_priority_id'] !== null ? (int)$candidate['proposed_priority_id'] : null,
                 'subject' => isset($candidate['proposed_subject']) ? (string)$candidate['proposed_subject'] : null,
-                'description' => $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null,
+                'description' => $descriptionWithSharePoint,
                 'start_date' => $candidate['proposed_start_date'] !== null ? (string)$candidate['proposed_start_date'] : null,
                 'due_date' => $candidate['proposed_due_date'] !== null ? (string)$candidate['proposed_due_date'] : null,
                 'assigned_to_id' => $candidate['proposed_assigned_to_id'] !== null ? (int)$candidate['proposed_assigned_to_id'] : null,
@@ -1340,7 +1351,7 @@ function runIssuePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $r
                 'parent_issue_id' => $candidate['proposed_parent_issue_id'] !== null ? (int)$candidate['proposed_parent_issue_id'] : null,
                 'is_private' => $candidate['proposed_is_private'] !== null ? ($candidate['proposed_is_private'] ? 1 : 0) : null,
                 'custom_fields' => $candidate['proposed_custom_field_payload'] !== null ? json_decode((string)$candidate['proposed_custom_field_payload'], true) : null,
-                'uploads' => buildIssueUploadPayload($preparedAttachments),
+                'uploads' => buildIssueUploadPayload($redmineUploads),
             ], static fn($value) => $value !== null),
         ];
 
@@ -1405,8 +1416,12 @@ function runIssuePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $r
 
         printf("  [created] Jira issue %s → Redmine issue #%d%s", $jiraIssueKey, $redmineIssueId, PHP_EOL);
 
-        if ($preparedAttachments !== []) {
-            finalizeIssueAttachmentAssociations($client, $pdo, $jiraIssueId, $redmineIssueId, $preparedAttachments);
+        if ($redmineUploads !== []) {
+            finalizeIssueAttachmentAssociations($client, $pdo, $jiraIssueId, $redmineIssueId, $redmineUploads);
+        }
+
+        if ($sharePointLinks !== []) {
+            markSharePointAttachmentsAsLinked($pdo, $sharePointLinks, $redmineIssueId);
         }
     }
 }
@@ -1436,7 +1451,7 @@ function countAttachmentsAwaitingAssociation(PDO $pdo): int
 }
 
 /**
- * @return array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string}>
+ * @return array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string}>
  */
 function fetchPreparedAttachmentUploads(PDO $pdo, string $jiraIssueId): array
 {
@@ -1445,6 +1460,7 @@ function fetchPreparedAttachmentUploads(PDO $pdo, string $jiraIssueId): array
             map.mapping_id,
             map.jira_attachment_id,
             map.redmine_upload_token,
+            map.sharepoint_url,
             att.filename,
             att.mime_type,
             att.size_bytes
@@ -1468,7 +1484,8 @@ function fetchPreparedAttachmentUploads(PDO $pdo, string $jiraIssueId): array
     $result = [];
     foreach ($rows as $row) {
         $token = isset($row['redmine_upload_token']) ? (string)$row['redmine_upload_token'] : '';
-        if ($token === '') {
+        $sharePointUrl = isset($row['sharepoint_url']) ? trim((string)$row['sharepoint_url']) : '';
+        if ($token === '' && $sharePointUrl === '') {
             continue;
         }
 
@@ -1479,6 +1496,7 @@ function fetchPreparedAttachmentUploads(PDO $pdo, string $jiraIssueId): array
             'mime_type' => isset($row['mime_type']) && $row['mime_type'] !== '' ? (string)$row['mime_type'] : null,
             'size_bytes' => isset($row['size_bytes']) ? (int)$row['size_bytes'] : null,
             'redmine_upload_token' => $token,
+            'sharepoint_url' => $sharePointUrl !== '' ? $sharePointUrl : null,
         ];
     }
 
@@ -1515,13 +1533,17 @@ function summarizeAttachmentStatusesForIssue(PDO $pdo, string $jiraIssueId): arr
 }
 
 /**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string}> $attachments
+ * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string}> $attachments
  * @return array<int, array<string, mixed>>
  */
 function buildIssueUploadPayload(array $attachments): array
 {
     $uploads = [];
     foreach ($attachments as $attachment) {
+        if ($attachment['redmine_upload_token'] === '') {
+            continue;
+        }
+
         $uploads[] = array_filter([
             'token' => $attachment['redmine_upload_token'],
             'filename' => $attachment['filename'] !== '' ? $attachment['filename'] : null,
@@ -1533,7 +1555,36 @@ function buildIssueUploadPayload(array $attachments): array
 }
 
 /**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string}> $attachments
+ * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string}> $sharePointLinks
+ */
+function appendSharePointLinksToDescription(?string $description, array $sharePointLinks): ?string
+{
+    if ($sharePointLinks === []) {
+        return $description;
+    }
+
+    $lines = ['SharePoint attachments:'];
+    foreach ($sharePointLinks as $attachment) {
+        $url = (string)$attachment['sharepoint_url'];
+        if ($url === '') {
+            continue;
+        }
+
+        $label = $attachment['filename'] !== '' ? $attachment['filename'] : $attachment['jira_attachment_id'];
+        $lines[] = sprintf('- [%s](%s)', $label, $url);
+    }
+
+    $block = implode(PHP_EOL, $lines);
+
+    if ($description === null || $description === '') {
+        return $block;
+    }
+
+    return $description . PHP_EOL . PHP_EOL . $block;
+}
+
+/**
+ * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string}> $attachments
  */
 function finalizeIssueAttachmentAssociations(Client $client, PDO $pdo, string $jiraIssueId, int $redmineIssueId, array $attachments): void
 {
@@ -1581,7 +1632,21 @@ function finalizeIssueAttachmentAssociations(Client $client, PDO $pdo, string $j
 }
 
 /**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string}> $attachments
+ * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string}> $attachments
+ */
+function markSharePointAttachmentsAsLinked(PDO $pdo, array $attachments, int $redmineIssueId): void
+{
+    foreach ($attachments as $attachment) {
+        $note = isset($attachment['sharepoint_url']) && $attachment['sharepoint_url'] !== null
+            ? sprintf('Attachment stored on SharePoint: %s', $attachment['sharepoint_url'])
+            : 'Attachment stored on SharePoint.';
+
+        updateAttachmentMappingAfterPush($pdo, (int)$attachment['mapping_id'], null, 'SUCCESS', $note, $redmineIssueId);
+    }
+}
+
+/**
+ * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string}> $attachments
  */
 function markAttachmentAssociationFailure(PDO $pdo, array $attachments, string $message): void
 {
@@ -1591,7 +1656,7 @@ function markAttachmentAssociationFailure(PDO $pdo, array $attachments, string $
 }
 
 /**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string}> $attachments
+ * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string}> $attachments
  * @param array<int, mixed> $redmineAttachments
  * @return array<string, array{id: int}>
  */
