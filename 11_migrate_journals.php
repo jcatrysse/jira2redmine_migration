@@ -125,7 +125,7 @@ function main(array $config, array $cliOptions): void
 function printUsage(): void
 {
     printf("Jira to Redmine Journal Migration (step 12) — version %s%s", MIGRATE_JOURNALS_SCRIPT_VERSION, PHP_EOL);
-    printf("Usage: php 12_migrate_journals.php [options]\n\n");
+    printf("Usage: php 11_migrate_journals.php [options]\n\n");
     printf("Options:\n");
     printf("  --phases=LIST        Comma separated list of phases to run (default: jira,transform,push).\n");
     printf("  --skip=LIST          Comma separated list of phases to skip.\n");
@@ -649,9 +649,19 @@ function processCommentPush(Client $client, PDO $pdo, array $comment, array $con
     $bodyText = $bodyText ?? '';
 
     $attachments = fetchPreparedJournalAttachments($pdo, $jiraIssueId, $createdAt);
-    $uploadPayload = buildAttachmentUploadPayload($attachments);
+    $redmineUploads = array_values(array_filter(
+        $attachments,
+        static fn($attachment) => $attachment['redmine_upload_token'] !== ''
+    ));
+    $sharePointLinks = array_values(array_filter(
+        $attachments,
+        static fn($attachment) => ($attachment['sharepoint_url'] ?? '') !== ''
+    ));
+
+    $uploadPayload = buildAttachmentUploadPayload($redmineUploads);
 
     $note = implode(' ', array_filter($noteParts, static fn($part) => $part !== '')) . PHP_EOL . $bodyText;
+    $note = appendSharePointLinksToNotes($note, $sharePointLinks);
     $payload = [
         'issue' => array_filter([
             'notes' => $note,
@@ -686,8 +696,12 @@ function processCommentPush(Client $client, PDO $pdo, array $comment, array $con
 
     markJournalPushSuccess($pdo, $mappingId, $journalId);
 
-    if ($attachments !== []) {
-        finalizeAttachmentAssociations($client, $pdo, $jiraIssueId, $redmineIssueId, $attachments);
+    if ($redmineUploads !== []) {
+        finalizeAttachmentAssociations($client, $pdo, $jiraIssueId, $redmineIssueId, $redmineUploads);
+    }
+
+    if ($sharePointLinks !== []) {
+        markSharePointJournalAttachmentsAsLinked($pdo, $sharePointLinks, $redmineIssueId);
     }
 
     printf(
@@ -853,7 +867,7 @@ function markJournalPushFailure(PDO $pdo, int $mappingId, string $message): void
 }
 
 /**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, created_at: ?string}> $attachments
+ * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string, created_at: ?string}> $attachments
  */
 function markAttachmentAssociationFailure(PDO $pdo, array $attachments, string $message): void
 {
@@ -863,13 +877,17 @@ function markAttachmentAssociationFailure(PDO $pdo, array $attachments, string $
 }
 
 /**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, created_at: ?string}> $attachments
+ * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string, created_at: ?string}> $attachments
  * @return array<int, array<string, mixed>>
  */
 function buildAttachmentUploadPayload(array $attachments): array
 {
     $uploads = [];
     foreach ($attachments as $attachment) {
+        if ($attachment['redmine_upload_token'] === '') {
+            continue;
+        }
+
         $uploads[] = array_filter([
             'token' => $attachment['redmine_upload_token'],
             'filename' => $attachment['filename'] !== '' ? $attachment['filename'] : null,
@@ -881,7 +899,36 @@ function buildAttachmentUploadPayload(array $attachments): array
 }
 
 /**
- * @return array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, created_at: ?string}>
+ * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string, created_at: ?string}> $sharePointLinks
+ */
+function appendSharePointLinksToNotes(string $note, array $sharePointLinks): string
+{
+    if ($sharePointLinks === []) {
+        return $note;
+    }
+
+    $lines = ['SharePoint attachments:'];
+    foreach ($sharePointLinks as $attachment) {
+        $url = (string)$attachment['sharepoint_url'];
+        if ($url === '') {
+            continue;
+        }
+
+        $label = $attachment['filename'] !== '' ? $attachment['filename'] : $attachment['jira_attachment_id'];
+        $lines[] = sprintf('- [%s](%s)', $label, $url);
+    }
+
+    $block = implode(PHP_EOL, $lines);
+
+    if ($note === '') {
+        return $block;
+    }
+
+    return $note . PHP_EOL . PHP_EOL . $block;
+}
+
+/**
+ * @return array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string, created_at: ?string}>
  */
 function fetchPreparedJournalAttachments(PDO $pdo, string $jiraIssueId, ?string $journalCreatedAt): array
 {
@@ -890,6 +937,7 @@ function fetchPreparedJournalAttachments(PDO $pdo, string $jiraIssueId, ?string 
             map.mapping_id,
             map.jira_attachment_id,
             map.redmine_upload_token,
+            map.sharepoint_url,
             att.filename,
             att.mime_type,
             att.size_bytes,
@@ -911,38 +959,51 @@ function fetchPreparedJournalAttachments(PDO $pdo, string $jiraIssueId, ?string 
     $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $statement->closeCursor();
 
-    if ($journalCreatedAt === null) {
-        return $rows;
+    if ($journalCreatedAt !== null) {
+        $journalTimestamp = strtotime($journalCreatedAt);
+        if ($journalTimestamp !== false) {
+            $rows = array_values(array_filter($rows, static function (array $row) use ($journalTimestamp) {
+                $createdAt = isset($row['created_at']) ? (string)$row['created_at'] : null;
+                if ($createdAt === null) {
+                    return true;
+                }
+
+                $createdTimestamp = strtotime($createdAt);
+                if ($createdTimestamp === false) {
+                    return true;
+                }
+
+                return abs($createdTimestamp - $journalTimestamp) <= 300; // 5 minute tolerance
+            }));
+        }
     }
 
-    $journalTimestamp = strtotime($journalCreatedAt);
-    if ($journalTimestamp === false) {
-        return $rows;
-    }
-
-    $filtered = [];
+    $result = [];
     foreach ($rows as $row) {
-        $createdAt = isset($row['created_at']) ? (string)$row['created_at'] : null;
-        if ($createdAt === null) {
-            $filtered[] = $row;
-            continue;
-        }
-        $createdTimestamp = strtotime($createdAt);
-        if ($createdTimestamp === false) {
-            $filtered[] = $row;
+        $token = isset($row['redmine_upload_token']) ? (string)$row['redmine_upload_token'] : '';
+        $sharePointUrl = isset($row['sharepoint_url']) ? trim((string)$row['sharepoint_url']) : '';
+
+        if ($token === '' && $sharePointUrl === '') {
             continue;
         }
 
-        if (abs($createdTimestamp - $journalTimestamp) <= 300) { // 5 minute tolerance
-            $filtered[] = $row;
-        }
+        $result[] = [
+            'mapping_id' => isset($row['mapping_id']) ? (int)$row['mapping_id'] : 0,
+            'jira_attachment_id' => isset($row['jira_attachment_id']) ? (string)$row['jira_attachment_id'] : '',
+            'filename' => isset($row['filename']) ? (string)$row['filename'] : '',
+            'mime_type' => isset($row['mime_type']) && $row['mime_type'] !== '' ? (string)$row['mime_type'] : null,
+            'size_bytes' => isset($row['size_bytes']) ? (int)$row['size_bytes'] : null,
+            'redmine_upload_token' => $token,
+            'sharepoint_url' => $sharePointUrl !== '' ? $sharePointUrl : null,
+            'created_at' => isset($row['created_at']) ? (string)$row['created_at'] : null,
+        ];
     }
 
-    return $filtered;
+    return $result;
 }
 
 /**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, created_at: ?string}> $attachments
+ * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string, created_at: ?string}> $attachments
  */
 function finalizeAttachmentAssociations(Client $client, PDO $pdo, string $jiraIssueId, int $redmineIssueId, array $attachments): void
 {
@@ -978,7 +1039,21 @@ function finalizeAttachmentAssociations(Client $client, PDO $pdo, string $jiraIs
 }
 
 /**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, created_at: ?string}> $attachments
+ * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string, created_at: ?string}> $attachments
+ */
+function markSharePointJournalAttachmentsAsLinked(PDO $pdo, array $attachments, int $redmineIssueId): void
+{
+    foreach ($attachments as $attachment) {
+        $note = isset($attachment['sharepoint_url']) && $attachment['sharepoint_url'] !== null
+            ? sprintf('Attachment stored on SharePoint: %s', $attachment['sharepoint_url'])
+            : 'Attachment stored on SharePoint.';
+
+        updateAttachmentMappingAfterPush($pdo, (int)$attachment['mapping_id'], null, 'SUCCESS', $note, $redmineIssueId);
+    }
+}
+
+/**
+ * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string, created_at: ?string}> $attachments
  * @param array<int, mixed> $redmineAttachments
  * @return array<string, array{id: int}>
  */

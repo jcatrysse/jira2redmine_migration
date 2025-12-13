@@ -82,7 +82,7 @@ function main(array $config, array $cliOptions): void
 function printUsage(): void
 {
     printf('Jira to Redmine Subtask Linking (step 13) — version %s%s', MIGRATE_SUBTASKS_SCRIPT_VERSION, PHP_EOL);
-    printf("Usage: php 13_migrate_subtasks.php [options]\n\n");
+    printf("Usage: php 12_migrate_subtasks.php [options]\n\n");
     printf("Options:\n");
     printf("  --phases=LIST     Comma separated list of phases to run (default: analyse,push).\n");
     printf("  --skip=LIST       Comma separated list of phases to skip.\n");

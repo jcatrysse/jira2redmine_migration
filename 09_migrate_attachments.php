@@ -12,7 +12,7 @@ use GuzzleHttp\Pool;
 use GuzzleHttp\Psr7\Utils;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.18';
+const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.19';
 const AVAILABLE_PHASES = [
     'jira' => 'Synchronise Jira attachment metadata with the migration mapping table.',
     'pull' => 'Download Jira attachment binaries into the working directory.',
@@ -142,7 +142,7 @@ function main(array $config, array $cliOptions): void
 function printUsage(): void
 {
     printf("Jira to Redmine Attachment Migration (step 10) — version %s%s", MIGRATE_ATTACHMENTS_SCRIPT_VERSION, PHP_EOL);
-    printf("Usage: php 10_migrate_attachments.php [options]\n\n");
+    printf("Usage: php 09_migrate_attachments.php [options]\n\n");
     printf("Options:\n");
     printf("  --phases=LIST        Comma separated list of phases to run (default: jira,pull,transform,push).\n");
     printf("  --skip=LIST          Comma separated list of phases to skip.\n");
@@ -201,9 +201,21 @@ function runAttachmentPullPhase(PDO $pdo, array $config, bool $confirmPull, bool
 function runAttachmentUploadPhase(PDO $pdo, array $config, bool $confirmPush, bool $isDryRun, ?int $uploadLimit): void
 {
     $statusBreakdown = summariseAttachmentStatuses($pdo);
+    $enabledPendingUpload = countEnabledPendingUpload($pdo);
+
     printf("[%s] Attachment queue status:%s", formatCurrentTimestamp(), PHP_EOL);
     foreach ($statusBreakdown as $status => $count) {
-        printf("  - %-24s %d%s", $status, $count, PHP_EOL);
+        if ($status === 'PENDING_UPLOAD') {
+            printf(
+                "  - %-24s %d (upload_enabled: %d)%s",
+                $status,
+                $count,
+                $enabledPendingUpload,
+                PHP_EOL
+            );
+        } else {
+            printf("  - %-24s %d%s", $status, $count, PHP_EOL);
+        }
     }
 
     if ($isDryRun) {
@@ -217,12 +229,16 @@ function runAttachmentUploadPhase(PDO $pdo, array $config, bool $confirmPush, bo
     }
 
     $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
-    $uploadSummary = uploadPendingAttachmentsToRedmine($redmineClient, $pdo, $uploadLimit);
+    $sharePointConfig = extractSharePointConfig($config);
+    $sharePointClient = $sharePointConfig !== null ? createSharePointClient($sharePointConfig) : null;
+
+    $uploadSummary = uploadPendingAttachmentsToRedmine($redmineClient, $pdo, $uploadLimit, $sharePointClient, $sharePointConfig);
     printf(
-        "[%s] Redmine upload summary — queued: %d, uploaded: %d, failed: %d.%s",
+        "[%s] Attachment upload summary — queued: %d, uploaded to Redmine: %d, uploaded to SharePoint: %d, failed: %d.%s",
         formatCurrentTimestamp(),
         $uploadSummary['queued'],
         $uploadSummary['uploaded'],
+        $uploadSummary['sharepoint_uploaded'],
         $uploadSummary['failed'],
         PHP_EOL
     );
@@ -239,6 +255,7 @@ function runAttachmentTransformPhase(PDO $pdo): array
             migration_status = 'PENDING_DOWNLOAD',
             local_filepath = NULL,
             redmine_upload_token = NULL,
+            sharepoint_url = NULL,
             notes = NULL,
             last_updated_at = CURRENT_TIMESTAMP
         WHERE migration_status = 'FAILED'
@@ -773,14 +790,16 @@ function downloadPendingJiraAttachments(Client $client, PDO $pdo, array $config,
 }
 
 /**
- * @return array{queued: int, uploaded: int, failed: int}
+ * @return array{queued: int, uploaded: int, sharepoint_uploaded: int, failed: int}
  */
-function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit = null): array
+function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit = null, ?Client $sharePointClient = null, ?array $sharePointConfig = null): array
 {
     $sql = <<<SQL
         SELECT
             map.mapping_id,
+            map.jira_attachment_id,
             map.local_filepath,
+            map.jira_filesize,
             att.filename,
             att.mime_type
         FROM migration_mapping_attachments map
@@ -821,6 +840,7 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
         return [
             'queued' => 0,
             'uploaded' => 0,
+            'sharepoint_uploaded' => 0,
             'failed' => 0,
         ];
     }
@@ -830,6 +850,7 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
         SET
             migration_status = :migration_status,
             redmine_upload_token = :redmine_upload_token,
+            sharepoint_url = :sharepoint_url,
             notes = :notes,
             last_updated_at = CURRENT_TIMESTAMP
         WHERE mapping_id = :mapping_id
@@ -840,6 +861,7 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
     }
 
     $uploaded = 0;
+    $sharePointUploaded = 0;
     $failed = 0;
 
     foreach ($rows as $row) {
@@ -847,11 +869,21 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
         $localPath = isset($row['local_filepath']) ? (string)$row['local_filepath'] : '';
         $filename = isset($row['filename']) ? (string)$row['filename'] : '';
         $mimeType = isset($row['mime_type']) ? (string)$row['mime_type'] : '';
+        $jiraFileSize = isset($row['jira_filesize']) ? (int)$row['jira_filesize'] : null;
+
+        $jiraAttachmentId = (string)($row['jira_attachment_id'] ?? '');
+        $originalName = $filename !== '' ? $filename : basename($localPath);
+
+        // keep extension, but prefix id
+        $uniqueName = $jiraAttachmentId !== ''
+            ? ($jiraAttachmentId . '__' . sanitizeAttachmentFileName($originalName))
+            : sanitizeAttachmentFileName($originalName);
 
         if ($localPath === '' || !is_file($localPath)) {
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
                 'redmine_upload_token' => null,
+                'sharepoint_url' => null,
                 'notes' => sprintf('Local attachment missing: %s', $localPath !== '' ? $localPath : '[unknown path]'),
                 'mapping_id' => $mappingId,
             ]);
@@ -864,6 +896,7 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
                 'redmine_upload_token' => null,
+                'sharepoint_url' => null,
                 'notes' => sprintf('Unable to open attachment for upload: %s', $localPath),
                 'mapping_id' => $mappingId,
             ]);
@@ -877,6 +910,7 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
                 'redmine_upload_token' => null,
+                'sharepoint_url' => null,
                 'notes' => sprintf('Unable to determine attachment size: %s', $localPath),
                 'mapping_id' => $mappingId,
             ]);
@@ -884,14 +918,49 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
             continue;
         }
 
+        $fileSize = (int)$stat['size'];
+        $uploadToSharePoint = shouldUploadToSharePoint($sharePointConfig, $sharePointClient, $jiraFileSize ?? $fileSize, $fileSize);
+
+        if ($uploadToSharePoint && $sharePointClient !== null && $sharePointConfig !== null) {
+            try {
+                $sharePointUrl = uploadAttachmentToSharePoint($sharePointClient, $sharePointConfig, $handle, $fileSize, $filename, $uniqueName);
+                $updateStatement->execute([
+                    'migration_status' => 'PENDING_ASSOCIATION',
+                    'redmine_upload_token' => null,
+                    'sharepoint_url' => $sharePointUrl,
+                    'notes' => null,
+                    'mapping_id' => $mappingId,
+                ]);
+                $sharePointUploaded++;
+            } catch (Throwable $exception) {
+                $updateStatement->execute([
+                    'migration_status' => 'FAILED',
+                    'redmine_upload_token' => null,
+                    'sharepoint_url' => null,
+                    'notes' => 'Failed to upload attachment to SharePoint: ' . $exception->getMessage(),
+                    'mapping_id' => $mappingId,
+                ]);
+                $failed++;
+            }
+            fclose($handle);
+            continue;
+        }
+
         $bodyStream = Utils::streamFor($handle);
 
+        printf(
+            "[%s] Uploading to Redmine: %s as %s (%s)%s",
+            formatCurrentTimestamp(),
+            $originalName,
+            $uniqueName,
+            formatBytes($fileSize),
+            PHP_EOL
+        );
+
         try {
-            $response = $client->post('/uploads.json', [
+            $response = $client->post('/uploads.json?filename=' . rawurlencode(basename($uniqueName)), [
                 'headers' => [
-                    'Content-Type' => $mimeType !== '' ? $mimeType : 'application/octet-stream',
-                    'X-File-Name' => basename($filename !== '' ? $filename : $localPath),
-                    'Content-Length' => (string)$stat['size'],
+                    'Content-Type' => 'application/octet-stream',
                 ],
                 'body' => $bodyStream,
             ]);
@@ -911,6 +980,7 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
                 'redmine_upload_token' => null,
+                'sharepoint_url' => null,
                 'notes' => $message,
                 'mapping_id' => $mappingId,
             ]);
@@ -922,6 +992,7 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
                 'redmine_upload_token' => null,
+                'sharepoint_url' => null,
                 'notes' => 'Failed to upload attachment to Redmine: ' . $exception->getMessage(),
                 'mapping_id' => $mappingId,
             ]);
@@ -936,6 +1007,7 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
                 'redmine_upload_token' => null,
+                'sharepoint_url' => null,
                 'notes' => 'Redmine did not return an upload token.',
                 'mapping_id' => $mappingId,
             ]);
@@ -947,6 +1019,7 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
         $updateStatement->execute([
             'migration_status' => 'PENDING_ASSOCIATION',
             'redmine_upload_token' => $token,
+            'sharepoint_url' => null,
             'notes' => null,
             'mapping_id' => $mappingId,
         ]);
@@ -957,6 +1030,7 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
     return [
         'queued' => $queued,
         'uploaded' => $uploaded,
+        'sharepoint_uploaded' => $sharePointUploaded,
         'failed' => $failed,
     ];
 }
@@ -1078,6 +1152,358 @@ function createRedmineClient(array $config): Client
             'X-Redmine-API-Key' => $apiKey,
         ],
     ]);
+}
+
+/**
+ * @param array<string, mixed> $config
+ * @return array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int}|null
+ */
+function extractSharePointConfig(array $config): ?array
+{
+    $attachmentsConfig = $config['attachments'] ?? [];
+    $sharePointConfig = isset($attachmentsConfig['sharepoint']) && is_array($attachmentsConfig['sharepoint'])
+        ? $attachmentsConfig['sharepoint']
+        : null;
+
+    if ($sharePointConfig === null) {
+        return null;
+    }
+
+    $threshold = $sharePointConfig['offload_threshold_bytes'] ?? null;
+    if ($threshold === null) {
+        return null;
+    }
+
+    $thresholdValue = (int)$threshold;
+    if ($thresholdValue <= 0) {
+        throw new RuntimeException('SharePoint offload threshold must be greater than zero when enabled.');
+    }
+
+    $requiredKeys = ['tenant_id', 'client_id', 'client_secret', 'site_id', 'drive_id', 'folder_path'];
+    foreach ($requiredKeys as $key) {
+        $value = isset($sharePointConfig[$key]) ? trim((string)$sharePointConfig[$key]) : '';
+        if ($value === '') {
+            throw new RuntimeException(sprintf('Incomplete SharePoint configuration; missing %s.', $key));
+        }
+    }
+
+    $graphBaseUrl = isset($sharePointConfig['graph_base_url']) ? (string)$sharePointConfig['graph_base_url'] : 'https://graph.microsoft.com/v1.0';
+    $chunkSize = (int)($sharePointConfig['chunk_size_bytes'] ?? (5 * 1024 * 1024));
+    if ($chunkSize <= 0) {
+        $chunkSize = 5 * 1024 * 1024;
+    }
+
+    return [
+        'offload_threshold_bytes' => $thresholdValue,
+        'tenant_id' => trim((string)$sharePointConfig['tenant_id']),
+        'client_id' => trim((string)$sharePointConfig['client_id']),
+        'client_secret' => (string)$sharePointConfig['client_secret'],
+        'site_id' => trim((string)$sharePointConfig['site_id']),
+        'drive_id' => trim((string)$sharePointConfig['drive_id']),
+        'folder_path' => trim((string)$sharePointConfig['folder_path'], '/'),
+        'graph_base_url' => rtrim($graphBaseUrl, '/'),
+        'chunk_size_bytes' => $chunkSize,
+    ];
+}
+
+/**
+ * @param array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int} $sharePointConfig
+ */
+function createSharePointClient(array $sharePointConfig): Client
+{
+    $token = getCachedSharePointAccessToken($sharePointConfig);
+
+    $base = rtrim($sharePointConfig['graph_base_url'], '/') . '/';
+
+    return new Client([
+        'base_uri' => $base,
+        'headers' => [
+            'Authorization' => 'Bearer ' . $token,
+            'Accept' => 'application/json',
+        ],
+    ]);
+}
+
+/**
+ * @param array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int} $sharePointConfig
+ * @return array{access_token: string, expires_at: int}
+ */
+function fetchSharePointAccessTokenWithExpiry(array $sharePointConfig): array
+{
+    $tenantId = $sharePointConfig['tenant_id'];
+
+    try {
+        $client = new Client(['base_uri' => 'https://login.microsoftonline.com/']);
+        $response = $client->post(sprintf('%s/oauth2/v2.0/token', $tenantId), [
+            'form_params' => [
+                'grant_type' => 'client_credentials',
+                'client_id' => $sharePointConfig['client_id'],
+                'client_secret' => $sharePointConfig['client_secret'],
+                'scope' => 'https://graph.microsoft.com/.default',
+            ],
+        ]);
+    } catch (Throwable $exception) {
+        throw new RuntimeException('Failed to obtain SharePoint access token: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    $body = decodeJsonResponse($response);
+
+    $token = isset($body['access_token']) ? (string)$body['access_token'] : '';
+    if ($token === '') {
+        throw new RuntimeException('SharePoint authentication did not return an access token.');
+    }
+
+    // expires_in is typically present, but be defensive
+    $expiresIn = isset($body['expires_in']) ? (int)$body['expires_in'] : 3600;
+    if ($expiresIn <= 0) {
+        $expiresIn = 3600;
+    }
+
+    return [
+        'access_token' => $token,
+        'expires_at' => time() + $expiresIn,
+    ];
+}
+
+/**
+ * Cache token in-memory for this script run, refresh a bit early.
+ *
+ * @param array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int} $sharePointConfig
+ */
+function getCachedSharePointAccessToken(array $sharePointConfig, int $refreshSkewSeconds = 120): string
+{
+    static $cache = [
+        'tenant_id' => null,
+        'client_id' => null,
+        'access_token' => null,
+        'expires_at' => 0,
+    ];
+
+    $now = time();
+
+    $sameApp =
+        $cache['tenant_id'] === $sharePointConfig['tenant_id']
+        && $cache['client_id'] === $sharePointConfig['client_id'];
+
+    $stillValid = $cache['access_token'] !== null && ($now + $refreshSkewSeconds) < (int)$cache['expires_at'];
+
+    if ($sameApp && $stillValid) {
+        return (string)$cache['access_token'];
+    }
+
+    $tokenData = fetchSharePointAccessTokenWithExpiry($sharePointConfig);
+
+    $cache['tenant_id'] = $sharePointConfig['tenant_id'];
+    $cache['client_id'] = $sharePointConfig['client_id'];
+    $cache['access_token'] = $tokenData['access_token'];
+    $cache['expires_at'] = (int)$tokenData['expires_at'];
+
+    return $tokenData['access_token'];
+}
+
+/**
+ * @param array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int}|null $sharePointConfig
+ */
+function shouldUploadToSharePoint(?array $sharePointConfig, ?Client $sharePointClient, ?int $reportedSize, int $actualSize): bool
+{
+    if ($sharePointConfig === null || $sharePointClient === null) {
+        return false;
+    }
+
+    $threshold = $sharePointConfig['offload_threshold_bytes'] ?? null;
+    if ($threshold === null) {
+        return false;
+    }
+
+    $sizeToCompare = $reportedSize ?? $actualSize;
+
+    return $sizeToCompare >= $threshold;
+}
+
+/**
+ * @param array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int} $sharePointConfig
+ */
+function uploadAttachmentToSharePoint(Client &$client, array $sharePointConfig, $handle, int $fileSize, string $filename, string $uniqueName): string
+{
+    // ensure token is fresh before Graph call that creates session
+    $client = createSharePointClient($sharePointConfig);
+
+    $targetPath = buildSharePointTargetPath($sharePointConfig, $uniqueName);
+    $uploadUrl = createSharePointUploadSession($client, $sharePointConfig, $targetPath);
+
+    $maxSessionRestarts = 2;
+    $sessionRestarts = 0;
+    $chunkSize = max(1024 * 1024, (int)$sharePointConfig['chunk_size_bytes']);
+    $offset = 0;
+    $lastResponse = null;
+    $startTime = microtime(true);
+
+    while (!feof($handle)) {
+        $chunk = fread($handle, $chunkSize);
+        if ($chunk === false) {
+            echo PHP_EOL;
+            throw new RuntimeException('Failed to read local attachment chunk for SharePoint upload.');
+        }
+
+        $chunkLength = strlen($chunk);
+        if ($chunkLength === 0) {
+            break;
+        }
+
+        $endOffset = $offset + $chunkLength - 1;
+        $attempts = 0;
+        while (true) {
+            try {
+                $attempts++;
+                $lastResponse = $client->put($uploadUrl, [
+                    'headers' => [
+                        'Content-Length' => (string)$chunkLength,
+                        'Content-Range' => sprintf('bytes %d-%d/%d', $offset, $endOffset, $fileSize),
+                    ],
+                    'body' => $chunk,
+                ]);
+                break;
+            } catch (BadResponseException $exception) {
+                $response = $exception->getResponse();
+                $code = ($response instanceof ResponseInterface) ? $response->getStatusCode() : 0;
+
+                if (in_array($code, [429, 502, 503, 504], true) && $attempts < 6) {
+                    $retryAfter = 0;
+                    if ($response instanceof ResponseInterface) {
+                        $ra = $response->getHeaderLine('Retry-After');
+                        if ($ra !== '' && ctype_digit($ra)) {
+                            $retryAfter = (int)$ra;
+                        }
+                    }
+                    if ($retryAfter > 0) {
+                        sleep(min($retryAfter, 30));
+                    } else {
+                        usleep(250000 * $attempts * $attempts); // 0.25s, 1s, 2.25s, 4s...
+                    }
+                    continue;
+                }
+
+                // If session is invalid/expired, create a new session and restart upload
+                if (in_array($code, [401, 404, 410], true) && $sessionRestarts < $maxSessionRestarts) {
+                    $sessionRestarts++;
+
+                    // Refresh token and recreate client (harmless even if not needed)
+                    $client = createSharePointClient($sharePointConfig);
+
+                    // Create a new upload session URL
+                    $uploadUrl = createSharePointUploadSession($client, $sharePointConfig, $targetPath);
+                    $lastResponse = null;
+
+                    // Restart the stream and counters
+                    if (!rewind($handle)) {
+                        throw new RuntimeException('Failed to rewind attachment stream after session restart.');
+                    }
+
+                    $offset = 0;
+                    $startTime = microtime(true);
+
+                    // Continue outer while loop (read next chunk from beginning)
+                    continue 2; // jumps to while (!feof($handle))
+                }
+
+                throw new RuntimeException(
+                    'Failed to upload attachment chunk to SharePoint (HTTP ' . $code . '): ' . $exception->getMessage(),
+                    0,
+                    $exception
+                );
+            } catch (Throwable $exception) {
+                echo PHP_EOL;
+                throw new RuntimeException('Failed to upload attachment chunk to SharePoint: ' . $exception->getMessage(), 0, $exception);
+            }
+        }
+
+        $offset += $chunkLength;
+
+        $elapsed = microtime(true) - $startTime;
+        $speed = $elapsed > 0 ? $offset / $elapsed : 0.0;
+
+        // eenvoudige statusbalk met percentage en snelheid
+        printUploadProgress($filename, $uniqueName, $offset, $fileSize, $speed);
+    }
+
+    echo PHP_EOL;
+
+    if ($lastResponse === null) {
+        throw new RuntimeException('SharePoint upload session did not return a response.');
+    }
+
+    $body = decodeJsonResponse($lastResponse);
+    $webUrl = isset($body['webUrl']) ? (string)$body['webUrl'] : '';
+    if ($webUrl === '' && isset($body['item']['webUrl'])) {
+        $webUrl = (string)$body['item']['webUrl'];
+    }
+
+    if ($webUrl === '') {
+        throw new RuntimeException('SharePoint upload session did not return a webUrl.');
+    }
+
+    return $webUrl;
+}
+
+/**
+ * @param array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int} $sharePointConfig
+ */
+function createSharePointUploadSession(Client &$client, array $sharePointConfig, string $targetPath, int $attempt = 0): string
+{
+    $endpoint = sprintf(
+        'sites/%s/drives/%s/root:/%s:/createUploadSession',
+        rawurlencode($sharePointConfig['site_id']),
+        rawurlencode($sharePointConfig['drive_id']),
+        $targetPath
+    );
+
+    try {
+        $response = $client->post($endpoint, [
+            'json' => [
+                'item' => [
+                    '@microsoft.graph.conflictBehavior' => 'replace',
+                ],
+            ],
+        ]);
+    } catch (BadResponseException $exception) {
+        $response = $exception->getResponse();
+        if ($attempt === 0 && $response instanceof ResponseInterface && $response->getStatusCode() === 401) {
+            $client = createSharePointClient($sharePointConfig);
+            return createSharePointUploadSession($client, $sharePointConfig, $targetPath, $attempt + 1);
+        }
+        throw new RuntimeException('Failed to create SharePoint upload session: ' . $exception->getMessage(), 0, $exception);
+    } catch (Throwable $exception) {
+        throw new RuntimeException('Failed to create SharePoint upload session: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    $body = decodeJsonResponse($response);
+    $uploadUrl = isset($body['uploadUrl']) ? (string)$body['uploadUrl'] : '';
+
+    if ($uploadUrl === '') {
+        throw new RuntimeException('SharePoint did not provide an upload URL.');
+    }
+
+    return $uploadUrl;
+}
+
+/**
+ * @param array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int} $sharePointConfig
+ */
+function buildSharePointTargetPath(array $sharePointConfig, string $filename): string
+{
+    $segments = [];
+    if ($sharePointConfig['folder_path'] !== '') {
+        foreach (explode('/', $sharePointConfig['folder_path']) as $segment) {
+            $trimmed = trim($segment);
+            if ($trimmed !== '') {
+                $segments[] = rawurlencode($trimmed);
+            }
+        }
+    }
+
+    $segments[] = rawurlencode($filename);
+
+    return implode('/', $segments);
 }
 
 /**
@@ -1297,3 +1723,83 @@ function formatCurrentTimestamp(): string
 {
     return date('Y-m-d H:i:s');
 }
+
+function countEnabledPendingUpload(PDO $pdo): int
+{
+    $sql = <<<SQL
+        SELECT COUNT(*)
+        FROM migration_mapping_attachments
+        WHERE migration_status = 'PENDING_UPLOAD'
+          AND upload_enabled = 1
+    SQL;
+
+    $statement = $pdo->query($sql);
+    if ($statement === false) {
+        throw new RuntimeException('Failed to count enabled pending uploads.');
+    }
+
+    $count = $statement->fetchColumn();
+    $statement->closeCursor();
+
+    return (int)($count ?: 0);
+}
+
+function formatBytes(int $bytes): string
+{
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    $index = 0;
+    $size = (float)$bytes;
+
+    while ($size >= 1024 && $index < count($units) - 1) {
+        $size /= 1024;
+        $index++;
+    }
+
+    return sprintf('%.1f %s', $size, $units[$index]);
+}
+
+function printUploadProgress(string $label, string $uniquelabel, int $uploaded, int $total, float $speedBytesPerSecond): void
+{
+    if ($total <= 0) {
+        return;
+    }
+
+    $percent = ($uploaded / $total) * 100;
+    $barLength = 30;
+    $filledLength = (int)floor($barLength * $uploaded / $total);
+    if ($filledLength > $barLength) {
+        $filledLength = $barLength;
+    }
+
+    $bar = str_repeat('#', $filledLength) . str_repeat('.', $barLength - $filledLength);
+    $speed = $speedBytesPerSecond > 0 ? formatBytes((int)$speedBytesPerSecond) . '/s' : 'calculating...';
+
+    $line = sprintf(
+        "\r  [%s] %6.2f%%  %s / %s  %s",
+        $bar,
+        $percent,
+        formatBytes($uploaded),
+        formatBytes($total),
+        $speed
+    );
+
+    // label op aparte lijn bij eerste keer, zodat het netjes blijft
+    static $lastLabel = null;
+    if ($lastLabel !== $label) {
+        if ($lastLabel !== null) {
+            echo PHP_EOL;
+        }
+        printf("[%s] Uploading to SharePoint: %s as %s%s", formatCurrentTimestamp(), $label, $uniquelabel, PHP_EOL);
+        $lastLabel = $label;
+    }
+
+    echo $line;
+    // Zorg dat het direct zichtbaar is
+    if (function_exists('flush')) {
+        flush();
+    }
+    if (function_exists('ob_flush')) {
+        @ob_flush();
+    }
+}
+

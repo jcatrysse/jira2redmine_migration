@@ -67,12 +67,12 @@ CREATE TABLE `staging_jira_groups` (
 ) COMMENT='Raw extraction of Jira Groups.';
 
 CREATE TABLE `staging_jira_group_members` (
-                                             `group_id` VARCHAR(255) NOT NULL,
-                                             `account_id` VARCHAR(255) NOT NULL,
-                                             `raw_payload` JSON NOT NULL,
-                                             `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                             PRIMARY KEY (`group_id`, `account_id`),
-                                             KEY `idx_jira_group_members_account` (`account_id`)
+                                              `group_id` VARCHAR(255) NOT NULL,
+                                              `account_id` VARCHAR(255) NOT NULL,
+                                              `raw_payload` JSON NOT NULL,
+                                              `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                              PRIMARY KEY (`group_id`, `account_id`),
+                                              KEY `idx_jira_group_members_account` (`account_id`)
 ) COMMENT='Raw extraction of Jira group memberships.';
 
 CREATE TABLE `staging_redmine_groups` (
@@ -84,55 +84,55 @@ CREATE TABLE `staging_redmine_groups` (
 ) COMMENT='Snapshot of existing Redmine Groups.';
 
 CREATE TABLE `staging_redmine_group_members` (
-                                                `group_id` INT NOT NULL,
-                                                `user_id` INT NOT NULL,
-                                                `raw_payload` JSON NOT NULL,
-                                                `retrieved_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                                PRIMARY KEY (`group_id`, `user_id`),
-                                                KEY `idx_redmine_group_members_user` (`user_id`)
+                                                 `group_id` INT NOT NULL,
+                                                 `user_id` INT NOT NULL,
+                                                 `raw_payload` JSON NOT NULL,
+                                                 `retrieved_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                 PRIMARY KEY (`group_id`, `user_id`),
+                                                 KEY `idx_redmine_group_members_user` (`user_id`)
 ) COMMENT='Snapshot of Redmine group memberships.';
 
 CREATE TABLE `staging_redmine_group_project_roles` (
-                                                      `group_id` INT NOT NULL,
-                                                      `membership_id` INT NOT NULL,
-                                                      `project_id` INT NOT NULL,
-                                                      `project_name` VARCHAR(255) NULL,
-                                                      `role_id` INT NOT NULL,
-                                                      `role_name` VARCHAR(255) NULL,
-                                                      `raw_payload` JSON NOT NULL,
-                                                      `retrieved_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                                      PRIMARY KEY (`group_id`, `membership_id`, `role_id`),
-                                                      KEY `idx_redmine_group_project_roles_project` (`project_id`),
-                                                      KEY `idx_redmine_group_project_roles_role` (`role_id`)
+                                                       `group_id` INT NOT NULL,
+                                                       `membership_id` INT NOT NULL,
+                                                       `project_id` INT NOT NULL,
+                                                       `project_name` VARCHAR(255) NULL,
+                                                       `role_id` INT NOT NULL,
+                                                       `role_name` VARCHAR(255) NULL,
+                                                       `raw_payload` JSON NOT NULL,
+                                                       `retrieved_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                       PRIMARY KEY (`group_id`, `membership_id`, `role_id`),
+                                                       KEY `idx_redmine_group_project_roles_project` (`project_id`),
+                                                       KEY `idx_redmine_group_project_roles_role` (`role_id`)
 ) COMMENT='Snapshot of Redmine group project role memberships.';
 
 CREATE TABLE `migration_mapping_groups` (
-        `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
-        `jira_group_id` VARCHAR(255) NOT NULL,
-        `jira_group_name` VARCHAR(255) NULL,
-        `redmine_group_id` INT NULL,
-        `proposed_redmine_name` VARCHAR(255) NULL,
-        `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
-        `notes` TEXT,
-        `automation_hash` CHAR(64) NULL,
-        `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        UNIQUE KEY `uk_jira_group_id` (`jira_group_id`)
+                                            `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
+                                            `jira_group_id` VARCHAR(255) NOT NULL,
+                                            `jira_group_name` VARCHAR(255) NULL,
+                                            `redmine_group_id` INT NULL,
+                                            `proposed_redmine_name` VARCHAR(255) NULL,
+                                            `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
+                                            `notes` TEXT,
+                                            `automation_hash` CHAR(64) NULL,
+                                            `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                            `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                            UNIQUE KEY `uk_jira_group_id` (`jira_group_id`)
 ) COMMENT='Mapping and status for Group migration.';
 
 CREATE TABLE `migration_mapping_group_members` (
-                                                  `member_mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
-                                                  `jira_group_id` VARCHAR(255) NOT NULL,
-                                                  `jira_group_name` VARCHAR(255) NULL,
-                                                  `jira_account_id` VARCHAR(255) NOT NULL,
-                                                  `redmine_group_id` INT NULL,
-                                                  `redmine_user_id` INT NULL,
-                                                  `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_ASSIGNMENT', 'AWAITING_GROUP', 'AWAITING_USER', 'ASSIGNMENT_SUCCESS', 'ASSIGNMENT_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
-                                                  `notes` TEXT,
-                                                  `automation_hash` CHAR(64) NULL,
-                                                  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                                  `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                                                  UNIQUE KEY `uk_jira_group_member` (`jira_group_id`, `jira_account_id`)
+                                                   `member_mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
+                                                   `jira_group_id` VARCHAR(255) NOT NULL,
+                                                   `jira_group_name` VARCHAR(255) NULL,
+                                                   `jira_account_id` VARCHAR(255) NOT NULL,
+                                                   `redmine_group_id` INT NULL,
+                                                   `redmine_user_id` INT NULL,
+                                                   `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_ASSIGNMENT', 'AWAITING_GROUP', 'AWAITING_USER', 'ASSIGNMENT_SUCCESS', 'ASSIGNMENT_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
+                                                   `notes` TEXT,
+                                                   `automation_hash` CHAR(64) NULL,
+                                                   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                   `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                   UNIQUE KEY `uk_jira_group_member` (`jira_group_id`, `jira_account_id`)
 ) COMMENT='Mapping and status for synchronising group memberships.';
 
 -- ================================================================
@@ -147,19 +147,19 @@ CREATE TABLE `staging_jira_project_roles` (
 ) COMMENT='Raw extraction of Jira Project Roles.';
 
 CREATE TABLE `staging_jira_project_role_actors` (
-                                                   `project_id` VARCHAR(255) NOT NULL,
-                                                   `project_key` VARCHAR(255) NULL,
-                                                   `project_name` VARCHAR(255) NULL,
-                                                   `role_id` BIGINT NOT NULL,
-                                                   `role_name` VARCHAR(255) NULL,
-                                                   `actor_id` VARCHAR(255) NOT NULL,
-                                                   `actor_display` VARCHAR(255) NULL,
-                                                   `actor_type` ENUM('atlassian-group-role-actor', 'atlassian-user-role-actor') NOT NULL,
-                                                   `raw_payload` JSON NOT NULL,
-                                                   `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                                   PRIMARY KEY (`project_id`, `role_id`, `actor_id`, `actor_type`),
-                                                   KEY `idx_jira_role_actor_project_role` (`project_id`, `role_id`),
-                                                   KEY `idx_jira_role_actor_actor` (`actor_id`)
+                                                    `project_id` VARCHAR(255) NOT NULL,
+                                                    `project_key` VARCHAR(255) NULL,
+                                                    `project_name` VARCHAR(255) NULL,
+                                                    `role_id` BIGINT NOT NULL,
+                                                    `role_name` VARCHAR(255) NULL,
+                                                    `actor_id` VARCHAR(255) NOT NULL,
+                                                    `actor_display` VARCHAR(255) NULL,
+                                                    `actor_type` ENUM('atlassian-group-role-actor', 'atlassian-user-role-actor') NOT NULL,
+                                                    `raw_payload` JSON NOT NULL,
+                                                    `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                    PRIMARY KEY (`project_id`, `role_id`, `actor_id`, `actor_type`),
+                                                    KEY `idx_jira_role_actor_project_role` (`project_id`, `role_id`),
+                                                    KEY `idx_jira_role_actor_actor` (`actor_id`)
 ) COMMENT='Raw extraction of Jira project role actors (users and groups).';
 
 CREATE TABLE `staging_redmine_roles` (
@@ -187,25 +187,25 @@ CREATE TABLE `migration_mapping_roles` (
 ) COMMENT='Mapping and status for Role migration.';
 
 CREATE TABLE `migration_mapping_project_role_groups` (
-                                                        `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
-                                                        `jira_project_id` VARCHAR(255) NOT NULL,
-                                                        `jira_project_key` VARCHAR(255) NULL,
-                                                        `jira_project_name` VARCHAR(255) NULL,
-                                                        `jira_role_id` BIGINT NOT NULL,
-                                                        `jira_role_name` VARCHAR(255) NULL,
-                                                        `jira_group_id` VARCHAR(255) NOT NULL,
-                                                        `jira_group_name` VARCHAR(255) NULL,
-                                                        `redmine_project_id` INT NULL,
-                                                        `redmine_group_id` INT NULL,
-                                                        `redmine_role_id` INT NULL,
-                                                        `proposed_redmine_role_id` INT NULL,
-                                                        `proposed_redmine_role_name` VARCHAR(255) NULL,
-                                                        `migration_status` ENUM('PENDING_ANALYSIS', 'READY_FOR_ASSIGNMENT', 'ASSIGNMENT_RECORDED', 'AWAITING_PROJECT', 'AWAITING_GROUP', 'AWAITING_ROLE', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
-                                                        `notes` TEXT,
-                                                        `automation_hash` CHAR(64) NULL,
-                                                        `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                                        `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                                                        UNIQUE KEY `uk_project_role_group` (`jira_project_id`, `jira_role_id`, `jira_group_id`)
+                                                         `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
+                                                         `jira_project_id` VARCHAR(255) NOT NULL,
+                                                         `jira_project_key` VARCHAR(255) NULL,
+                                                         `jira_project_name` VARCHAR(255) NULL,
+                                                         `jira_role_id` BIGINT NOT NULL,
+                                                         `jira_role_name` VARCHAR(255) NULL,
+                                                         `jira_group_id` VARCHAR(255) NOT NULL,
+                                                         `jira_group_name` VARCHAR(255) NULL,
+                                                         `redmine_project_id` INT NULL,
+                                                         `redmine_group_id` INT NULL,
+                                                         `redmine_role_id` INT NULL,
+                                                         `proposed_redmine_role_id` INT NULL,
+                                                         `proposed_redmine_role_name` VARCHAR(255) NULL,
+                                                         `migration_status` ENUM('PENDING_ANALYSIS', 'READY_FOR_ASSIGNMENT', 'ASSIGNMENT_RECORDED', 'AWAITING_PROJECT', 'AWAITING_GROUP', 'AWAITING_ROLE', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
+                                                         `notes` TEXT,
+                                                         `automation_hash` CHAR(64) NULL,
+                                                         `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                         `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                         UNIQUE KEY `uk_project_role_group` (`jira_project_id`, `jira_role_id`, `jira_group_id`)
 ) COMMENT='Mapping Jira project role group assignments to Redmine projects/groups/roles.';
 
 -- ================================================================
@@ -351,59 +351,59 @@ CREATE TABLE `staging_jira_fields` (
 ) COMMENT='Raw extraction of Jira Fields (system and custom).';
 
 CREATE TABLE `staging_jira_project_issue_type_fields` (
-                                                         `jira_project_id` VARCHAR(255) NOT NULL,
-                                                         `jira_project_key` VARCHAR(255) NULL,
-                                                         `jira_project_name` VARCHAR(255) NULL,
-                                                         `jira_issue_type_id` VARCHAR(255) NOT NULL,
-                                                         `jira_field_id` VARCHAR(255) NOT NULL,
-                                                         `jira_field_name` VARCHAR(255) NOT NULL,
-                                                         `is_custom` BOOLEAN NOT NULL,
-                                                         `is_required` BOOLEAN NOT NULL,
-                                                         `has_default_value` BOOLEAN NULL,
-                                                         `schema_type` VARCHAR(255) NULL,
-                                                         `schema_custom` VARCHAR(255) NULL,
-                                                         `field_category` VARCHAR(32) NULL,
-                                                         `allowed_values_json` JSON NULL,
-                                                         `raw_field` JSON NOT NULL,
-                                                         `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                                         PRIMARY KEY (`jira_project_id`, `jira_issue_type_id`, `jira_field_id`),
-                                                         KEY `idx_jira_issue_type_field` (`jira_field_id`)
+                                                          `jira_project_id` VARCHAR(255) NOT NULL,
+                                                          `jira_project_key` VARCHAR(255) NULL,
+                                                          `jira_project_name` VARCHAR(255) NULL,
+                                                          `jira_issue_type_id` VARCHAR(255) NOT NULL,
+                                                          `jira_field_id` VARCHAR(255) NOT NULL,
+                                                          `jira_field_name` VARCHAR(255) NOT NULL,
+                                                          `is_custom` BOOLEAN NOT NULL,
+                                                          `is_required` BOOLEAN NOT NULL,
+                                                          `has_default_value` BOOLEAN NULL,
+                                                          `schema_type` VARCHAR(255) NULL,
+                                                          `schema_custom` VARCHAR(255) NULL,
+                                                          `field_category` VARCHAR(32) NULL,
+                                                          `allowed_values_json` JSON NULL,
+                                                          `raw_field` JSON NOT NULL,
+                                                          `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                          PRIMARY KEY (`jira_project_id`, `jira_issue_type_id`, `jira_field_id`),
+                                                          KEY `idx_jira_issue_type_field` (`jira_field_id`)
 ) COMMENT='Fields exposed on the create screen per Jira project and issue type.';
 
 CREATE TABLE `staging_jira_field_usage` (
-                                           `field_id` VARCHAR(255) NOT NULL,
-                                           `usage_scope` ENUM('issue') NOT NULL DEFAULT 'issue',
-                                           `total_issues` INT NOT NULL,
-                                           `issues_with_value` INT NOT NULL,
-                                           `issues_with_non_empty_value` INT NOT NULL,
-                                           `last_counted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                                           PRIMARY KEY (`field_id`, `usage_scope`),
-                                           CONSTRAINT `fk_jira_field_usage_field` FOREIGN KEY (`field_id`) REFERENCES `staging_jira_fields` (`id`) ON DELETE CASCADE
+                                            `field_id` VARCHAR(255) NOT NULL,
+                                            `usage_scope` ENUM('issue') NOT NULL DEFAULT 'issue',
+                                            `total_issues` INT NOT NULL,
+                                            `issues_with_value` INT NOT NULL,
+                                            `issues_with_non_empty_value` INT NOT NULL,
+                                            `last_counted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                            PRIMARY KEY (`field_id`, `usage_scope`),
+                                            CONSTRAINT `fk_jira_field_usage_field` FOREIGN KEY (`field_id`) REFERENCES `staging_jira_fields` (`id`) ON DELETE CASCADE
 ) COMMENT='Aggregated usage statistics for Jira custom fields across staging entities.';
 
 CREATE TABLE `staging_jira_object_samples` (
-                                                 `sample_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                                                 `field_id` VARCHAR(255) NOT NULL,
-                                                 `issue_key` VARCHAR(255) NOT NULL,
-                                                 `ordinal` INT NOT NULL DEFAULT 0,
-                                                 `is_array` BOOLEAN NOT NULL DEFAULT 0,
-                                                 `raw_json` JSON NOT NULL,
-                                                 `captured_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                                 UNIQUE KEY `uk_object_sample_issue` (`field_id`, `issue_key`, `ordinal`),
-                                                 KEY `idx_object_sample_field` (`field_id`)
+                                               `sample_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                                               `field_id` VARCHAR(255) NOT NULL,
+                                               `issue_key` VARCHAR(255) NOT NULL,
+                                               `ordinal` INT NOT NULL DEFAULT 0,
+                                               `is_array` BOOLEAN NOT NULL DEFAULT 0,
+                                               `raw_json` JSON NOT NULL,
+                                               `captured_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                               UNIQUE KEY `uk_object_sample_issue` (`field_id`, `issue_key`, `ordinal`),
+                                               KEY `idx_object_sample_field` (`field_id`)
 ) COMMENT='Raw samples for Jira custom fields with schema.type = object.';
 
 CREATE TABLE `staging_jira_object_kv` (
-                                           `kv_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                                           `field_id` VARCHAR(255) NOT NULL,
-                                           `issue_key` VARCHAR(255) NOT NULL,
-                                           `path` VARCHAR(255) NOT NULL,
-                                           `ordinal` INT NOT NULL DEFAULT 0,
-                                           `value_type` VARCHAR(32) NOT NULL,
-                                           `value_text` TEXT NULL,
-                                           `captured_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                           KEY `idx_object_kv_field_path` (`field_id`, `path`),
-                                           KEY `idx_object_kv_issue` (`issue_key`)
+                                          `kv_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                                          `field_id` VARCHAR(255) NOT NULL,
+                                          `issue_key` VARCHAR(255) NOT NULL,
+                                          `path` VARCHAR(255) NOT NULL,
+                                          `ordinal` INT NOT NULL DEFAULT 0,
+                                          `value_type` VARCHAR(32) NOT NULL,
+                                          `value_text` TEXT NULL,
+                                          `captured_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                          KEY `idx_object_kv_field_path` (`field_id`, `path`),
+                                          KEY `idx_object_kv_issue` (`issue_key`)
 ) COMMENT='Flattened key/value pairs extracted from Jira object-type custom fields.';
 
 CREATE TABLE `staging_redmine_custom_fields` (
@@ -627,42 +627,42 @@ CREATE TABLE `migration_mapping_issues` (
 ) COMMENT='Mapping and status for Issue migration.';
 
 CREATE TABLE `staging_jira_issue_links` (
-                                             `link_id` VARCHAR(255) NOT NULL PRIMARY KEY,
-                                             `source_issue_id` VARCHAR(255) NOT NULL,
-                                             `source_issue_key` VARCHAR(255) NOT NULL,
-                                             `target_issue_id` VARCHAR(255) NOT NULL,
-                                             `target_issue_key` VARCHAR(255) NOT NULL,
-                                             `link_type_id` VARCHAR(255) NULL,
-                                             `link_type_name` VARCHAR(255) NULL,
-                                             `link_type_inward` VARCHAR(255) NULL,
-                                             `link_type_outward` VARCHAR(255) NULL,
-                                             `raw_payload` JSON NOT NULL,
-                                             `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                             KEY `idx_issue_links_source` (`source_issue_id`),
-                                             KEY `idx_issue_links_target` (`target_issue_id`)
+                                            `link_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                            `source_issue_id` VARCHAR(255) NOT NULL,
+                                            `source_issue_key` VARCHAR(255) NOT NULL,
+                                            `target_issue_id` VARCHAR(255) NOT NULL,
+                                            `target_issue_key` VARCHAR(255) NOT NULL,
+                                            `link_type_id` VARCHAR(255) NULL,
+                                            `link_type_name` VARCHAR(255) NULL,
+                                            `link_type_inward` VARCHAR(255) NULL,
+                                            `link_type_outward` VARCHAR(255) NULL,
+                                            `raw_payload` JSON NOT NULL,
+                                            `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                            KEY `idx_issue_links_source` (`source_issue_id`),
+                                            KEY `idx_issue_links_target` (`target_issue_id`)
 ) COMMENT='Canonical view of Jira issue links (one row per relation).';
 
 CREATE TABLE `migration_mapping_issue_relations` (
-                                                    `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
-                                                    `jira_link_id` VARCHAR(255) NOT NULL,
-                                                    `jira_source_issue_id` VARCHAR(255) NOT NULL,
-                                                    `jira_source_issue_key` VARCHAR(255) NOT NULL,
-                                                    `jira_target_issue_id` VARCHAR(255) NOT NULL,
-                                                    `jira_target_issue_key` VARCHAR(255) NOT NULL,
-                                                    `jira_link_type_id` VARCHAR(255) NULL,
-                                                    `jira_link_type_name` VARCHAR(255) NULL,
-                                                    `jira_link_type_inward` VARCHAR(255) NULL,
-                                                    `jira_link_type_outward` VARCHAR(255) NULL,
-                                                    `redmine_issue_from_id` INT NULL,
-                                                    `redmine_issue_to_id` INT NULL,
-                                                    `redmine_relation_id` INT NULL,
-                                                    `proposed_relation_type` VARCHAR(50) NULL,
-                                                    `migration_status` ENUM('PENDING_ANALYSIS', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
-                                                    `notes` TEXT,
-                                                    `automation_hash` CHAR(64) NULL,
-                                                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                                    `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                                                    UNIQUE KEY `uk_jira_issue_relation` (`jira_link_id`)
+                                                     `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
+                                                     `jira_link_id` VARCHAR(255) NOT NULL,
+                                                     `jira_source_issue_id` VARCHAR(255) NOT NULL,
+                                                     `jira_source_issue_key` VARCHAR(255) NOT NULL,
+                                                     `jira_target_issue_id` VARCHAR(255) NOT NULL,
+                                                     `jira_target_issue_key` VARCHAR(255) NOT NULL,
+                                                     `jira_link_type_id` VARCHAR(255) NULL,
+                                                     `jira_link_type_name` VARCHAR(255) NULL,
+                                                     `jira_link_type_inward` VARCHAR(255) NULL,
+                                                     `jira_link_type_outward` VARCHAR(255) NULL,
+                                                     `redmine_issue_from_id` INT NULL,
+                                                     `redmine_issue_to_id` INT NULL,
+                                                     `redmine_relation_id` INT NULL,
+                                                     `proposed_relation_type` VARCHAR(50) NULL,
+                                                     `migration_status` ENUM('PENDING_ANALYSIS', 'READY_FOR_CREATION', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
+                                                     `notes` TEXT,
+                                                     `automation_hash` CHAR(64) NULL,
+                                                     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                     `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                     UNIQUE KEY `uk_jira_issue_relation` (`jira_link_id`)
 ) COMMENT='Mapping table for Jira issue links queued for Redmine relation creation.';
 
 -- ================================================================
@@ -729,6 +729,7 @@ CREATE TABLE `migration_mapping_attachments` (
                                                  `redmine_issue_id` INT NULL,
                                                  `redmine_attachment_id` INT NULL,
                                                  `redmine_upload_token` VARCHAR(255) NULL,
+                                                 `sharepoint_url` TEXT NULL,
                                                  `association_hint` ENUM('ISSUE', 'JOURNAL') NOT NULL DEFAULT 'ISSUE',
                                                  `migration_status` ENUM('PENDING_DOWNLOAD', 'PENDING_UPLOAD', 'PENDING_ASSOCIATION', 'SUCCESS', 'FAILED') NOT NULL DEFAULT 'PENDING_DOWNLOAD',
                                                  `download_enabled` TINYINT(1) NOT NULL DEFAULT 1,

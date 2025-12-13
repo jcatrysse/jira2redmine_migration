@@ -5,22 +5,42 @@ All notable changes to this project will be documented in this file.
 ## [TODO]
 
 - General: verify if all automation hashes align with the latest database schemas.
-- Fine-tune the attachments, issues, and journals scripts.
+- Fine-tune the issues, and journals scripts.
 - Verify ADF to Markdown conversion.
 - Migrate issues script:
     - on a rerun, newer issues should be fetched.
     - on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
+    - check if we use the same attachment filename uniqueness method from the attachment migration script.
+        - $uniqueName = $jiraAttachmentId !== ''
+            ? ($jiraAttachmentId . '__' . sanitizeAttachmentFileName($originalName))
+            : sanitizeAttachmentFileName($originalName);
     - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
         - I manually added in the database, after the transform phase but before the push phase: INSERT INTO `migration_mapping_custom_fields` (`mapping_id`, `jira_field_id`, `jira_field_name`, `jira_schema_type`, `jira_schema_custom`, `jira_project_ids`, `jira_issue_type_ids`, `jira_allowed_values`, `redmine_custom_field_id`, `mapping_parent_custom_field_id`, `redmine_custom_field_enumerations`, `proposed_redmine_name`, `proposed_field_format`, `proposed_is_required`, `proposed_is_filter`, `proposed_is_for_all`, `proposed_is_multiple`, `proposed_possible_values`, `proposed_value_dependencies`, `proposed_default_value`, `proposed_tracker_ids`, `proposed_role_ids`, `proposed_project_ids`, `migration_status`, `notes`, `automation_hash`, `created_at`, `last_updated_at`) VALUES (NULL, 'resolution', 'resolution', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'Resolution', 'text', NULL, NULL, '1', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'READY_FOR_CREATION', NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), (NULL, 'resolutiondate', 'resolutiondate', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'Resolution date', 'date', NULL, '1', '1', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'READY_FOR_CREATION', NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         - Ensure this logic fits the issue migration logic.
 - Create the missing scripts: labels/tags, (document) categories, milestones, watchers, checklists, relations, subtasks, workflows, custom workflows...
 - Validate we can push authors and creation timestamps to Redmine.
+- re-enable: RAILS_ENV=development bundle exec rake --silent redmine:attachments:prune
+
+## [0.0.68]
+
+- Refresh SharePoint OAuth tokens automatically when upload sessions or
+  chunked uploads encounter `401 Unauthorized` responses to avoid expiry
+  failures during long-running attachment pushes.
 
 ## [0.0.67]
 
 - Include atlassian-user-role-actor in the role assignment script.
 - Bump the role migration script version to `0.0.13` to reflect
   the newly included actors.
+- Introduce SharePoint offloading for oversized attachments with configurable
+  OAuth credentials, target drive/folder, and a size threshold that skips
+  Redmine uploads when set.
+- Persist the SharePoint URL alongside attachment mappings and include those
+  links automatically in issue descriptions or journal notes instead of
+  uploading to Redmine.
+- Bump the attachment migration script version to `0.0.19`, extend the staging
+  schema with `sharepoint_url`, and declare the JSON extension dependency in
+  `composer.json`.
 
 ## [0.0.66]
 
@@ -359,7 +379,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.0.25]
 
-- Fix `11_migrate_issues.php` so the Jira extraction phase calls
+- Fix `10_migrate_issues.php` so the Jira extraction phase calls
   `/rest/api/3/search/jql` via query parameters instead of the deprecated POST
   payload, reintroducing the `fieldsByKeys` flag and honouring Jira's reported
   batch size to prevent the `Invalid request payload` errors seen when
@@ -378,15 +398,15 @@ All notable changes to this project will be documented in this file.
 
 ## [0.0.23]
 
-- Teach `11_migrate_issues.php` to persist Jira issue link metadata in the new
+- Teach `10_migrate_issues.php` to persist Jira issue link metadata in the new
   `staging_jira_issue_links` table so downstream scripts can reason about
   relation directionality, and relax `staging_jira_attachments.created_at` to
   accept `NULL` values so the association hint fallback works when Jira omits a
   timestamp. The CLI now reports version `0.0.23`.
-- Introduce `13_migrate_subtasks.php` to analyse Jira parent/child pairs and
+- Introduce `12_migrate_subtasks.php` to analyse Jira parent/child pairs and
   update the corresponding Redmine `parent_issue_id` assignments with optional
   dry-run previews and automation-hash preservation.
-- Add `14_migrate_issue_relations.php` plus the
+- Add `13_migrate_issue_relations.php` plus the
   `migration_mapping_issue_relations` table to map Jira links to Redmine relation
   types, queue rows for review, and create the final relations via the Redmine
   REST API.
@@ -409,7 +429,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.0.21]
 
-- Fix the Jira search payload built by `11_migrate_issues.php` so it passes an
+- Fix the Jira search payload built by `10_migrate_issues.php` so it passes an
   array for both `fields` and `expand`, plus an explicit `fieldsByKeys` flag,
   addressing the Atlassian `Invalid request payload` errors reported after the
   per-project pagination refactor. The CLI now reports version `0.0.21`.
@@ -418,7 +438,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.0.20]
 
-- Rebuild `11_migrate_issues.php` so the Jira extraction phase iterates over
+- Rebuild `10_migrate_issues.php` so the Jira extraction phase iterates over
   every project recorded in `migration_mapping_projects`, querying
   `/rest/api/3/search` with `project = "KEY"` filters, keyset pagination, and an
   array-based `fields` payload before marking the new
@@ -432,7 +452,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.0.19]
 
-- Fix `11_migrate_issues.php` so Jira extraction once again targets
+- Fix `10_migrate_issues.php` so Jira extraction once again targets
   `/rest/api/3/search/jql`, sending the request payload Atlassian now
   expects (`fields` as an array) while preserving the `ORDER BY id ASC`
   keyset pagination strategy.
@@ -443,7 +463,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.0.18]
 
-- Rework `11_migrate_issues.php` so Jira extraction uses keyset pagination
+- Rework `10_migrate_issues.php` so Jira extraction uses keyset pagination
   against `/rest/api/3/search`, automatically enforcing `ORDER BY id ASC` and
   appending `id > <last_seen_id>` filters to stream every issue without
   requiring per-project scoping. The CLI version now reports `0.0.18`.
@@ -455,7 +475,7 @@ All notable changes to this project will be documented in this file.
 ## [0.0.17]
 
 - Enforce bounded Jira searches during issue extraction by teaching
-  `11_migrate_issues.php` to require `migration.issues.project_keys` (or a fully
+  `10_migrate_issues.php` to require `migration.issues.project_keys` (or a fully
   scoped custom JQL) before calling `/rest/api/3/search/jql`, automatically
   constructing `project in (...) ORDER BY created ASC` queries for bulk project
   migrations.
@@ -467,7 +487,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.0.16]
 
-- Update `11_migrate_issues.php` to call Jira's `/rest/api/3/search/jql` endpoint
+- Update `10_migrate_issues.php` to call Jira's `/rest/api/3/search/jql` endpoint
   with next-page tokens so the attachments, issues, and journals pipelines no
   longer hit the retired search API.
 - Audit the other CLI scripts to ensure no deprecated Jira search endpoints are
@@ -475,7 +495,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.0.15]
 
-- Split `10_migrate_attachments.php` into explicit `jira`, `pull`, `transform`,
+- Split `09_migrate_attachments.php` into explicit `jira`, `pull`, `transform`,
   and `push` phases with independent confirmations, optional per-phase limits,
   and refreshed CLI help text.
 - Allow operators to stage smaller batches by toggling the new
@@ -486,13 +506,13 @@ All notable changes to this project will be documented in this file.
 
 ## [0.0.14]
 
-- Introduce `10_migrate_attachments.php` to synchronise attachment mappings,
+- Introduce `09_migrate_attachments.php` to synchronise attachment mappings,
   download binaries into the working directory, and pre-upload them to Redmine
   while labelling each file for issue or journal association.
-- Update `11_migrate_issues.php` to consume pre-generated attachment tokens,
+- Update `10_migrate_issues.php` to consume pre-generated attachment tokens,
   classify association hints, and reconcile Redmine attachment identifiers after
   issue creation.
-- Add `12_migrate_journals.php` to migrate Jira comments and changelog entries,
+- Add `11_migrate_journals.php` to migrate Jira comments and changelog entries,
   converting ADF payloads to notes and reusing journal-scoped attachment tokens.
 - Extend the schema with attachment association metadata (`redmine_issue_id`,
   `association_hint`), refresh the README with the new workflows, and bump script
@@ -500,7 +520,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.0.13]
 
-- Teach `11_migrate_issues.php` to download Jira attachments into
+- Teach `10_migrate_issues.php` to download Jira attachments into
   `tmp/attachments/jira`, maintain the `migration_mapping_attachments` workflow,
   and upload binaries to Redmine ahead of issue creation while capturing upload
   tokens for later association.
@@ -514,12 +534,12 @@ All notable changes to this project will be documented in this file.
 - Streamline the issue migration by dropping the Redmine issue snapshot phase
   and table, keeping the staging schema focused on the Jira catalogue while the
   mapping table records successful Redmine creations.
-- Update `11_migrate_issues.php` to run only the Jira, transform, and push
+- Update `10_migrate_issues.php` to run only the Jira, transform, and push
   phases, bump its CLI version, and document the leaner workflow in the README.
 
 ## [0.0.11]
 
-- Add `11_migrate_issues.php`, completing the issue ETL workflow with Jira
+- Add `10_migrate_issues.php`, completing the issue ETL workflow with Jira
   extraction (including attachment and label snapshots), a Redmine issue
   snapshot, dependency-aware transforms, and an optional push phase that posts
   to `POST /issues.json` after explicit confirmation.

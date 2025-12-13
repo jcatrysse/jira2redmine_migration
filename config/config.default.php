@@ -76,5 +76,26 @@ return [
     'attachments' => [
         // Number of concurrent download workers for Jira attachments; increase to speed up pulls if network allows.
         'download_concurrency' => 1,
+        // Optional SharePoint configuration used to offload large attachments instead of sending them to Redmine.
+        'sharepoint' => [
+            // Minimum size in bytes before attachments are uploaded to SharePoint instead of Redmine.
+            // Set to null to disable SharePoint uploads entirely.
+            'offload_threshold_bytes' => null,
+            // Azure AD tenant identifier used for the OAuth client credential flow.
+            'tenant_id' => 'your-tenant-id',
+            // Azure AD application (client) identifier with permissions to upload to the target SharePoint drive.
+            'client_id' => 'your-client-id',
+            // Azure AD client secret for the application above.
+            'client_secret' => 'your-client-secret',
+            // Target the SharePoint site and drive that will receive uploaded files.
+            'site_id' => 'your-site-id',
+            'drive_id' => 'your-drive-id',
+            // Folder path within the drive where attachments should be written.
+            'folder_path' => 'Shared Documents/Attachments',
+            // Optional override for the Microsoft Graph API base URL.
+            'graph_base_url' => 'https://graph.microsoft.com/v1.0',
+            // Upload chunk size (in bytes) used for the Graph upload session; defaults to 5 MiB.
+            'chunk_size_bytes' => 5 * 1024 * 1024,
+        ],
     ],
 ];

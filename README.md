@@ -122,7 +122,7 @@ php 08_migrate_custom_fields.php --phases=jira,usage
 Because the usage phase works entirely on staging data, you can rerun it at any
 time. Use the table to drive review meetings or export the numbers into your own
 reporting tools before deciding which custom fields to recreate in Redmine. Run
-`php 11_migrate_issues.php --phases=jira` beforehand to refresh the staged issue
+`php 10_migrate_issues.php --phases=jira` beforehand to refresh the staged issue
 catalogue when you want to analyse new or updated Jira data.
 
 ### Recommended cross-script phase order
@@ -142,7 +142,7 @@ creating fields), use the following minimal ordering:
    object-field shape analysis have data to read:
 
    ```bash
-   php 11_migrate_issues.php --phases=jira
+   php 10_migrate_issues.php --phases=jira
    ```
 
    If you plan to migrate attachments, run the attachment script's Jira phase
@@ -150,7 +150,7 @@ creating fields), use the following minimal ordering:
    Jira again:
 
    ```bash
-   php 10_migrate_attachments.php --phases=jira
+   php 09_migrate_attachments.php --phases=jira
    ```
 
 3. **Custom fields (analysis and mapping)** – reuse the staged issue payloads
@@ -174,7 +174,7 @@ creating fields), use the following minimal ordering:
    custom-field mappings:
 
    ```bash
-   php 11_migrate_issues.php --phases=transform,push --confirm-push
+   php 10_migrate_issues.php --phases=transform,push --confirm-push
    ```
 
 This ordering keeps the database-driven analyses deterministic: the custom
@@ -216,13 +216,12 @@ The migration must be executed in the following order to respect data dependenci
 | 6     | `06_migrate_priorities.php`    | Issue Priorities    | Ensures all necessary issue priorities exist in Redmine.                                                                                                  |
 | 7     | `07_migrate_trackers.php`      | Trackers            | Migrates Jira "Issue Types" to Redmine "Trackers".                                                                                                        |
 | 8     | `08_migrate_custom_fields.php` | Custom Fields       | Migrates custom fields. This can be complex and may require manual mapping decisions.                                                                     |
-| 9     | `09_assign_members.php`        | Project Memberships | Assigns migrated users and groups to migrated projects with the appropriate roles. **Depends on Users, Groups, Roles, Projects.**                         |
-| 10    | `10_migrate_attachments.php`   | Attachments         | Rehydrates attachment metadata from the staged Jira issues, keeps `migration_mapping_attachments` in sync, downloads the selected Jira binaries into `tmp/attachments/jira` (or an absolute directory such as `/tmp/attachments/jira` when configured), and uploads curated batches to Redmine for token issuance while tagging each file for issue vs. journal association. **Depends on fresh issue staging data.** |
-| 11    | `11_migrate_issues.php`        | Issues              | Creates Redmine issues from staged Jira data, linking pre-uploaded attachment tokens and capturing the resulting Redmine identifiers.                         |
-| 12    | `12_migrate_journals.php`      | Comments & History  | Migrates Jira comments and changelog entries after issues exist, reusing journal-scoped attachment tokens where necessary. **Depends on Issues & Attachments.**                                                           |
-| 13    | `13_migrate_subtasks.php`      | Subtasks            | Reconciles Jira parent/child relationships once both issues exist in Redmine and applies the matching `parent_issue_id` updates. **Depends on Issues (Push phase).** |
-| 14    | `14_migrate_issue_relations.php` | Issue Relations    | Maps Jira issue links to Redmine relation types and creates them once both sides exist. **Depends on Issues (Push phase).** |
-| 15    | `15_migrate_tags.php`          | Tags (Labels)       | Extracts all unique labels from Jira issues and creates them as tags in Redmine. **Depends on Issues (Extract phase).**                                   |
+| 9     | `09_migrate_attachments.php`   | Attachments         | Rehydrates attachment metadata from the staged Jira issues, keeps `migration_mapping_attachments` in sync, downloads the selected Jira binaries into `tmp/attachments/jira` (or an absolute directory such as `/tmp/attachments/jira` when configured), and uploads curated batches to Redmine for token issuance while tagging each file for issue vs. journal association. **Depends on fresh issue staging data.** |
+| 10    | `10_migrate_issues.php`        | Issues              | Creates Redmine issues from staged Jira data, linking pre-uploaded attachment tokens and capturing the resulting Redmine identifiers.                         |
+| 11    | `11_migrate_journals.php`      | Comments & History  | Migrates Jira comments and changelog entries after issues exist, reusing journal-scoped attachment tokens where necessary. **Depends on Issues & Attachments.**                           |
+| 12    | `12_migrate_subtasks.php`      | Subtasks            | Reconciles Jira parent/child relationships once both issues exist in Redmine and applies the matching `parent_issue_id` updates. **Depends on Issues (Push phase).** |
+| 13    | `13_migrate_issue_relations.php` | Issue Relations    | Maps Jira issue links to Redmine relation types and creates them once both sides exist. **Depends on Issues (Push phase).** |
+| 14    | `15_migrate_tags.php`          | Tags (Labels)       | Extracts all unique labels from Jira issues and creates them as tags in Redmine. **Depends on Issues (Extract phase).**                                   |
 
 
 
@@ -708,10 +707,10 @@ php 08_migrate_custom_fields.php --help
 
 ---
 
-## 13. Running `10_migrate_attachments.php`
+## 13. Running `09_migrate_attachments.php`
 
 Jira attachments often dwarf the textual payload of an issue, so the migration
-handles binaries in a dedicated step. `10_migrate_attachments.php` keeps the
+handles binaries in a dedicated step. `09_migrate_attachments.php` keeps the
 `migration_mapping_attachments` table in sync (including each attachment's file
 size), downloads operator-selected files into the configured temporary
 directory (absolute paths are honoured; relative paths are resolved against the
@@ -723,7 +722,7 @@ token in the issue payload or in a follow-up comment/journal. Use the
 to stage smaller test batches without losing state.
 
 ```bash
-php 10_migrate_attachments.php --help
+php 09_migrate_attachments.php --help
 ```
 
 ### Available options
@@ -731,7 +730,7 @@ php 10_migrate_attachments.php --help
 | Option              | Description                                                                     |
 |---------------------|---------------------------------------------------------------------------------|
 | `-h`, `--help`      | Print usage information and exit.                                               |
-| `-V`, `--version`   | Display the script version (`0.0.18`).                                           |
+| `-V`, `--version`   | Display the script version (`0.0.19`).                                           |
 | `--phases=<list>`   | Comma-separated list of phases to run (default: `jira,pull,transform,push`).     |
 | `--skip=<list>`     | Comma-separated list of phases to skip.                                         |
 | `--confirm-pull`    | Required toggle to download from Jira during the pull phase.                    |
@@ -747,6 +746,10 @@ Configuration tips:
   name appears across issues.
 * `attachments.download_concurrency` controls how many parallel download workers the pull phase uses. Start with the default
   `1` and increase carefully if your network and Jira throttling settings allow parallelism.
+* `attachments.sharepoint.offload_threshold_bytes` lets you offload large files to SharePoint instead of Redmine. When set to a
+  positive integer (in bytes) and the accompanying SharePoint OAuth, site, drive, and folder settings are populated, uploads
+  at or above the threshold are streamed to SharePoint and the returned link is stored in `migration_mapping_attachments`. Set
+  the threshold to `null` to disable SharePoint uploads entirely.
 
 ### Workflow highlights
 
@@ -755,7 +758,7 @@ Configuration tips:
    with every attachment reference. The phase also updates the association hint
    based on the attachment timestamp versus the issue creation time and captures
    the `size_bytes` column as `jira_filesize`. Run
-   `11_migrate_issues.php --phases=jira` beforehand so the staging tables contain
+   `10_migrate_issues.php --phases=jira` beforehand so the staging tables contain
    up-to-date metadata to harvest.
 2. **Pull (`pull`)** – when `--confirm-pull` is present the script downloads
    `PENDING_DOWNLOAD` rows (filtered by `download_enabled = 1`) into
@@ -767,7 +770,58 @@ Configuration tips:
 4. **Push (`push`)** – when `--confirm-push` is present the script uploads
    `PENDING_UPLOAD` rows (filtered by `upload_enabled = 1`) to `POST /uploads.json`.
    Successful uploads record the Redmine token and flip the state to
-   `PENDING_ASSOCIATION`, ready for the issue or journal migrations to consume.
+   `PENDING_ASSOCIATION`, ready for the issue or journal migrations to consume. If
+   SharePoint offloading is enabled and a file meets the configured size
+   threshold, the binary is streamed to the configured SharePoint drive instead
+   and the resulting link is persisted for later association with the Redmine
+   issue or journal entry.
+
+### Configuring SharePoint offloading
+
+Large binaries can bypass Redmine entirely and land in SharePoint when you set
+`attachments.sharepoint.offload_threshold_bytes` to a positive value and provide
+the necessary OAuth and site configuration. Setting the threshold to `null`
+disables offloading. The offload path uses Microsoft Graph's upload sessions to
+stream each attachment directly to the configured drive and folder and stores
+the returned URL in `migration_mapping_attachments` so later push phases attach
+a SharePoint link to the issue or journal entry instead of a Redmine token.
+
+1. **Register an app in Azure AD**
+   * In the Azure Portal, go to **Azure Active Directory > App registrations**
+     and create a new registration (single-tenant is sufficient for most
+     migrations).
+   * Add a client secret under **Certificates & secrets** and note the value
+     plus the tenant ID, client ID, and the object (tenant) domain—these map to
+     `attachments.sharepoint.oauth.client_id`, `.client_secret`, `.tenant_id`,
+     and `.scope` (`https://graph.microsoft.com/.default`).
+   * Grant delegated permissions for **Files.ReadWrite.All** and **Sites.Read.All**
+     (or stricter equivalents) on Microsoft Graph and click **Grant admin
+     consent** so the app can create upload sessions.
+
+2. **Find the target site, drive, and folder IDs**
+   * Use Graph Explorer or the Microsoft Graph REST API with the app's client
+     credentials to query the SharePoint site that should host the files:
+     `GET https://graph.microsoft.com/v1.0/sites?search=<site-name>`.
+   * Drill down to the target document library (drive) and folder and capture
+     their IDs for `attachments.sharepoint.site_id`, `.drive_id`, and
+     `.folder_path`.
+
+3. **Populate the config**
+   * Edit `config/config.local.php` and fill the `attachments.sharepoint.*`
+     settings with the IDs and credentials above. Keep
+     `attachments.sharepoint.offload_threshold_bytes` set to `null` until you
+     are ready to offload; then set it to the minimum size (in bytes) that
+     should go to SharePoint instead of Redmine.
+   * Restart any long-running migration processes so they pick up the new
+     configuration.
+
+4. **Run the attachment migration**
+   * Execute the `pull` phase to download binaries as usual. When the `push`
+     phase sees an attachment that meets the threshold, it creates an upload
+     session in SharePoint, streams the file, and stores the returned link in
+     `sharepoint_url`. Downstream scripts detect that URL and inject a link into
+     the Redmine issue description or journal entry instead of attempting a
+     Redmine upload.
 
 > **Tip:** rerun the pull phase whenever new attachments appear in Jira and the
 > push phase when upload tokens expire. The script is idempotent: failed rows
@@ -775,11 +829,11 @@ Configuration tips:
 > automatically. Toggle `download_enabled` / `upload_enabled` per row to focus
 > on specific attachments without truncating the working set.
 
-## 14. Running `11_migrate_issues.php`
+## 14. Running `10_migrate_issues.php`
 
 Issues tie together everything staged by the earlier scripts: projects,
 trackers, statuses, priorities, users, and custom fields. The
-`11_migrate_issues.php` entry point therefore mirrors the same phased ETL
+`10_migrate_issues.php` entry point therefore mirrors the same phased ETL
 structure while adding a few conveniences for downstream steps such as custom
 field usage analysis, attachment migration, and label/tag extraction.
 
@@ -790,7 +844,7 @@ push phase succeeds, keeping the migration state lean while still preventing
 duplicate creations on reruns.
 
 ```bash
-php 11_migrate_issues.php --help
+php 10_migrate_issues.php --help
 ```
 
 ### Available options
@@ -827,7 +881,7 @@ php 11_migrate_issues.php --help
   timestamps) is persisted in `staging_jira_attachments` together with an
    association hint (`ISSUE` when the timestamp falls within a minute of the
    issue creation, otherwise `JOURNAL`). No binaries are moved during this
-   phase; `10_migrate_attachments.php` consumes the metadata to download the
+   phase; `09_migrate_attachments.php` consumes the metadata to download the
    files and request upload tokens. Labels are aggregated into
    `staging_jira_labels`, keeping attachment and tag migrations in sync with the
    issue catalogue. Because the raw payloads remain intact, rerunning the custom
@@ -855,7 +909,7 @@ php 11_migrate_issues.php --help
    summary and warns about attachments that still require attention in
    `migration_mapping_attachments` (e.g. files stuck in `PENDING_DOWNLOAD` or
    `PENDING_UPLOAD`). When `--confirm-push` is provided the script expects
-   `10_migrate_attachments.php` to have produced `PENDING_ASSOCIATION` tokens for
+   `09_migrate_attachments.php` to have produced `PENDING_ASSOCIATION` tokens for
    every attachment marked with the `ISSUE` association hint; those tokens are
    added to the Redmine payload before posting to `POST /issues.json`. After a
    successful creation the script reconciles the returned Redmine attachment list
@@ -884,22 +938,22 @@ php 11_migrate_issues.php --help
 > existing databases, run
 > `ALTER TABLE migration_mapping_projects ADD COLUMN issues_extracted_at TIMESTAMP NULL DEFAULT NULL AFTER automation_hash;`
 > to enable the resumable extraction column. Run
-> `10_migrate_attachments.php --phases=pull --confirm-pull` followed by
+> `09_migrate_attachments.php --phases=pull --confirm-pull` followed by
 > `--phases=push --confirm-push` beforehand so every attachment with the `ISSUE`
 > association hint has a valid upload token. Ensure
 > the directory configured by `paths.tmp` is writable and large enough to hold
 > the downloaded binaries (`tmp/attachments/jira`).
 
-## 15. Running `12_migrate_journals.php`
+## 15. Running `11_migrate_journals.php`
 
 Once issues exist in Redmine the migration can replay Jira's conversational
-history. `12_migrate_journals.php` extracts comments and changelog entries,
+history. `11_migrate_journals.php` extracts comments and changelog entries,
 prepares mapping rows, and pushes them back into Redmine as journals. The script
 can also attach binaries to individual notes by reusing the upload tokens that
-`10_migrate_attachments.php` staged with the `JOURNAL` association hint.
+`09_migrate_attachments.php` staged with the `JOURNAL` association hint.
 
 ```bash
-php 12_migrate_journals.php --help
+php 11_migrate_journals.php --help
 ```
 
 ### Available options
@@ -932,20 +986,20 @@ php 12_migrate_journals.php --help
    then reconciles the resulting journal/attachment identifiers so reruns stay
    idempotent.
 
-> **Prerequisites:** run `11_migrate_issues.php --phases=push --confirm-push` to
+> **Prerequisites:** run `10_migrate_issues.php --phases=push --confirm-push` to
 > create the parent issues first, and make sure the attachment migration has
 > produced tokens for any binaries referenced by later comments.
 
-## 16. Running `13_migrate_subtasks.php`
+## 16. Running `12_migrate_subtasks.php`
 
 Once both parent and child issues exist in Redmine you can replay Jira's
-subtask hierarchy. `13_migrate_subtasks.php` inspects
+subtask hierarchy. `12_migrate_subtasks.php` inspects
 `migration_mapping_issues`, resolves the Redmine identifiers for each parent
 issue, and updates the child records via `PUT /issues/:id.json` so their
 `parent_issue_id` mirrors Jira.
 
 ```bash
-php 13_migrate_subtasks.php --help
+php 12_migrate_subtasks.php --help
 ```
 
 ### Available options
@@ -969,21 +1023,21 @@ php 13_migrate_subtasks.php --help
    and persist the new `redmine_parent_issue_id` plus a refreshed
    `automation_hash` so future transforms remain idempotent.
 
-> **Prerequisites:** run `11_migrate_issues.php --phases=push --confirm-push`
+> **Prerequisites:** run `10_migrate_issues.php --phases=push --confirm-push`
 > so both the parent and child issues exist in Redmine. Re-run the subtask
 > script after large batches of issues complete; it is safe to reapply the
 > relationships because the script skips already-linked records.
 
-## 17. Running `14_migrate_issue_relations.php`
+## 17. Running `13_migrate_issue_relations.php`
 
 Jira issue links (blocks, relates, duplicates, …) translate to Redmine's issue
-relations. `14_migrate_issue_relations.php` now consumes the canonical link
+relations. `13_migrate_issue_relations.php` now consumes the canonical link
 snapshot stored in `staging_jira_issue_links`, matches both sides against
 `migration_mapping_issues`, proposes the closest Redmine relation type, and
 optionally creates the relation via `POST /relations.json`.
 
 ```bash
-php 14_migrate_issue_relations.php --help
+php 13_migrate_issue_relations.php --help
 ```
 
 ### Available options
@@ -1010,7 +1064,7 @@ php 14_migrate_issue_relations.php --help
    any diagnostic notes. Dry-run output mirrors the payload so you can double
    check directionality before confirming the push.
 
-> **Prerequisites:** rerun `11_migrate_issues.php --phases=push --confirm-push`
+> **Prerequisites:** rerun `10_migrate_issues.php --phases=push --confirm-push`
 > until every linked Jira issue has a Redmine counterpart. The relation script
 > only acts on canonical link rows, so you can re-run the transform/push cycle
 > as often as needed without creating duplicate relations.
