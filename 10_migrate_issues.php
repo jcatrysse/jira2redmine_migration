@@ -11,7 +11,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use League\HTMLToMarkdown\HtmlConverter;
 
-const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.30';
+const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.31';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issues into staging_jira_issues (and related staging tables).',
     'transform' => 'Reconcile Jira issues with Redmine dependencies to populate migration mappings.',
@@ -136,16 +136,10 @@ function main(array $config, array $cliOptions): void
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         $redmineConfig = extractArrayConfig($config, 'redmine');
+        $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
 
-        if (!empty($cliOptions['use_extended_api'])) {
-            printf(
-                "[%s] Extended API option supplied but ignored (issue creation uses the core Redmine REST API).%s",
-                formatCurrentTimestamp(),
-                PHP_EOL
-            );
-        }
-
-        runIssuePushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig);
+        runIssuePushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi, $extendedApiPrefix);
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
@@ -925,6 +919,7 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
     $statusLookup = buildStatusLookup($pdo);
     $priorityLookup = buildPriorityLookup($pdo);
     $userLookup = buildUserLookup($pdo);
+    $customFieldMappingIndex = buildCustomFieldMappingIndex($pdo);
     $cascadingFieldIndex = buildCascadingFieldIndex($pdo);
 
     $issueConfig = $config['migration']['issues'] ?? [];
@@ -1089,11 +1084,20 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
                 if ($security !== null) {
                     $proposedIsPrivate = true;
                 }
+                $customFieldWarnings = [];
+                $proposedCustomFields = buildMappedCustomFieldPayload($decodedIssue, $customFieldMappingIndex, $customFieldWarnings);
+
                 $cascadingWarnings = [];
-                $proposedCustomFields = buildCascadingCustomFieldPayload($decodedIssue, $cascadingFieldIndex, $cascadingWarnings);
-                $proposedCustomFieldPayload = $proposedCustomFields !== []
-                    ? encodeJsonColumn($proposedCustomFields)
+                $cascadingCustomFields = buildCascadingCustomFieldPayload($decodedIssue, $cascadingFieldIndex, $cascadingWarnings);
+
+                $mergedCustomFields = array_values(array_merge($proposedCustomFields, $cascadingCustomFields));
+                $proposedCustomFieldPayload = $mergedCustomFields !== []
+                    ? encodeJsonColumn($mergedCustomFields)
                     : null;
+
+                if ($customFieldWarnings !== []) {
+                    $notes[] = sprintf('Custom field values could not be normalised for fields: %s.', implode(', ', array_unique($customFieldWarnings)));
+                }
                 if ($cascadingWarnings !== []) {
                     $notes[] = sprintf('Cascading selection could not be mapped for fields: %s.', implode(', ', array_unique($cascadingWarnings)));
                 }
@@ -1211,13 +1215,25 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
 /**
  * @throws Throwable
  */
-function runIssuePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig): void
+function runIssuePushPhase(
+    PDO $pdo,
+    bool $confirmPush,
+    bool $isDryRun,
+    array $redmineConfig,
+    bool $useExtendedApi,
+    string $extendedApiPrefix
+): void
 {
     $candidateStatement = $pdo->prepare(<<<SQL
-        SELECT *
-        FROM migration_mapping_issues
-        WHERE migration_status = 'READY_FOR_CREATION'
-        ORDER BY mapping_id
+        SELECT
+            map.*,
+            issue.created_at AS jira_created_at,
+            issue.updated_at AS jira_updated_at,
+            issue.raw_payload AS jira_raw_payload
+        FROM migration_mapping_issues map
+        JOIN staging_jira_issues issue ON issue.id = map.jira_issue_id
+        WHERE map.migration_status = 'READY_FOR_CREATION'
+        ORDER BY map.mapping_id
     SQL);
 
     if ($candidateStatement === false) {
@@ -1291,6 +1307,10 @@ function runIssuePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $r
 
     $client = createRedmineClient($redmineConfig);
 
+    if ($useExtendedApi) {
+        verifyExtendedApiAvailability($client, $extendedApiPrefix, 'issues.json');
+    }
+
     $updateStatement = $pdo->prepare(<<<SQL
         UPDATE migration_mapping_issues
         SET
@@ -1348,32 +1368,42 @@ function runIssuePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $r
         $description = $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null;
         $descriptionWithSharePoint = appendSharePointLinksToDescription($description, $sharePointLinks);
 
-        $payload = [
-            'issue' => array_filter([
-                'project_id' => $projectId,
-                'tracker_id' => $trackerId,
-                'status_id' => $statusId,
-                'priority_id' => $candidate['proposed_priority_id'] !== null ? (int)$candidate['proposed_priority_id'] : null,
-                'subject' => isset($candidate['proposed_subject']) ? (string)$candidate['proposed_subject'] : null,
-                'description' => $descriptionWithSharePoint,
-                'start_date' => $candidate['proposed_start_date'] !== null ? (string)$candidate['proposed_start_date'] : null,
-                'due_date' => $candidate['proposed_due_date'] !== null ? (string)$candidate['proposed_due_date'] : null,
-                'assigned_to_id' => $candidate['proposed_assigned_to_id'] !== null ? (int)$candidate['proposed_assigned_to_id'] : null,
-                'done_ratio' => $candidate['proposed_done_ratio'] !== null ? (int)$candidate['proposed_done_ratio'] : null,
-                'estimated_hours' => $candidate['proposed_estimated_hours'] !== null ? (float)$candidate['proposed_estimated_hours'] : null,
-                'parent_issue_id' => $candidate['proposed_parent_issue_id'] !== null ? (int)$candidate['proposed_parent_issue_id'] : null,
-                'is_private' => $candidate['proposed_is_private'] !== null ? ($candidate['proposed_is_private'] ? 1 : 0) : null,
-                'custom_fields' => $candidate['proposed_custom_field_payload'] !== null ? json_decode((string)$candidate['proposed_custom_field_payload'], true) : null,
-                'uploads' => buildIssueUploadPayload($redmineUploads),
-            ], static fn($value) => $value !== null),
-        ];
+        $issuePayload = array_filter([
+            'project_id' => $projectId,
+            'tracker_id' => $trackerId,
+            'status_id' => $statusId,
+            'priority_id' => $candidate['proposed_priority_id'] !== null ? (int)$candidate['proposed_priority_id'] : null,
+            'subject' => isset($candidate['proposed_subject']) ? (string)$candidate['proposed_subject'] : null,
+            'description' => $descriptionWithSharePoint,
+            'start_date' => $candidate['proposed_start_date'] !== null ? (string)$candidate['proposed_start_date'] : null,
+            'due_date' => $candidate['proposed_due_date'] !== null ? (string)$candidate['proposed_due_date'] : null,
+            'assigned_to_id' => $candidate['proposed_assigned_to_id'] !== null ? (int)$candidate['proposed_assigned_to_id'] : null,
+            'done_ratio' => $candidate['proposed_done_ratio'] !== null ? (int)$candidate['proposed_done_ratio'] : null,
+            'estimated_hours' => $candidate['proposed_estimated_hours'] !== null ? (float)$candidate['proposed_estimated_hours'] : null,
+            'is_private' => $candidate['proposed_is_private'] !== null ? ($candidate['proposed_is_private'] ? 1 : 0) : null,
+            'custom_fields' => $candidate['proposed_custom_field_payload'] !== null ? json_decode((string)$candidate['proposed_custom_field_payload'], true) : null,
+            'uploads' => buildIssueUploadPayload($redmineUploads),
+        ], static fn($value) => $value !== null);
+
+        if ($useExtendedApi) {
+            $issuePayload = array_merge($issuePayload, buildExtendedIssueOverrides($candidate));
+        }
+
+        $payload = ['issue' => $issuePayload];
 
         if (($payload['issue']['uploads'] ?? []) === []) {
             unset($payload['issue']['uploads']);
         }
 
         try {
-            $response = $client->post('/issues.json', ['json' => $payload]);
+            $endpoint = $useExtendedApi
+                ? '/' . buildExtendedApiPath($extendedApiPrefix, 'issues.json')
+                : '/issues.json';
+
+            $response = $client->post($endpoint, [
+                'json' => $payload,
+                'query' => ['notify' => 'false', 'send_notification' => 0],
+            ]);
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
             $message = 'Failed to create issue in Redmine';
@@ -2191,6 +2221,74 @@ function buildCascadingFieldIndex(PDO $pdo): array
 }
 
 /**
+ * @return array<string, array{
+ *     jira_field_name: string,
+ *     redmine_custom_field_id: int,
+ *     field_format: string,
+ *     is_multiple: bool,
+ *     enumeration_lookup: array<string, string>
+ * }> | array{}
+ */
+function buildCustomFieldMappingIndex(PDO $pdo): array
+{
+    $sql = <<<SQL
+        SELECT
+            jira_field_id,
+            jira_field_name,
+            proposed_field_format,
+            proposed_is_multiple,
+            redmine_custom_field_id,
+            redmine_custom_field_enumerations
+        FROM migration_mapping_custom_fields
+        WHERE migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')
+          AND redmine_custom_field_id IS NOT NULL
+    SQL;
+
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to fetch active custom field mappings: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement === false) {
+        throw new RuntimeException('Failed to fetch active custom field mappings.');
+    }
+
+    $index = [];
+
+    while (true) {
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            break;
+        }
+
+        $jiraFieldId = isset($row['jira_field_id']) ? (string)$row['jira_field_id'] : '';
+        $redmineCustomFieldId = isset($row['redmine_custom_field_id']) ? (int)$row['redmine_custom_field_id'] : null;
+        if ($jiraFieldId === '' || $redmineCustomFieldId === null) {
+            continue;
+        }
+
+        $fieldFormat = normalizeCustomFieldFormat($row['proposed_field_format'] ?? null);
+        if (in_array($fieldFormat, ['depending_list', 'depending_enumeration'], true)) {
+            continue;
+        }
+
+        $enumerations = decodeJsonColumn($row['redmine_custom_field_enumerations'] ?? null);
+        $index[$jiraFieldId] = [
+            'jira_field_name' => isset($row['jira_field_name']) ? (string)$row['jira_field_name'] : $jiraFieldId,
+            'redmine_custom_field_id' => $redmineCustomFieldId,
+            'field_format' => $fieldFormat,
+            'is_multiple' => normalizeBooleanFlag($row['proposed_is_multiple'] ?? null) ?? false,
+            'enumeration_lookup' => buildEnumerationLookup(is_array($enumerations) ? $enumerations : []),
+        ];
+    }
+
+    $statement->closeCursor();
+
+    return $index;
+}
+
+/**
  * @param array<string, mixed> $issuePayload
  * @param array<string, array{parent_field_id: int, child_field_id: int, child_lookup: array<string, array{parent_label: string, parent_id: string|null, child_label: string, child_id: string}>, child_label_lookup: array<string, array<int, string>>}> $cascadingIndex
  * @param array<int, string> $warnings
@@ -2246,6 +2344,258 @@ function buildCascadingCustomFieldPayload(array $issuePayload, array $cascadingI
     }
 
     return $result;
+}
+
+/**
+ * @param array<string, mixed> $issuePayload
+ * @param array<string, array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, is_multiple: bool, enumeration_lookup: array<string, string>}> $mappingIndex
+ * @param array<int, string> $warnings
+ * @return array<int, array{id: int, value: string|array<int, string>}>|array{}
+ */
+function buildMappedCustomFieldPayload(array $issuePayload, array $mappingIndex, array &$warnings = []): array
+{
+    if ($mappingIndex === []) {
+        return [];
+    }
+
+    $fields = $issuePayload['fields'] ?? null;
+    if (!is_array($fields)) {
+        return [];
+    }
+
+    $result = [];
+
+    foreach ($mappingIndex as $jiraFieldId => $meta) {
+        if (!array_key_exists($jiraFieldId, $fields)) {
+            continue;
+        }
+
+        $normalizedValue = normalizeCustomFieldValue(
+            $meta['field_format'],
+            $meta['is_multiple'],
+            $meta['enumeration_lookup'],
+            $fields[$jiraFieldId]
+        );
+
+        if ($normalizedValue === null) {
+            if ($fields[$jiraFieldId] !== null && $fields[$jiraFieldId] !== '' && $fields[$jiraFieldId] !== []) {
+                $warnings[] = $jiraFieldId;
+            }
+            continue;
+        }
+
+        $result[] = [
+            'id' => $meta['redmine_custom_field_id'],
+            'value' => $normalizedValue,
+        ];
+    }
+
+    return $result;
+}
+
+/**
+ * @param string $fieldFormat
+ * @param bool $isMultiple
+ * @param array<string, string> $enumerationLookup
+ * @param mixed $rawValue
+ * @return array<int, string>|string|null
+ */
+function normalizeCustomFieldValue(string $fieldFormat, bool $isMultiple, array $enumerationLookup, mixed $rawValue): array|string|null
+{
+    $values = $isMultiple ? normalizeToList($rawValue) : [$rawValue];
+    $normalizedValues = [];
+
+    foreach ($values as $value) {
+        $normalized = normalizeCustomFieldSingleValue($fieldFormat, $enumerationLookup, $value);
+        if ($normalized === null) {
+            continue;
+        }
+
+        $normalizedValues[] = $normalized;
+    }
+
+    $normalizedValues = array_values(array_unique($normalizedValues));
+
+    if ($normalizedValues === []) {
+        return null;
+    }
+
+    return $isMultiple ? $normalizedValues : $normalizedValues[0];
+}
+
+/**
+ * @param string $fieldFormat
+ * @param array<string, string> $enumerationLookup
+ * @param mixed $rawValue
+ * @return string|null
+ */
+function normalizeCustomFieldSingleValue(string $fieldFormat, array $enumerationLookup, mixed $rawValue): ?string
+{
+    $format = strtolower($fieldFormat);
+
+    switch ($format) {
+        case 'bool':
+        case 'boolean':
+            $flag = normalizeBooleanDatabaseValue($rawValue);
+            return $flag === null ? null : ($flag === 1 ? '1' : '0');
+        case 'int':
+        case 'integer':
+            $intValue = normalizeInteger($rawValue, PHP_INT_MIN);
+            return $intValue === null ? null : (string)$intValue;
+        case 'float':
+        case 'decimal':
+            $floatValue = normalizeDecimal($rawValue, -INF);
+            return $floatValue === null ? null : rtrim(rtrim((string)$floatValue, '0'), '.');
+        case 'date':
+            $stringValue = extractJiraCustomFieldString($rawValue);
+            if ($stringValue === null) {
+                return null;
+            }
+
+            if (strlen($stringValue) >= 10) {
+                return substr($stringValue, 0, 10);
+            }
+
+            $timestamp = strtotime($stringValue);
+            return $timestamp !== false ? date('Y-m-d', $timestamp) : null;
+        case 'list':
+        case 'enumeration':
+        case 'string':
+        case 'text':
+        default:
+            $stringValue = extractJiraCustomFieldString($rawValue);
+            if ($stringValue === null) {
+                return null;
+            }
+
+            $normalized = strtolower($stringValue);
+            if (isset($enumerationLookup[$normalized])) {
+                return $enumerationLookup[$normalized];
+            }
+
+            return $stringValue;
+    }
+}
+
+function normalizeToList(mixed $value): array
+{
+    if ($value === null) {
+        return [];
+    }
+
+    if (is_array($value) && isListArray($value)) {
+        return $value;
+    }
+
+    return [$value];
+}
+
+/**
+ * @param array<int, array<string, mixed>> $enumerations
+ * @return array<string, string>
+ */
+function buildEnumerationLookup(array $enumerations): array
+{
+    $lookup = [];
+
+    foreach ($enumerations as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        $redmineLabel = null;
+        if (isset($entry['name'])) {
+            $redmineLabel = (string)$entry['name'];
+        } elseif (isset($entry['label'])) {
+            $redmineLabel = (string)$entry['label'];
+        }
+
+        $redmineLabel = $redmineLabel !== null ? trim($redmineLabel) : null;
+        if ($redmineLabel === null || $redmineLabel === '') {
+            continue;
+        }
+
+        $jiraValues = [];
+        if (isset($entry['jira_value'])) {
+            $jiraValues[] = $entry['jira_value'];
+        }
+        if (isset($entry['jira_values']) && is_array($entry['jira_values'])) {
+            array_push($jiraValues, ...$entry['jira_values']);
+        }
+        if (isset($entry['jira_option_id'])) {
+            $jiraValues[] = $entry['jira_option_id'];
+        }
+
+        if ($jiraValues === []) {
+            $jiraValues[] = $redmineLabel;
+        }
+
+        foreach ($jiraValues as $jiraValue) {
+            if (!is_scalar($jiraValue)) {
+                continue;
+            }
+
+            $normalized = strtolower(trim((string)$jiraValue));
+            if ($normalized === '') {
+                continue;
+            }
+
+            $lookup[$normalized] = $redmineLabel;
+        }
+    }
+
+    return $lookup;
+}
+
+function normalizeCustomFieldFormat(?string $fieldFormat): string
+{
+    if ($fieldFormat === null) {
+        return 'string';
+    }
+
+    $normalized = strtolower(trim($fieldFormat));
+    return match ($normalized) {
+        'boolean' => 'bool',
+        'integer' => 'int',
+        'decimal' => 'float',
+        default => $normalized !== '' ? $normalized : 'string',
+    };
+}
+
+function extractJiraCustomFieldString(mixed $value): ?string
+{
+    if (is_string($value) || is_int($value) || is_float($value)) {
+        $trimmed = trim((string)$value);
+        return $trimmed === '' ? null : $trimmed;
+    }
+
+    if (is_bool($value)) {
+        return $value ? '1' : '0';
+    }
+
+    if (is_array($value)) {
+        if (isset($value['value'])) {
+            $candidate = trim((string)$value['value']);
+            return $candidate === '' ? null : $candidate;
+        }
+
+        if (isset($value['name'])) {
+            $candidate = trim((string)$value['name']);
+            return $candidate === '' ? null : $candidate;
+        }
+
+        if (isset($value['label'])) {
+            $candidate = trim((string)$value['label']);
+            return $candidate === '' ? null : $candidate;
+        }
+
+        if (isset($value['id'])) {
+            $candidate = trim((string)$value['id']);
+            return $candidate === '' ? null : $candidate;
+        }
+    }
+
+    return null;
 }
 
 /**
@@ -2902,6 +3252,68 @@ function normalizeStoredAutomationHash(mixed $value): ?string
     return $trimmed !== '' ? $trimmed : null;
 }
 
+/**
+ * @param array<string, mixed> $candidate
+ * @return array<string, mixed>
+ */
+function buildExtendedIssueOverrides(array $candidate): array
+{
+    $overrides = [];
+
+    if ($candidate['proposed_author_id'] !== null) {
+        $overrides['author_id'] = (int)$candidate['proposed_author_id'];
+    }
+
+    $created = normalizeJiraTimestamp($candidate['jira_created_at'] ?? null);
+    if ($created !== null) {
+        $overrides['created_on'] = $created;
+    }
+
+    $updated = normalizeJiraTimestamp($candidate['jira_updated_at'] ?? null);
+    if ($updated !== null) {
+        $overrides['updated_on'] = $updated;
+    }
+
+    $closed = extractJiraResolutionDate($candidate['jira_raw_payload'] ?? null);
+    if ($closed !== null) {
+        $overrides['closed_on'] = $closed;
+    }
+
+    return $overrides;
+}
+
+function normalizeJiraTimestamp(mixed $value): ?string
+{
+    if ($value === null) {
+        return null;
+    }
+
+    if (is_string($value) && trim($value) === '') {
+        return null;
+    }
+
+    $timestamp = strtotime((string)$value);
+    if ($timestamp === false) {
+        return null;
+    }
+
+    return date('Y-m-d H:i:s', $timestamp);
+}
+
+function extractJiraResolutionDate(mixed $rawPayload): ?string
+{
+    $decoded = decodeJsonColumn($rawPayload);
+    $fields = is_array($decoded) ? ($decoded['fields'] ?? []) : [];
+
+    if (!is_array($fields)) {
+        return null;
+    }
+
+    $resolutionDate = $fields['resolutiondate'] ?? null;
+
+    return normalizeJiraTimestamp($resolutionDate);
+}
+
 function truncateString(string $value, int $maxLength): string
 {
     $trimmed = trim($value);
@@ -2938,6 +3350,71 @@ function decodeJsonResponse(ResponseInterface $response): array
     }
 
     return is_array($decoded) ? $decoded : [];
+}
+
+function shouldUseExtendedApi(array $redmineConfig, bool $cliFlag): bool
+{
+    if ($cliFlag) {
+        return true;
+    }
+
+    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
+        ? $redmineConfig['extended_api']
+        : [];
+
+    return (bool)($extendedConfig['enabled'] ?? false);
+}
+
+function resolveExtendedApiPrefix(array $redmineConfig): string
+{
+    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
+        ? $redmineConfig['extended_api']
+        : [];
+
+    $prefix = isset($extendedConfig['prefix']) ? trim((string)$extendedConfig['prefix']) : '/extended_api';
+
+    if ($prefix === '') {
+        $prefix = '/extended_api';
+    }
+
+    return trim($prefix, '/');
+}
+
+function buildExtendedApiPath(string $prefix, string $resource): string
+{
+    $normalizedPrefix = trim($prefix, '/');
+    $normalizedResource = ltrim($resource, '/');
+
+    if ($normalizedPrefix === '') {
+        return $normalizedResource;
+    }
+
+    return $normalizedPrefix . '/' . $normalizedResource;
+}
+
+function verifyExtendedApiAvailability(Client $client, string $prefix, string $resource): void
+{
+    $path = buildExtendedApiPath($prefix, $resource);
+
+    try {
+        $response = $client->get($path);
+    } catch (BadResponseException $exception) {
+        $response = $exception->getResponse();
+        $statusCode = $response ? $response->getStatusCode() : 0;
+        $reason = $response ? $response->getReasonPhrase() : 'unknown error';
+        throw new RuntimeException(
+            sprintf('Extended API availability check failed (%s): HTTP %d %s', $path, $statusCode, $reason),
+            0,
+            $exception
+        );
+    } catch (GuzzleException $exception) {
+        throw new RuntimeException('Failed to reach the extended API: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    $header = $response->getHeaderLine('X-Redmine-Extended-API');
+    if (trim($header) === '') {
+        throw new RuntimeException('Extended API response missing X-Redmine-Extended-API header. Verify the plugin installation.');
+    }
 }
 
 function extractErrorBody(ResponseInterface $response): string
@@ -3076,7 +3553,7 @@ function printUsage(): void
     printf("      --skip=<list>        Comma-separated list of phases to skip.%s", PHP_EOL);
     printf("      --confirm-push       Required to allow the push phase to create issues in Redmine.%s", PHP_EOL);
     printf("      --dry-run            Preview push payloads without contacting Redmine.%s", PHP_EOL);
-    printf("      --use-extended-api   Ignored for this script (standard Redmine API is used).%s", PHP_EOL);
+    printf("      --use-extended-api   Create issues through the extended API when available (timestamps, authors, no mail).%s", PHP_EOL);
 }
 
 function printVersion(): void

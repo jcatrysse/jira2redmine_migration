@@ -16,6 +16,18 @@ All notable changes to this project will be documented in this file.
 - Create the missing scripts: labels/tags, watchers, checklists, relations, subtasks, workflows, custom workflows...
 - Validate we can push authors and creation timestamps to Redmine.
 - re-enable: RAILS_ENV=development bundle exec rake --silent redmine:attachments:prune
+- Test attachment deletion on duplicate attachments: example https://redminedev02.geoxyz.eu/attachments/8936 / https://redminedev02.geoxyz.eu/attachments/7217
+
+## [0.0.69]
+
+- Restrict issue custom field payloads to mappings in `MATCH_FOUND` or
+  `CREATION_SUCCESS` status that already hold a Redmine custom field ID, and
+  normalise values according to the mapped field format (including list
+  enumeration lookups and cascading pairs). This explicitly includes system
+  fields such as `resolution` and `resolutiondate` when added to the mapping
+  table.
+- Document the watcher migration approach as a dedicated post-issue step to keep
+  issue creation lean and retryable.
 
 ## [0.0.68]
 

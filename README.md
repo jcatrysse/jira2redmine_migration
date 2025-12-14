@@ -903,6 +903,17 @@ php 10_migrate_issues.php --help
   Manual overrides persist
    across reruns thanks to the automation hash signature – clear it when you
    want the script to resume managing the row.
+   The issue payload only includes custom fields whose mapping rows are marked
+   `MATCH_FOUND` or `CREATION_SUCCESS` and already hold a
+   `redmine_custom_field_id`. Each value is normalised according to the target
+   field format (strings/text, numbers, dates, booleans, single- or
+   multi-select lists) and, when Redmine enumeration metadata is present in the
+   mapping table, Jira option labels are mapped to their Redmine counterparts.
+   Cascading parent/child pairs remain a dedicated special case built from the
+   same filtered mapping set. This makes the rule explicit: only custom fields
+   that are enabled and mapped in `migration_mapping_custom_fields` are sent to
+   Redmine, including system fields such as `resolution` and `resolutiondate`
+   when you add them to the mapping table.
 3. **Push (`push`)** – lists every row in `READY_FOR_CREATION`, highlighting the
    target project, tracker, and status. A dry run (`--dry-run`) prints the payload
    summary and warns about attachments that still require attention in
@@ -942,6 +953,12 @@ php 10_migrate_issues.php --help
 > association hint has a valid upload token. Ensure
 > the directory configured by `paths.tmp` is writable and large enough to hold
 > the downloaded binaries (`tmp/attachments/jira`).
+
+> **Watchers:** Redmine accepts watcher assignments at issue creation via
+> `watcher_user_ids`, but the migration keeps watcher application in a dedicated
+> step (see `15_migrate_watchers.php`). Adding watchers after the issues exist
+> avoids membership-related failures, keeps issue creation fast, and makes retry
+> workflows safe via the dedicated watcher endpoint.
 
 ## 15. Running `11_migrate_journals.php`
 
