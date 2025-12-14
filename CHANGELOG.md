@@ -6,18 +6,14 @@ All notable changes to this project will be documented in this file.
 
 - General: verify if all automation hashes align with the latest database schemas.
 - Fine-tune the issues, and journals scripts.
-- Verify ADF to Markdown conversion.
+- Update the ADF to Markdown conversion: it should be a real converter not just plain text.
 - Migrate issues script:
     - on a rerun, newer issues should be fetched.
     - on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
-    - check if we use the same attachment filename uniqueness method from the attachment migration script.
-        - $uniqueName = $jiraAttachmentId !== ''
-            ? ($jiraAttachmentId . '__' . sanitizeAttachmentFileName($originalName))
-            : sanitizeAttachmentFileName($originalName);
     - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
         - I manually added in the database, after the transform phase but before the push phase: INSERT INTO `migration_mapping_custom_fields` (`mapping_id`, `jira_field_id`, `jira_field_name`, `jira_schema_type`, `jira_schema_custom`, `jira_project_ids`, `jira_issue_type_ids`, `jira_allowed_values`, `redmine_custom_field_id`, `mapping_parent_custom_field_id`, `redmine_custom_field_enumerations`, `proposed_redmine_name`, `proposed_field_format`, `proposed_is_required`, `proposed_is_filter`, `proposed_is_for_all`, `proposed_is_multiple`, `proposed_possible_values`, `proposed_value_dependencies`, `proposed_default_value`, `proposed_tracker_ids`, `proposed_role_ids`, `proposed_project_ids`, `migration_status`, `notes`, `automation_hash`, `created_at`, `last_updated_at`) VALUES (NULL, 'resolution', 'resolution', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'Resolution', 'text', NULL, NULL, '1', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'READY_FOR_CREATION', NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), (NULL, 'resolutiondate', 'resolutiondate', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'Resolution date', 'date', NULL, '1', '1', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'READY_FOR_CREATION', NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         - Ensure this logic fits the issue migration logic.
-- Create the missing scripts: labels/tags, (document) categories, milestones, watchers, checklists, relations, subtasks, workflows, custom workflows...
+- Create the missing scripts: labels/tags, watchers, checklists, relations, subtasks, workflows, custom workflows...
 - Validate we can push authors and creation timestamps to Redmine.
 - re-enable: RAILS_ENV=development bundle exec rake --silent redmine:attachments:prune
 

@@ -248,6 +248,8 @@ function fetchJiraJournals(Client $client, PDO $pdo, array $config): array
 /**
  * @param Client $client
  * @param PDOStatement $statement
+ * @param string $issueId
+ * @param string $issueKey
  * @return array{0: int, 1: int}
  */
 function fetchJiraCommentsForIssue(Client $client, PDOStatement $statement, string $issueId, string $issueKey): array
@@ -296,7 +298,7 @@ function fetchJiraCommentsForIssue(Client $client, PDOStatement $statement, stri
             $updatedAt = isset($comment['updated']) ? normalizeDateTimeString($comment['updated']) : $createdAt;
             $bodyAdf = isset($comment['body']) ? encodeJson($comment['body']) : null;
             $bodyHtml = isset($comment['renderedBody']) && is_string($comment['renderedBody'])
-                ? trim((string)$comment['renderedBody'])
+                ? trim($comment['renderedBody'])
                 : null;
             $rawPayload = encodeJson($comment);
 
@@ -327,6 +329,8 @@ function fetchJiraCommentsForIssue(Client $client, PDOStatement $statement, stri
 /**
  * @param Client $client
  * @param PDOStatement $statement
+ * @param string $issueId
+ * @param string $issueKey
  * @return array{0: int, 1: int}
  */
 function fetchJiraChangelogForIssue(Client $client, PDOStatement $statement, string $issueId, string $issueKey): array
@@ -649,9 +653,20 @@ function processCommentPush(Client $client, PDO $pdo, array $comment, array $con
     $bodyText = $bodyText ?? '';
 
     $attachments = fetchPreparedJournalAttachments($pdo, $jiraIssueId, $createdAt);
+    foreach ($attachments as $att) {
+        if ($att['redmine_upload_token'] !== '' && ($att['sharepoint_url'] ?? '') !== null) {
+            printf(
+                "  [warn] Attachment %s has both Redmine token and SharePoint URL, using SharePoint link.%s",
+                $att['jira_attachment_id'],
+                PHP_EOL
+            );
+        }
+    }
+
     $redmineUploads = array_values(array_filter(
         $attachments,
         static fn($attachment) => $attachment['redmine_upload_token'] !== ''
+            && ($attachment['sharepoint_url'] ?? '') === ''
     ));
     $sharePointLinks = array_values(array_filter(
         $attachments,
@@ -888,9 +903,15 @@ function buildAttachmentUploadPayload(array $attachments): array
             continue;
         }
 
+        $filename = buildRedmineAttachmentFilename($attachment['jira_attachment_id'], $attachment['filename']);
+        $description = $attachment['filename'] !== ''
+            ? $attachment['filename']
+            : sprintf('Jira attachment %s', $attachment['jira_attachment_id']);
+
         $uploads[] = array_filter([
             'token' => $attachment['redmine_upload_token'],
-            'filename' => $attachment['filename'] !== '' ? $attachment['filename'] : null,
+            'filename' => $filename,
+            'description' => $description,
             'content_type' => $attachment['mime_type'] ?? null,
         ], static fn($value) => $value !== null);
     }
@@ -907,24 +928,28 @@ function appendSharePointLinksToNotes(string $note, array $sharePointLinks): str
         return $note;
     }
 
-    $lines = ['SharePoint attachments:'];
+    $lines = [
+        '---',
+        'SharePoint attachments:',
+    ];
+
     foreach ($sharePointLinks as $attachment) {
-        $url = (string)$attachment['sharepoint_url'];
+        $url = (string)($attachment['sharepoint_url'] ?? '');
         if ($url === '') {
             continue;
         }
 
         $label = $attachment['filename'] !== '' ? $attachment['filename'] : $attachment['jira_attachment_id'];
-        $lines[] = sprintf('- [%s](%s)', $label, $url);
+        $lines[] = sprintf('- %s: %s', $label, $url);
     }
 
     $block = implode(PHP_EOL, $lines);
 
-    if ($note === '') {
+    if (trim($note) === '') {
         return $block;
     }
 
-    return $note . PHP_EOL . PHP_EOL . $block;
+    return rtrim($note) . PHP_EOL . PHP_EOL . $block;
 }
 
 /**
@@ -1082,7 +1107,7 @@ function matchAttachmentsByMetadata(array $attachments, array $redmineAttachment
 
     $matches = [];
     foreach ($attachments as $attachment) {
-        $targetFilename = $attachment['filename'];
+        $targetFilename = buildRedmineAttachmentFilename($attachment['jira_attachment_id'], $attachment['filename']);
         $targetSize = $attachment['size_bytes'];
 
         $matchId = null;
@@ -1166,12 +1191,45 @@ function buildAttachmentMetadataIndex(PDO $pdo): array
         if (!isset($index[$issueId])) {
             $index[$issueId] = [];
         }
-        $index[$issueId][$attachmentId] = $filename;
+        $index[$issueId][$attachmentId] = buildRedmineAttachmentFilename($attachmentId, $filename);
     }
 
     $statement->closeCursor();
 
     return $index;
+}
+
+function buildRedmineAttachmentFilename(string $jiraAttachmentId, string $originalFilename): string
+{
+    $name = trim($originalFilename);
+    if ($name === '') {
+        $name = 'attachment';
+    }
+
+    // Normalize whitespace
+    $name = preg_replace('/\s+/', ' ', $name);
+
+    // Replace filesystem and URL-hostile characters + control chars
+    $name = preg_replace('/[\/:*?"<>|\x00-\x1F]/', '_', $name);
+
+    // Prevent leading dots (hidden files)
+    $name = ltrim($name, '.');
+
+    // Prefix with Jira attachment id (uniqueness)
+    $filename = $jiraAttachmentId . '-' . $name;
+
+    // Hard cap length (safe for Redmine + SharePoint)
+    $maxLength = 180;
+    if (strlen($filename) > $maxLength) {
+        $ext = '';
+        if (preg_match('/(\.[A-Za-z0-9]{1,10})$/', $filename, $m)) {
+            $ext = $m[1];
+        }
+        $base = substr($filename, 0, $maxLength - strlen($ext));
+        $filename = $base . $ext;
+    }
+
+    return $filename;
 }
 
 function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string

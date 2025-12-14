@@ -669,7 +669,7 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
                             ]);
                             $totalObjectSamples++;
 
-                            $flatRows = flattenObject($objectValue, '', [], 0);
+                            $flatRows = flattenObject($objectValue);
                             foreach ($flatRows as $flatRow) {
                                 $insertObjectKv->execute([
                                     'field_id' => $fieldId,
@@ -834,7 +834,7 @@ function flattenObject(mixed $data, string $prefix = '', array $out = [], int $o
         $isAssoc = !isListArray($data);
         if ($isAssoc) {
             foreach ($data as $key => $value) {
-                $keyPath = ltrim(($prefix !== '' ? $prefix . '.' : '') . (string)$key, '.');
+                $keyPath = ltrim(($prefix !== '' ? $prefix . '.' : '') . $key, '.');
                 $out = flattenObject($value, $keyPath, $out, $ordinal);
             }
         } else {
@@ -858,6 +858,7 @@ function flattenObject(mixed $data, string $prefix = '', array $out = [], int $o
 
 /**
  * @param mixed $value
+ * @return string
  */
 function determineValueType(mixed $value): string
 {
@@ -897,6 +898,7 @@ function stringifyScalar(mixed $value): ?string
 
 /**
  * @param mixed $value
+ * @return bool
  */
 function isListArray(mixed $value): bool
 {
@@ -1323,9 +1325,20 @@ function runIssuePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $r
         }
 
         $preparedAttachments = $attachmentsByIssue[$jiraIssueId] ?? [];
+        foreach ($preparedAttachments as $att) {
+            if ($att['redmine_upload_token'] !== '' && ($att['sharepoint_url'] ?? '') !== '') {
+                printf(
+                    "      [warn] Attachment %s has both Redmine token and SharePoint URL, using SharePoint link.%s",
+                    $att['jira_attachment_id'],
+                    PHP_EOL
+                );
+            }
+        }
+
         $redmineUploads = array_values(array_filter(
             $preparedAttachments,
             static fn($attachment) => $attachment['redmine_upload_token'] !== ''
+                && ($attachment['sharepoint_url'] ?? '') === ''
         ));
         $sharePointLinks = array_values(array_filter(
             $preparedAttachments,
@@ -1544,9 +1557,15 @@ function buildIssueUploadPayload(array $attachments): array
             continue;
         }
 
+        $filename = buildRedmineAttachmentFilename($attachment['jira_attachment_id'], $attachment['filename']);
+        $description = $attachment['filename'] !== ''
+            ? $attachment['filename']
+            : sprintf('Jira attachment %s', $attachment['jira_attachment_id']);
+
         $uploads[] = array_filter([
             'token' => $attachment['redmine_upload_token'],
-            'filename' => $attachment['filename'] !== '' ? $attachment['filename'] : null,
+            'filename' => $filename,
+            'description' => $description,
             'content_type' => $attachment['mime_type'] ?? null,
         ], static fn($value) => $value !== null);
     }
@@ -1563,24 +1582,32 @@ function appendSharePointLinksToDescription(?string $description, array $sharePo
         return $description;
     }
 
-    $lines = ['SharePoint attachments:'];
+    $lines = [
+        '',
+        '---',
+        '**Attachments stored on SharePoint:**',
+    ];
+
     foreach ($sharePointLinks as $attachment) {
-        $url = (string)$attachment['sharepoint_url'];
+        $url = (string)($attachment['sharepoint_url'] ?? '');
         if ($url === '') {
             continue;
         }
 
-        $label = $attachment['filename'] !== '' ? $attachment['filename'] : $attachment['jira_attachment_id'];
-        $lines[] = sprintf('- [%s](%s)', $label, $url);
+        $label = $attachment['filename'] !== ''
+            ? $attachment['filename']
+            : $attachment['jira_attachment_id'];
+
+        $lines[] = sprintf('- %s: %s', $label, $url);
     }
 
     $block = implode(PHP_EOL, $lines);
 
-    if ($description === null || $description === '') {
-        return $block;
+    if ($description === null || trim($description) === '') {
+        return ltrim($block);
     }
 
-    return $description . PHP_EOL . PHP_EOL . $block;
+    return rtrim($description) . PHP_EOL . PHP_EOL . $block;
 }
 
 /**
@@ -1685,7 +1712,7 @@ function matchAttachmentsByMetadata(array $attachments, array $redmineAttachment
 
     $matches = [];
     foreach ($attachments as $attachment) {
-        $targetFilename = $attachment['filename'];
+        $targetFilename = buildRedmineAttachmentFilename($attachment['jira_attachment_id'], $attachment['filename']);
         $targetSize = $attachment['size_bytes'];
 
         $matchId = null;
@@ -2032,13 +2059,48 @@ function buildAttachmentMetadataIndex(PDO $pdo): array
         if (!isset($index[$issueId])) {
             $index[$issueId] = [];
         }
-        $index[$issueId][$attachmentId] = $filename;
+
+        $index[$issueId][$attachmentId] = buildRedmineAttachmentFilename($attachmentId, $filename);
     }
 
     $statement->closeCursor();
 
     return $index;
 }
+
+function buildRedmineAttachmentFilename(string $jiraAttachmentId, string $originalFilename): string
+{
+    $name = trim($originalFilename);
+    if ($name === '') {
+        $name = 'attachment';
+    }
+
+    // Normalise whitespace
+    $name = preg_replace('/\s+/', ' ', $name);
+
+    // Replace filesystem and URL-hostile characters
+    $name = preg_replace('/[\/:*?"<>|\x00-\x1F]/', '_', $name);
+
+    // Prevent leading dots (hidden files)
+    $name = ltrim($name, '.');
+
+    // Prefix with Jira attachment id (guarantees uniqueness)
+    $filename = $jiraAttachmentId . '-' . $name;
+
+    // Hard cap length (safe for Redmine + SharePoint)
+    $maxLength = 180;
+    if (strlen($filename) > $maxLength) {
+        $ext = '';
+        if (preg_match('/(\.[A-Za-z0-9]{1,10})$/', $filename, $m)) {
+            $ext = $m[1];
+        }
+        $base = substr($filename, 0, $maxLength - strlen($ext));
+        $filename = $base . $ext;
+    }
+
+    return $filename;
+}
+
 
 /**
  * @return array<string, array{parent_field_id: int, child_field_id: int, child_lookup: array<string, array{parent_label: string, parent_id: string|null, child_label: string, child_id: string}>, child_label_lookup: array<string, array<int, string>>}>|
@@ -2187,6 +2249,8 @@ function buildCascadingCustomFieldPayload(array $issuePayload, array $cascadingI
 }
 
 /**
+ * @param PDO $pdo
+ * @param int $parentMappingId
  * @return int|null
  */
 function resolveParentRedmineFieldId(PDO $pdo, int $parentMappingId): ?int
