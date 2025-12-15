@@ -10,8 +10,9 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use League\HTMLToMarkdown\HtmlConverter;
+use League\HTMLToMarkdown\Converter\TableConverter;
 
-const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.31';
+const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.32';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issues into staging_jira_issues (and related staging tables).',
     'transform' => 'Reconcile Jira issues with Redmine dependencies to populate migration mappings.',
@@ -2984,9 +2985,11 @@ function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
     static $converter = null;
     if ($converter === null) {
         $converter = new HtmlConverter([
-            'strip_tags' => false,
+            'strip_tags' => true,
             'hard_break' => true,
+            'remove_nodes' => 'script style',
         ]);
+        $converter->getEnvironment()->addConverter(new TableConverter());
     }
 
     try {
@@ -3023,7 +3026,8 @@ function rewriteJiraAttachmentLinks(string $html, array $attachments): string
         return $html;
     }
 
-    foreach ($document->getElementsByTagName('a') as $link) {
+    $links = iterator_to_array($document->getElementsByTagName('a'));
+    foreach ($links as $link) {
         if (!$link instanceof DOMElement) {
             continue;
         }
@@ -3044,11 +3048,44 @@ function rewriteJiraAttachmentLinks(string $html, array $attachments): string
             ? $attachments[$attachmentId]
             : sprintf('attachment-%s', $attachmentId);
 
-        while ($link->firstChild !== null) {
-            $link->removeChild($link->firstChild);
+        $linkText = trim($link->textContent ?? '');
+        if ($linkText === '') {
+            while ($link->firstChild !== null) {
+                $link->removeChild($link->firstChild);
+            }
+            $link->appendChild($document->createTextNode($filename));
         }
-        $link->appendChild($document->createTextNode($filename));
+
         $link->setAttribute('href', sprintf('attachment:%s', $filename));
+    }
+
+    $images = iterator_to_array($document->getElementsByTagName('img'));
+    foreach ($images as $image) {
+        if (!$image instanceof DOMElement) {
+            continue;
+        }
+
+        $attachmentId = null;
+        $source = $image->getAttribute('src');
+        if ($source !== '' && preg_match('#attachment/(\d+)#', $source, $matches)) {
+            $attachmentId = $matches[1];
+        } elseif ($image->hasAttribute('data-linked-resource-id')) {
+            $attachmentId = (string)$image->getAttribute('data-linked-resource-id');
+        }
+
+        if ($attachmentId === null || !isset($attachments[$attachmentId])) {
+            continue;
+        }
+
+        $filename = $attachments[$attachmentId] !== ''
+            ? $attachments[$attachmentId]
+            : sprintf('attachment-%s', $attachmentId);
+
+        $image->setAttribute('src', sprintf('attachment:%s', $filename));
+        $alt = trim($image->getAttribute('alt'));
+        if ($alt === '') {
+            $image->setAttribute('alt', $filename);
+        }
     }
 
     $converted = $document->saveHTML();

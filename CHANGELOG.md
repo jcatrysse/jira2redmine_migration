@@ -6,7 +6,6 @@ All notable changes to this project will be documented in this file.
 
 - General: verify if all automation hashes align with the latest database schemas.
 - Fine-tune the issues, and journals scripts.
-- Update the ADF to Markdown conversion: it should be a real converter not just plain text.
 - Migrate issues script:
     - on a rerun, newer issues should be fetched.
     - on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
@@ -17,6 +16,15 @@ All notable changes to this project will be documented in this file.
 - Validate we can push authors and creation timestamps to Redmine.
 - re-enable: RAILS_ENV=development bundle exec rake --silent redmine:attachments:prune
 - Test attachment deletion on duplicate attachments: example https://redminedev02.geoxyz.eu/attachments/8936 / https://redminedev02.geoxyz.eu/attachments/7217
+
+## [0.0.70]
+
+- Replace the Jira description conversion with a full HTML-to-Markdown pipeline
+  (using rendered HTML as the source) that preserves CommonMark formatting,
+  tables, and attachment links/inline images via the existing
+  `league/html-to-markdown` tooling.
+- Bump the issues migration script version to `0.0.32` to reflect the richer
+  conversion and attachment handling.
 
 ## [0.0.69]
 
