@@ -240,6 +240,11 @@ function runAttachmentUploadPhase(
     }
 
     $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
+
+    if ($useExtendedApi) {
+        verifyExtendedApiAvailability($redmineClient, $extendedApiPrefix, 'issues.json');
+    }
+
     $userLookup = buildRedmineUserLookup($pdo);
     $attachmentsConfig = $config['attachments'] ?? [];
     $defaultAuthorId = isset($attachmentsConfig['default_redmine_author_id'])
@@ -884,15 +889,16 @@ function uploadPendingAttachmentsToRedmine(
     }
 
     $updateStatement = $pdo->prepare(<<<SQL
-        UPDATE migration_mapping_attachments
-        SET
-            migration_status = :migration_status,
-            redmine_upload_token = :redmine_upload_token,
-            sharepoint_url = :sharepoint_url,
-            notes = :notes,
-            last_updated_at = CURRENT_TIMESTAMP
-        WHERE mapping_id = :mapping_id
-    SQL);
+    UPDATE migration_mapping_attachments
+    SET
+        migration_status = :migration_status,
+        redmine_upload_token = :redmine_upload_token,
+        redmine_attachment_id = :redmine_attachment_id,
+        sharepoint_url = :sharepoint_url,
+        notes = :notes,
+        last_updated_at = CURRENT_TIMESTAMP
+    WHERE mapping_id = :mapping_id
+SQL);
 
     if ($updateStatement === false) {
         throw new RuntimeException('Failed to prepare Redmine attachment update statement.');
@@ -1000,8 +1006,8 @@ function uploadPendingAttachmentsToRedmine(
         $attachmentOverrides = buildAttachmentOverrideQuery($authorAccountId, $createdAt, $userLookup, $defaultAuthorId);
         $query = array_merge(['filename' => basename($uniqueName)], $useExtendedApi ? $attachmentOverrides : []);
         $endpoint = $useExtendedApi
-            ? '/' . buildExtendedApiPath($extendedApiPrefix, 'uploads.json')
-            : '/uploads.json';
+            ? buildExtendedApiPath($extendedApiPrefix, 'uploads.json')
+            : 'uploads.json';
 
         try {
             $response = $client->post($endpoint . '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986), [
@@ -1026,6 +1032,7 @@ function uploadPendingAttachmentsToRedmine(
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
                 'redmine_upload_token' => null,
+                'redmine_attachment_id' => null,
                 'sharepoint_url' => null,
                 'notes' => $message,
                 'mapping_id' => $mappingId,
@@ -1038,6 +1045,7 @@ function uploadPendingAttachmentsToRedmine(
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
                 'redmine_upload_token' => null,
+                'redmine_attachment_id' => null,
                 'sharepoint_url' => null,
                 'notes' => 'Failed to upload attachment to Redmine: ' . $exception->getMessage(),
                 'mapping_id' => $mappingId,
@@ -1048,11 +1056,13 @@ function uploadPendingAttachmentsToRedmine(
 
         $body = decodeJsonResponse($response);
         $token = isset($body['upload']['token']) ? (string)$body['upload']['token'] : '';
+        $redmineAttachmentId = extractRedmineAttachmentIdFromToken($token);
 
         if ($token === '') {
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
                 'redmine_upload_token' => null,
+                'redmine_attachment_id' => null,
                 'sharepoint_url' => null,
                 'notes' => 'Redmine did not return an upload token.',
                 'mapping_id' => $mappingId,
@@ -1065,6 +1075,7 @@ function uploadPendingAttachmentsToRedmine(
         $updateStatement->execute([
             'migration_status' => 'PENDING_ASSOCIATION',
             'redmine_upload_token' => $token,
+            'redmine_attachment_id' => $redmineAttachmentId,
             'sharepoint_url' => null,
             'notes' => null,
             'mapping_id' => $mappingId,
@@ -1271,12 +1282,15 @@ function createJiraClient(array $config): Client
  */
 function createRedmineClient(array $config): Client
 {
-    $baseUrl = isset($config['base_url']) ? rtrim((string)$config['base_url'], '/') : '';
-    $apiKey = isset($config['api_key']) ? (string)$config['api_key'] : '';
+    $baseUrl = trim((string)($config['base_url'] ?? ''));
+    $apiKey  = (string)($config['api_key'] ?? '');
 
     if ($baseUrl === '' || $apiKey === '') {
         throw new RuntimeException('Incomplete Redmine configuration.');
     }
+
+    // Belangrijk: slash op het einde, zodat relatieve paths netjes werken
+    $baseUrl = rtrim($baseUrl, '/') . '/';
 
     return new Client([
         'base_uri' => $baseUrl,
@@ -1983,3 +1997,48 @@ function printUploadProgress(string $label, string $uniquelabel, int $uploaded, 
     }
 }
 
+function extractRedmineAttachmentIdFromToken(string $token): ?int
+{
+    $token = trim($token);
+    if ($token === '') {
+        return null;
+    }
+
+    $dotPos = strpos($token, '.');
+    if ($dotPos === false || $dotPos === 0) {
+        return null;
+    }
+
+    $prefix = substr($token, 0, $dotPos);
+    if ($prefix === '' || preg_match('/^\d+$/', $prefix) !== 1) {
+        return null;
+    }
+
+    $id = (int)$prefix;
+    return $id > 0 ? $id : null;
+}
+
+function verifyExtendedApiAvailability(Client $client, string $prefix, string $resource): void
+{
+    $path = buildExtendedApiPath($prefix, $resource);
+
+    try {
+        $response = $client->get($path);
+    } catch (BadResponseException $exception) {
+        $response = $exception->getResponse();
+        $statusCode = $response ? $response->getStatusCode() : 0;
+        $reason = $response ? $response->getReasonPhrase() : 'unknown error';
+        throw new RuntimeException(
+            sprintf('Extended API availability check failed (%s): HTTP %d %s', $path, $statusCode, $reason),
+            0,
+            $exception
+        );
+    } catch (GuzzleException $exception) {
+        throw new RuntimeException('Failed to reach the extended API: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    $header = $response->getHeaderLine('X-Redmine-Extended-API');
+    if (trim($header) === '') {
+        throw new RuntimeException('Extended API response missing X-Redmine-Extended-API header. Verify the plugin installation.');
+    }
+}

@@ -730,8 +730,8 @@ function processCommentPush(
     ];
 
     $endpoint = $useExtendedApi
-        ? '/' . buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
-        : sprintf('/issues/%d.json', $redmineIssueId);
+        ? buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
+        : sprintf('issues/%d.json', $redmineIssueId);
 
     $options = ['json' => $payload];
     if ($useExtendedApi) {
@@ -837,8 +837,8 @@ function processChangelogPush(
     ];
 
     $endpoint = $useExtendedApi
-        ? '/' . buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
-        : sprintf('/issues/%d.json', $redmineIssueId);
+        ? buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
+        : sprintf('issues/%d.json', $redmineIssueId);
 
     $options = ['json' => $payload];
     if ($useExtendedApi) {

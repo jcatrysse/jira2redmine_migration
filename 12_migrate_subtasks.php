@@ -156,9 +156,7 @@ function runSubtaskAnalysisPhase(PDO $pdo): void
             $row['proposed_done_ratio'],
             $row['proposed_estimated_hours'],
             $row['proposed_is_private'],
-            $row['proposed_custom_field_payload'],
-            $row['migration_status'],
-            $row['notes']
+            $row['proposed_custom_field_payload']
         );
         $storedHash = normalizeStoredAutomationHash($row['automation_hash'] ?? null);
         if ($storedHash !== null && $storedHash !== $currentHash) {
@@ -222,9 +220,7 @@ function runSubtaskPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $i
             $row['proposed_done_ratio'],
             $row['proposed_estimated_hours'],
             $row['proposed_is_private'],
-            $row['proposed_custom_field_payload'],
-            $row['migration_status'],
-            $row['notes']
+            $row['proposed_custom_field_payload']
         );
         $storedHash = normalizeStoredAutomationHash($row['automation_hash'] ?? null);
         if ($storedHash !== null && $storedHash !== $currentHash) {
@@ -355,9 +351,7 @@ function runSubtaskPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $i
             $updatedRow['proposed_done_ratio'],
             $updatedRow['proposed_estimated_hours'],
             $updatedRow['proposed_is_private'],
-            $updatedRow['proposed_custom_field_payload'],
-            $updatedRow['migration_status'],
-            $updatedRow['notes']
+            $updatedRow['proposed_custom_field_payload']
         );
 
         $successStatement->execute([
@@ -571,9 +565,7 @@ function computeIssueAutomationStateHash(
     mixed $proposedDoneRatio,
     mixed $proposedEstimatedHours,
     mixed $proposedIsPrivate,
-    mixed $proposedCustomFieldPayload,
-    mixed $migrationStatus,
-    mixed $notes
+    mixed $proposedCustomFieldPayload
 ): string {
     $payload = [
         'redmine_issue_id' => $redmineIssueId,
@@ -599,8 +591,6 @@ function computeIssueAutomationStateHash(
         'proposed_estimated_hours' => $proposedEstimatedHours,
         'proposed_is_private' => $proposedIsPrivate,
         'proposed_custom_field_payload' => $proposedCustomFieldPayload,
-        'migration_status' => $migrationStatus,
-        'notes' => $notes,
     ];
 
     try {
