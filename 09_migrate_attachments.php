@@ -11,8 +11,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Pool;
 use GuzzleHttp\Psr7\Utils;
 use Psr\Http\Message\ResponseInterface;
-
-const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.19';
+const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.20';
 const AVAILABLE_PHASES = [
     'jira' => 'Synchronise Jira attachment metadata with the migration mapping table.',
     'pull' => 'Download Jira attachment binaries into the working directory.',
@@ -60,7 +59,7 @@ try {
 
 /**
  * @param array<string, mixed> $config
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_pull: bool, confirm_push: bool, dry_run: bool, download_limit: ?int, upload_limit: ?int} $cliOptions
+ * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_pull: bool, confirm_push: bool, dry_run: bool, download_limit: ?int, upload_limit: ?int, use_extended_api: bool} $cliOptions
  * @throws Throwable
  */
 function main(array $config, array $cliOptions): void
@@ -133,7 +132,10 @@ function main(array $config, array $cliOptions): void
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         $uploadLimit = $cliOptions['upload_limit'] ?? null;
-        runAttachmentUploadPhase($pdo, $config, $confirmPush, $isDryRun, $uploadLimit);
+        $redmineConfig = extractArrayConfig($config, 'redmine');
+        $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
+        runAttachmentUploadPhase($pdo, $config, $confirmPush, $isDryRun, $uploadLimit, $useExtendedApi, $extendedApiPrefix);
     } else {
         printf("[%s] Skipping push phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
     }
@@ -148,6 +150,7 @@ function printUsage(): void
     printf("  --skip=LIST          Comma separated list of phases to skip.\n");
     printf("  --confirm-pull       Required to execute the pull phase (downloads from Jira).\n");
     printf("  --confirm-push       Required to execute the push phase (uploads to Redmine).\n");
+    printf("  --use-extended-api   Upload via the redmine_extended_api plugin when enabled.\n");
     printf("  --download-limit=N   Limit the number of attachments processed during pull.\n");
     printf("  --upload-limit=N     Limit the number of attachments processed during push.\n");
     printf("  --dry-run            Preview pull/push activity without calling Jira or Redmine.\n");
@@ -198,7 +201,15 @@ function runAttachmentPullPhase(PDO $pdo, array $config, bool $confirmPull, bool
  * @param array<string, mixed> $config
  * @throws Throwable
  */
-function runAttachmentUploadPhase(PDO $pdo, array $config, bool $confirmPush, bool $isDryRun, ?int $uploadLimit): void
+function runAttachmentUploadPhase(
+    PDO $pdo,
+    array $config,
+    bool $confirmPush,
+    bool $isDryRun,
+    ?int $uploadLimit,
+    bool $useExtendedApi,
+    string $extendedApiPrefix
+): void
 {
     $statusBreakdown = summariseAttachmentStatuses($pdo);
     $enabledPendingUpload = countEnabledPendingUpload($pdo);
@@ -229,10 +240,25 @@ function runAttachmentUploadPhase(PDO $pdo, array $config, bool $confirmPush, bo
     }
 
     $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
+    $userLookup = buildRedmineUserLookup($pdo);
+    $attachmentsConfig = $config['attachments'] ?? [];
+    $defaultAuthorId = isset($attachmentsConfig['default_redmine_author_id'])
+        ? normalizeInteger($attachmentsConfig['default_redmine_author_id'], 1)
+        : null;
     $sharePointConfig = extractSharePointConfig($config);
     $sharePointClient = $sharePointConfig !== null ? createSharePointClient($sharePointConfig) : null;
 
-    $uploadSummary = uploadPendingAttachmentsToRedmine($redmineClient, $pdo, $uploadLimit, $sharePointClient, $sharePointConfig);
+    $uploadSummary = uploadPendingAttachmentsToRedmine(
+        $redmineClient,
+        $pdo,
+        $uploadLimit,
+        $sharePointClient,
+        $sharePointConfig,
+        $useExtendedApi,
+        $extendedApiPrefix,
+        $userLookup,
+        $defaultAuthorId
+    );
     printf(
         "[%s] Attachment upload summary — queued: %d, uploaded to Redmine: %d, uploaded to SharePoint: %d, failed: %d.%s",
         formatCurrentTimestamp(),
@@ -792,7 +818,17 @@ function downloadPendingJiraAttachments(Client $client, PDO $pdo, array $config,
 /**
  * @return array{queued: int, uploaded: int, sharepoint_uploaded: int, failed: int}
  */
-function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit = null, ?Client $sharePointClient = null, ?array $sharePointConfig = null): array
+function uploadPendingAttachmentsToRedmine(
+    Client $client,
+    PDO $pdo,
+    ?int $limit = null,
+    ?Client $sharePointClient = null,
+    ?array $sharePointConfig = null,
+    bool $useExtendedApi = false,
+    string $extendedApiPrefix = '',
+    array $userLookup = [],
+    ?int $defaultAuthorId = null
+): array
 {
     $sql = <<<SQL
         SELECT
@@ -800,8 +836,10 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
             map.jira_attachment_id,
             map.local_filepath,
             map.jira_filesize,
+            att.author_account_id,
             att.filename,
-            att.mime_type
+            att.mime_type,
+            att.created_at
         FROM migration_mapping_attachments map
         JOIN staging_jira_attachments att ON att.id = map.jira_attachment_id
         WHERE map.migration_status = 'PENDING_UPLOAD'
@@ -870,6 +908,8 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
         $filename = isset($row['filename']) ? (string)$row['filename'] : '';
         $mimeType = isset($row['mime_type']) ? (string)$row['mime_type'] : '';
         $jiraFileSize = isset($row['jira_filesize']) ? (int)$row['jira_filesize'] : null;
+        $authorAccountId = isset($row['author_account_id']) ? (string)$row['author_account_id'] : null;
+        $createdAt = isset($row['created_at']) ? (string)$row['created_at'] : null;
 
         $jiraAttachmentId = (string)($row['jira_attachment_id'] ?? '');
         $originalName = $filename !== '' ? $filename : basename($localPath);
@@ -957,8 +997,14 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
             PHP_EOL
         );
 
+        $attachmentOverrides = buildAttachmentOverrideQuery($authorAccountId, $createdAt, $userLookup, $defaultAuthorId);
+        $query = array_merge(['filename' => basename($uniqueName)], $useExtendedApi ? $attachmentOverrides : []);
+        $endpoint = $useExtendedApi
+            ? '/' . buildExtendedApiPath($extendedApiPrefix, 'uploads.json')
+            : '/uploads.json';
+
         try {
-            $response = $client->post('/uploads.json?filename=' . rawurlencode(basename($uniqueName)), [
+            $response = $client->post($endpoint . '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986), [
                 'headers' => [
                     'Content-Type' => 'application/octet-stream',
                 ],
@@ -1033,6 +1079,93 @@ function uploadPendingAttachmentsToRedmine(Client $client, PDO $pdo, ?int $limit
         'sharepoint_uploaded' => $sharePointUploaded,
         'failed' => $failed,
     ];
+}
+
+/**
+ * @param array<string, array{redmine_user_id: int}> $userLookup
+ * @return array<string, string>
+ */
+function buildAttachmentOverrideQuery(
+    ?string $authorAccountId,
+    ?string $createdAt,
+    array $userLookup,
+    ?int $defaultAuthorId
+): array {
+    $query = [];
+
+    $redmineAuthorId = resolveRedmineUserId($userLookup, $authorAccountId, $defaultAuthorId);
+    if ($redmineAuthorId !== null) {
+        $query['attachment[author_id]'] = $redmineAuthorId;
+    }
+
+    $normalizedCreated = normalizeJiraTimestamp($createdAt);
+    if ($normalizedCreated !== null) {
+        $query['attachment[created_on]'] = $normalizedCreated;
+    }
+
+    return $query;
+}
+
+/**
+ * @return array<string, array{redmine_user_id: int}>
+ */
+function buildRedmineUserLookup(PDO $pdo): array
+{
+    $statement = $pdo->query('SELECT jira_account_id, redmine_user_id, migration_status FROM migration_mapping_users');
+    if ($statement === false) {
+        throw new RuntimeException('Failed to load user mappings.');
+    }
+
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $statement->closeCursor();
+
+    $lookup = [];
+    foreach ($rows as $row) {
+        $status = isset($row['migration_status']) ? (string)$row['migration_status'] : '';
+        if (!in_array($status, ['MATCH_FOUND', 'CREATION_SUCCESS'], true)) {
+            continue;
+        }
+
+        if (!isset($row['jira_account_id'], $row['redmine_user_id']) || $row['redmine_user_id'] === null) {
+            continue;
+        }
+
+        $lookup[(string)$row['jira_account_id']] = ['redmine_user_id' => (int)$row['redmine_user_id']];
+    }
+
+    return $lookup;
+}
+
+/**
+ * @param array<string, array{redmine_user_id: int}> $lookup
+ */
+function resolveRedmineUserId(array $lookup, ?string $jiraAccountId, ?int $defaultAuthorId): ?int
+{
+    if ($jiraAccountId !== null && isset($lookup[$jiraAccountId])) {
+        return $lookup[$jiraAccountId]['redmine_user_id'];
+    }
+
+    return $defaultAuthorId;
+}
+
+function normalizeJiraTimestamp(mixed $value): ?string
+{
+    if ($value === null) {
+        return null;
+    }
+
+    if (is_string($value) && trim($value) === '') {
+        return null;
+    }
+
+    try {
+        $dt = new DateTimeImmutable((string)$value);
+    } catch (Throwable) {
+        return null;
+    }
+
+    // exact zoals README: UTC + Z + microseconds
+    return $dt->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.u\Z');
 }
 
 function resolveAttachmentWorkingDirectory(array $config): string
@@ -1540,6 +1673,46 @@ function extractErrorBody(ResponseInterface $response): string
     return $body;
 }
 
+function shouldUseExtendedApi(array $redmineConfig, bool $force): bool
+{
+    if ($force) {
+        return true;
+    }
+
+    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
+        ? $redmineConfig['extended_api']
+        : [];
+
+    return (bool)($extendedConfig['enabled'] ?? false);
+}
+
+function resolveExtendedApiPrefix(array $redmineConfig): string
+{
+    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
+        ? $redmineConfig['extended_api']
+        : [];
+
+    $prefix = isset($extendedConfig['prefix']) ? trim((string)$extendedConfig['prefix']) : '/extended_api';
+
+    if ($prefix === '') {
+        $prefix = '/extended_api';
+    }
+
+    return trim($prefix, '/');
+}
+
+function buildExtendedApiPath(string $prefix, string $resource): string
+{
+    $normalizedPrefix = trim($prefix, '/');
+    $normalizedResource = ltrim($resource, '/');
+
+    if ($normalizedPrefix === '') {
+        return $normalizedResource;
+    }
+
+    return $normalizedPrefix . '/' . $normalizedResource;
+}
+
 /**
  * @param array<string, mixed> $config
  * @param string $key
@@ -1555,7 +1728,7 @@ function extractArrayConfig(array $config, string $key): array
 }
 
 /**
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_pull: bool, confirm_push: bool, dry_run: bool, download_limit: ?int, upload_limit: ?int} $cliOptions
+ * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_pull: bool, confirm_push: bool, dry_run: bool, download_limit: ?int, upload_limit: ?int, use_extended_api: bool} $cliOptions
  * @return list<string>
  */
 function determinePhasesToRun(array $cliOptions): array
@@ -1582,7 +1755,7 @@ function determinePhasesToRun(array $cliOptions): array
 
 /**
  * @param array<int, string> $argv
- * @return array{0: array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_pull: bool, confirm_push: bool, dry_run: bool, download_limit: ?int, upload_limit: ?int}, 1: list<string>}
+ * @return array{0: array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_pull: bool, confirm_push: bool, dry_run: bool, download_limit: ?int, upload_limit: ?int, use_extended_api: bool}, 1: list<string>}
  */
 function parseCommandLineOptions(array $argv): array
 {
@@ -1596,6 +1769,7 @@ function parseCommandLineOptions(array $argv): array
         'dry_run' => false,
         'download_limit' => null,
         'upload_limit' => null,
+        'use_extended_api' => false,
     ];
 
     $arguments = [];
@@ -1623,6 +1797,11 @@ function parseCommandLineOptions(array $argv): array
 
         if ($argument === '--confirm-push') {
             $options['confirm_push'] = true;
+            continue;
+        }
+
+        if ($argument === '--use-extended-api') {
+            $options['use_extended_api'] = true;
             continue;
         }
 
@@ -1686,12 +1865,13 @@ function normalizeDateTimeString(mixed $value): ?string
     }
 
     try {
-        $dateTime = new DateTimeImmutable($trimmed);
+        $dt = new DateTimeImmutable($trimmed);
     } catch (Exception) {
         return null;
     }
 
-    return $dateTime->format('Y-m-d H:i:s');
+    // bewaar microseconds
+    return $dt->format('Y-m-d H:i:s.u');
 }
 
 function normalizeInteger(mixed $value, int $min = PHP_INT_MIN, ?int $max = null): ?int

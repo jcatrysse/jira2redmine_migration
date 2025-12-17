@@ -11,8 +11,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use League\HTMLToMarkdown\HtmlConverter;
 use League\HTMLToMarkdown\Converter\TableConverter;
-
-const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.32';
+const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.34';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issues into staging_jira_issues (and related staging tables).',
     'transform' => 'Reconcile Jira issues with Redmine dependencies to populate migration mappings.',
@@ -140,7 +139,17 @@ function main(array $config, array $cliOptions): void
         $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
         $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
 
-        runIssuePushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi, $extendedApiPrefix);
+        $defaultExtendedIssueAuthorId = extractDefaultIssueAuthorId($config);
+
+        runIssuePushPhase(
+            $pdo,
+            $confirmPush,
+            $isDryRun,
+            $redmineConfig,
+            $useExtendedApi,
+            $extendedApiPrefix,
+            $defaultExtendedIssueAuthorId
+        );
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
@@ -1222,7 +1231,8 @@ function runIssuePushPhase(
     bool $isDryRun,
     array $redmineConfig,
     bool $useExtendedApi,
-    string $extendedApiPrefix
+    string $extendedApiPrefix,
+    ?int $defaultIssueUserId
 ): void
 {
     $candidateStatement = $pdo->prepare(<<<SQL
@@ -1289,10 +1299,10 @@ function runIssuePushPhase(
         );
 
         if ($readyCount > 0) {
-            printf("      • %d attachment(s) prepared for association.%s", $readyCount, PHP_EOL);
+            printf("      - %d attachment(s) prepared for association.%s", $readyCount, PHP_EOL);
         }
         if ($blockedCount > 0) {
-            printf("      • %d attachment(s) still require download/upload via 09_migrate_attachments.php.%s", $blockedCount, PHP_EOL);
+            printf("      - %d attachment(s) still require download/upload via 09_migrate_attachments.php.%s", $blockedCount, PHP_EOL);
         }
     }
 
@@ -1387,7 +1397,7 @@ function runIssuePushPhase(
         ], static fn($value) => $value !== null);
 
         if ($useExtendedApi) {
-            $issuePayload = array_merge($issuePayload, buildExtendedIssueOverrides($candidate));
+            $issuePayload = array_merge($issuePayload, buildExtendedIssueOverrides($candidate, $defaultIssueUserId));
         }
 
         $payload = ['issue' => $issuePayload];
@@ -3180,7 +3190,8 @@ function normalizeDateTimeString(mixed $value): ?string
         return null;
     }
 
-    return $dateTime->format('Y-m-d H:i:s');
+    // Altijd in UTC wegschrijven (DATETIME zonder timezone, dus maak het expliciet)
+    return $dateTime->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
 }
 
 function normalizeInteger(mixed $value, int $min = PHP_INT_MIN, ?int $max = null): ?int
@@ -3293,20 +3304,21 @@ function normalizeStoredAutomationHash(mixed $value): ?string
  * @param array<string, mixed> $candidate
  * @return array<string, mixed>
  */
-function buildExtendedIssueOverrides(array $candidate): array
+function buildExtendedIssueOverrides(array $candidate, ?int $defaultAuthorId = null): array
 {
     $overrides = [];
 
-    if ($candidate['proposed_author_id'] !== null) {
-        $overrides['author_id'] = (int)$candidate['proposed_author_id'];
+    $authorId = $candidate['proposed_author_id'] ?? $defaultAuthorId;
+    if ($authorId !== null) {
+        $overrides['author_id'] = (int)$authorId;
     }
 
-    $created = normalizeJiraTimestamp($candidate['jira_created_at'] ?? null);
+    $created = normalizeJiraTimestamp($candidate['jira_created_at'] ?? null, false);
     if ($created !== null) {
         $overrides['created_on'] = $created;
     }
 
-    $updated = normalizeJiraTimestamp($candidate['jira_updated_at'] ?? null);
+    $updated = normalizeJiraTimestamp($candidate['jira_updated_at'] ?? null, false);
     if ($updated !== null) {
         $overrides['updated_on'] = $updated;
     }
@@ -3319,36 +3331,63 @@ function buildExtendedIssueOverrides(array $candidate): array
     return $overrides;
 }
 
-function normalizeJiraTimestamp(mixed $value): ?string
+function extractDefaultIssueAuthorId(array $config): ?int
+{
+    $migrationConfig = $config['migration'] ?? [];
+    $issueConfig = isset($migrationConfig['issues']) && is_array($migrationConfig['issues'])
+        ? $migrationConfig['issues']
+        : [];
+
+    if (!isset($issueConfig['default_redmine_author_id'])) {
+        return null;
+    }
+
+    $value = $issueConfig['default_redmine_author_id'];
+    if (!is_numeric($value)) {
+        return null;
+    }
+
+    $intValue = (int)$value;
+
+    return $intValue > 0 ? $intValue : null;
+}
+
+function normalizeJiraTimestamp(mixed $value, bool $allowMicros = false): ?string
 {
     if ($value === null) {
         return null;
     }
-
     if (is_string($value) && trim($value) === '') {
         return null;
     }
 
-    $timestamp = strtotime((string)$value);
-    if ($timestamp === false) {
+    try {
+        $dt = new DateTimeImmutable((string)$value);
+    } catch (Exception) {
         return null;
     }
 
-    return date('Y-m-d H:i:s', $timestamp);
+    $dt = $dt->setTimezone(new DateTimeZone('UTC'));
+
+    if ($allowMicros) {
+        $s = $dt->format('Y-m-d\TH:i:s.u\Z');     // 2023-11-02T08:15:00.509723Z
+        // optioneel: strip .000000 als je bron geen micros had
+        $s = preg_replace('/\.0{6}Z$/', 'Z', $s);
+        return $s;
+    }
+
+    return $dt->format('Y-m-d\TH:i:s\Z');         // 2023-12-01T11:00:00Z
 }
 
 function extractJiraResolutionDate(mixed $rawPayload): ?string
 {
     $decoded = decodeJsonColumn($rawPayload);
     $fields = is_array($decoded) ? ($decoded['fields'] ?? []) : [];
-
     if (!is_array($fields)) {
         return null;
     }
 
-    $resolutionDate = $fields['resolutiondate'] ?? null;
-
-    return normalizeJiraTimestamp($resolutionDate);
+    return normalizeJiraTimestamp($fields['resolutiondate'] ?? null, false);
 }
 
 function truncateString(string $value, int $maxLength): string
@@ -3368,9 +3407,13 @@ function truncateString(string $value, int $maxLength): string
 
     return substr($trimmed, 0, $maxLength);
 }
+
+/**
+ * @throws DateMalformedStringException
+ */
 function formatCurrentTimestamp(string $format = 'Y-m-d H:i:s'): string
 {
-    return (new DateTimeImmutable('now'))->format($format);
+    return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format($format);
 }
 
 function decodeJsonResponse(ResponseInterface $response): array

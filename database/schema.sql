@@ -713,7 +713,7 @@ CREATE TABLE `staging_jira_attachments` (
                                             `issue_id` VARCHAR(255) NOT NULL,
                                             `filename` VARCHAR(255) NOT NULL,
                                             `author_account_id` VARCHAR(255),
-                                            `created_at` DATETIME NULL,
+                                            `created_at` DATETIME(6) NULL,
                                             `size_bytes` BIGINT NOT NULL,
                                             `mime_type` VARCHAR(255),
                                             `content_url` TEXT NOT NULL,

@@ -729,11 +729,12 @@ php 09_migrate_attachments.php --help
 | Option              | Description                                                                     |
 |---------------------|---------------------------------------------------------------------------------|
 | `-h`, `--help`      | Print usage information and exit.                                               |
-| `-V`, `--version`   | Display the script version (`0.0.19`).                                           |
+| `-V`, `--version`   | Display the script version (`0.0.20`).                                           |
 | `--phases=<list>`   | Comma-separated list of phases to run (default: `jira,pull,transform,push`).     |
 | `--skip=<list>`     | Comma-separated list of phases to skip.                                         |
 | `--confirm-pull`    | Required toggle to download from Jira during the pull phase.                    |
 | `--confirm-push`    | Required toggle to upload to Redmine during the push phase.                     |
+| `--use-extended-api`| Upload via the `redmine_extended_api` plugin, preserving uploader metadata when available. |
 | `--download-limit`  | Positive integer limiting how many attachments are downloaded per pull run.     |
 | `--upload-limit`    | Positive integer limiting how many attachments are uploaded per push run.       |
 | `--dry-run`         | Summarise the download/upload queue without contacting Jira or Redmine.        |
@@ -743,6 +744,8 @@ Configuration tips:
 * `paths.tmp` accepts absolute paths (e.g. `/tmp`) or paths relative to the project root and hosts the `attachments/jira`
   working directory. Each downloaded filename is prefixed with the Jira attachment ID to avoid collisions even when the same
   name appears across issues.
+* `attachments.default_redmine_author_id` optionally sets a fallback uploader when a Jira account cannot be matched to a
+  Redmine user during extended API uploads. Leave it `null` to skip uploader overrides when no mapping exists.
 * `attachments.download_concurrency` controls how many parallel download workers the pull phase uses. Start with the default
   `1` and increase carefully if your network and Jira throttling settings allow parallelism.
 * `attachments.sharepoint.offload_threshold_bytes` lets you offload large files to SharePoint instead of Redmine. When set to a
@@ -767,13 +770,15 @@ Configuration tips:
    to `PENDING_DOWNLOAD`, clears stale notes, and prints a status breakdown so
    you can inspect the queue before moving binaries.
 4. **Push (`push`)** – when `--confirm-push` is present the script uploads
-   `PENDING_UPLOAD` rows (filtered by `upload_enabled = 1`) to `POST /uploads.json`.
-   Successful uploads record the Redmine token and flip the state to
-   `PENDING_ASSOCIATION`, ready for the issue or journal migrations to consume. If
-   SharePoint offloading is enabled and a file meets the configured size
-   threshold, the binary is streamed to the configured SharePoint drive instead
-   and the resulting link is persisted for later association with the Redmine
-   issue or journal entry.
+   `PENDING_UPLOAD` rows (filtered by `upload_enabled = 1`) to the Redmine
+   uploads endpoint. When `--use-extended-api` is enabled (and the plugin is
+   configured), uploader information and the original Jira timestamp are
+   forwarded via `/extended_api/uploads.json`. Successful uploads record the
+   Redmine token and flip the state to `PENDING_ASSOCIATION`, ready for the issue
+   or journal migrations to consume. If SharePoint offloading is enabled and a
+   file meets the configured size threshold, the binary is streamed to the
+   configured SharePoint drive instead and the resulting link is persisted for
+   later association with the Redmine issue or journal entry.
 
 ### Configuring SharePoint offloading
 
@@ -851,12 +856,12 @@ php 10_migrate_issues.php --help
 | Option              | Description                                                                                          |
 |---------------------|------------------------------------------------------------------------------------------------------|
 | `-h`, `--help`      | Print usage information and exit.                                                                    |
-| `-V`, `--version`   | Display the script version (`0.0.32`).                                                                |
+| `-V`, `--version`   | Display the script version (`0.0.34`).                                                                |
 | `--phases=<list>`   | Comma-separated list of phases to run (e.g., `jira`, `transform`, `push`).                           |
 | `--skip=<list>`     | Comma-separated list of phases to skip.                                                              |
 | `--confirm-push`    | Required toggle to allow the push phase to create Redmine issues.                                   |
 | `--dry-run`         | Preview the push payloads without writing to Redmine or the mapping tables.                         |
-| `--use-extended-api`| Accepted for CLI parity but ignored — issue creation uses the standard Redmine REST API directly.   |
+| `--use-extended-api`| Route creation through the extended API to preserve author/timestamp overrides when available.      |
 
 ### Workflow highlights
 
@@ -922,18 +927,22 @@ php 10_migrate_issues.php --help
    `09_migrate_attachments.php` to have produced `PENDING_ASSOCIATION` tokens for
    every attachment marked with the `ISSUE` association hint; those tokens are
    added to the Redmine payload before posting to `POST /issues.json`. After a
-   successful creation the script reconciles the returned Redmine attachment list
-   so the mapping table records the attachment identifiers and the owning
-   Redmine issue. Failures capture the API response in `migration_mapping_issues`.
-   Because Redmine currently assigns the API user as the issue author, the script
-   refrains from sending `author_id` even when it was resolved during the
-   transform; adjust the payload manually if your Redmine instance permits
-   impersonation.
+  successful creation the script reconciles the returned Redmine attachment list
+  so the mapping table records the attachment identifiers and the owning
+  Redmine issue. Failures capture the API response in `migration_mapping_issues`.
+  When the extended API is enabled, the push payload preserves the Jira
+  reporter and timestamps (`author_id`, `created_on`, `updated_on`, `closed_on`),
+  falling back to `migration.issues.default_redmine_author_id` if no mapping
+  exists; leave that default as `null` to skip overrides when the reporter cannot
+  be resolved.
 
 > **Configuration tips:** the `migration.issues` section in
 > `config/config.local.php` controls the Jira search page size and provides
 > fallback Redmine identifiers (project, tracker, status, priority, author,
-> assignee) when the automatic lookup cannot resolve them. Leave the defaults at
+> assignee) when the automatic lookup cannot resolve them. Use
+> `migration.issues.default_redmine_author_id` as the extended API fallback for
+> `author_id` when the Jira reporter cannot be mapped; leave it `null` to avoid
+> overriding the author. Leave the defaults at
 > `null` to require an explicit match from the earlier migration steps. The Jira
 > extraction phase now loops over `migration_mapping_projects` rows with
 > `issues_extracted_at IS NULL`, so successful runs record their timestamp and
@@ -977,11 +986,15 @@ php 11_migrate_journals.php --help
 | Option            | Description                                                                 |
 |-------------------|-----------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                           |
-| `-V`, `--version` | Display the script version (`0.0.15`).                                      |
+| `-V`, `--version` | Display the script version (`0.0.17`).                                      |
 | `--phases=<list>` | Comma-separated list of phases to run (default: `jira,transform,push`).     |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                     |
 | `--confirm-push`  | Required toggle to create journals in Redmine.                              |
 | `--dry-run`       | Preview the journals that would be created without modifying Redmine.      |
+| `--use-extended-api`| Push journals through the `redmine_extended_api` plugin, keeping author and timestamp overrides intact. |
+
+> **Configuration tip:** set `migration.journals.default_redmine_author_id` when a Jira author cannot be mapped and you still want
+> to preserve provenance via the extended API. Leave it `null` to skip overrides when no mapping exists.
 
 ### Workflow highlights
 
@@ -998,8 +1011,10 @@ php 11_migrate_journals.php --help
    each queued comment/changelog. With `--confirm-push` the script converts the
    rendered HTML bodies to CommonMark (falling back to the ADF JSON when needed),
    rewrites Jira attachment links to `attachment:` references, reuses any
-   `JOURNAL` upload tokens, and updates Redmine via `PUT /issues/:id.json`. It
-   then reconciles the resulting journal/attachment identifiers so reruns stay
+   `JOURNAL` upload tokens, and updates Redmine. When `--use-extended-api` is
+   enabled the request travels through `/extended_api/issues/:id.json`, carrying
+   the original author and timestamp metadata so journal history matches Jira.
+   It then reconciles the resulting journal/attachment identifiers so reruns stay
    idempotent.
 
 > **Prerequisites:** run `10_migrate_issues.php --phases=push --confirm-push` to

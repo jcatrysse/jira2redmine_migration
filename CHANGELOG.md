@@ -13,9 +13,40 @@ All notable changes to this project will be documented in this file.
         - I manually added in the database, after the transform phase but before the push phase: INSERT INTO `migration_mapping_custom_fields` (`mapping_id`, `jira_field_id`, `jira_field_name`, `jira_schema_type`, `jira_schema_custom`, `jira_project_ids`, `jira_issue_type_ids`, `jira_allowed_values`, `redmine_custom_field_id`, `mapping_parent_custom_field_id`, `redmine_custom_field_enumerations`, `proposed_redmine_name`, `proposed_field_format`, `proposed_is_required`, `proposed_is_filter`, `proposed_is_for_all`, `proposed_is_multiple`, `proposed_possible_values`, `proposed_value_dependencies`, `proposed_default_value`, `proposed_tracker_ids`, `proposed_role_ids`, `proposed_project_ids`, `migration_status`, `notes`, `automation_hash`, `created_at`, `last_updated_at`) VALUES (NULL, 'resolution', 'resolution', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'Resolution', 'text', NULL, NULL, '1', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'READY_FOR_CREATION', NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), (NULL, 'resolutiondate', 'resolutiondate', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'Resolution date', 'date', NULL, '1', '1', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'READY_FOR_CREATION', NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         - Ensure this logic fits the issue migration logic.
 - Create the missing scripts: labels/tags, watchers, checklists, relations, subtasks, workflows, custom workflows...
-- Validate we can push authors and creation timestamps to Redmine.
 - re-enable: RAILS_ENV=development bundle exec rake --silent redmine:attachments:prune
-- Test attachment deletion on duplicate attachments: example https://redminedev02.geoxyz.eu/attachments/8936 / https://redminedev02.geoxyz.eu/attachments/7217
+
+## [0.0.74]
+
+- Fix extended API journal pushes to include Jira `updated_at` values when
+  available and bump the journal script to `0.0.17`.
+- Drop redundant global class imports to silence IDE warnings while keeping
+  extended API timestamp handling intact.
+
+## [0.0.73]
+
+- Clarify that extended API issue pushes reuse
+  `migration.issues.default_redmine_author_id` as the reporter fallback instead
+  of introducing a separate default user toggle.
+- Rename the optional journal author override to
+  `migration.journals.default_redmine_author_id` for consistency with issues and
+  attachments.
+- Bump the issues migration script to `0.0.34` and document the extended API
+  fallback for author/timestamp preservation.
+
+## [0.0.72]
+
+- Preserve Jira authors and timestamps when using the extended API for
+  issue attachments and journals, including optional default fallback user
+  identifiers.
+- Extend attachment uploads to pass uploader metadata through the
+  `redmine_extended_api` plugin when available and document the new
+  configuration toggles.
+- Bump the attachment migration script to `0.0.20` and the journal
+  migration script to `0.0.16` to reflect the extended API support.
+
+## [0.0.71]
+
+- Normalise Jira timestamp overrides for extended issue creation to ISO-8601 UTC so Redmine preserves migrated history.
 
 ## [0.0.70]
 

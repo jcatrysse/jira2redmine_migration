@@ -72,10 +72,18 @@ return [
             // When set, overrides the privacy flag proposed during the transform phase (true/false/null).
             'default_is_private' => null,
         ],
+        'journals' => [
+            // Optional Redmine user identifier used when a comment/changelog author cannot be mapped from Jira.
+            // Set to null to skip author overrides when using the extended API.
+            'default_redmine_author_id' => null,
+        ],
     ],
     'attachments' => [
         // Number of concurrent download workers for Jira attachments; increase to speed up pulls if network allows.
         'download_concurrency' => 1,
+        // Optional Redmine user identifier used for attachment uploads when the Jira author cannot be mapped.
+        // Set to null to avoid overriding the uploader when using the extended API.
+        'default_redmine_author_id' => null,
         // Optional SharePoint configuration used to offload large attachments instead of sending them to Redmine.
         'sharepoint' => [
             // Minimum size in bytes before attachments are uploaded to SharePoint instead of Redmine.

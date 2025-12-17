@@ -10,8 +10,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use League\HTMLToMarkdown\HtmlConverter;
-
-const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.15';
+const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.17';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira comments and changelog entries into staging tables.',
     'transform' => 'Populate and classify journal mappings based on issue availability.',
@@ -116,7 +115,10 @@ function main(array $config, array $cliOptions): void
     if (in_array('push', $phasesToRun, true)) {
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
-        runJournalPushPhase($pdo, $config, $confirmPush, $isDryRun);
+        $redmineConfig = extractArrayConfig($config, 'redmine');
+        $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
+        runJournalPushPhase($pdo, $config, $confirmPush, $isDryRun, $useExtendedApi, $extendedApiPrefix);
     } else {
         printf("[%s] Skipping push phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
     }
@@ -131,6 +133,7 @@ function printUsage(): void
     printf("  --skip=LIST          Comma separated list of phases to skip.\n");
     printf("  --confirm-push       Required to execute the push phase.\n");
     printf("  --dry-run            Preview the push phase without modifying Redmine.\n");
+    printf("  --use-extended-api   Push journals through the redmine_extended_api plugin when enabled.\n");
     printf("  --version            Display version information.\n");
     printf("  --help               Display this help message.\n");
 }
@@ -492,7 +495,14 @@ function summariseJournalStatuses(PDO $pdo): array
 /**
  * @throws Throwable
  */
-function runJournalPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isDryRun): void
+function runJournalPushPhase(
+    PDO $pdo,
+    array $config,
+    bool $confirmPush,
+    bool $isDryRun,
+    bool $useExtendedApi,
+    string $extendedApiPrefix
+): void
 {
     $candidateComments = fetchPushableComments($pdo);
     $candidateChangelogs = fetchPushableChangelog($pdo);
@@ -535,14 +545,34 @@ function runJournalPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $i
     }
 
     $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
+    $userLookup = buildRedmineUserLookup($pdo);
+    $defaultAuthorId = extractDefaultJournalAuthorId($config);
     $attachmentMetadata = buildAttachmentMetadataIndex($pdo);
 
     foreach ($candidateComments as $comment) {
-        processCommentPush($redmineClient, $pdo, $comment, $config, $attachmentMetadata);
+        processCommentPush(
+            $redmineClient,
+            $pdo,
+            $comment,
+            $config,
+            $attachmentMetadata,
+            $userLookup,
+            $defaultAuthorId,
+            $useExtendedApi,
+            $extendedApiPrefix
+        );
     }
 
     foreach ($candidateChangelogs as $history) {
-        processChangelogPush($redmineClient, $pdo, $history);
+        processChangelogPush(
+            $redmineClient,
+            $pdo,
+            $history,
+            $userLookup,
+            $defaultAuthorId,
+            $useExtendedApi,
+            $extendedApiPrefix
+        );
     }
 }
 
@@ -620,8 +650,19 @@ function fetchPushableChangelog(PDO $pdo): array
 /**
  * @param array<string, mixed> $comment
  * @param array<string, array<string, string>> $attachmentMetadata
+ * @param array<string, array{redmine_user_id: int}> $userLookup
  */
-function processCommentPush(Client $client, PDO $pdo, array $comment, array $config, array $attachmentMetadata): void
+function processCommentPush(
+    Client $client,
+    PDO $pdo,
+    array $comment,
+    array $config,
+    array $attachmentMetadata,
+    array $userLookup,
+    ?int $defaultAuthorId,
+    bool $useExtendedApi,
+    string $extendedApiPrefix
+): void
 {
     $mappingId = (int)$comment['mapping_id'];
     $jiraIssueId = (string)$comment['jira_issue_id'];
@@ -631,6 +672,7 @@ function processCommentPush(Client $client, PDO $pdo, array $comment, array $con
 
     $authorId = isset($comment['author_account_id']) ? (string)$comment['author_account_id'] : null;
     $createdAt = isset($comment['created_at']) ? (string)$comment['created_at'] : null;
+    $updatedAt = isset($comment['updated_at']) ? (string)$comment['updated_at'] : null;
     $bodyAdf = isset($comment['body_adf']) ? (string)$comment['body_adf'] : null;
     $bodyHtml = isset($comment['body_html']) ? (string)$comment['body_html'] : null;
 
@@ -654,7 +696,8 @@ function processCommentPush(Client $client, PDO $pdo, array $comment, array $con
 
     $attachments = fetchPreparedJournalAttachments($pdo, $jiraIssueId, $createdAt);
     foreach ($attachments as $att) {
-        if ($att['redmine_upload_token'] !== '' && ($att['sharepoint_url'] ?? '') !== null) {
+        $sp = (string)($att['sharepoint_url'] ?? '');
+        if ($att['redmine_upload_token'] !== '' && $sp !== '') {
             printf(
                 "  [warn] Attachment %s has both Redmine token and SharePoint URL, using SharePoint link.%s",
                 $att['jira_attachment_id'],
@@ -677,15 +720,26 @@ function processCommentPush(Client $client, PDO $pdo, array $comment, array $con
 
     $note = implode(' ', array_filter($noteParts, static fn($part) => $part !== '')) . PHP_EOL . $bodyText;
     $note = appendSharePointLinksToNotes($note, $sharePointLinks);
+    $journalOverrides = buildJournalOverrides($authorId, $createdAt, $updatedAt, $userLookup, $defaultAuthorId);
     $payload = [
         'issue' => array_filter([
             'notes' => $note,
             'uploads' => $uploadPayload,
+            'journal' => $journalOverrides !== [] ? $journalOverrides : null,
         ], static fn($value) => $value !== null && $value !== []),
     ];
 
+    $endpoint = $useExtendedApi
+        ? '/' . buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
+        : sprintf('/issues/%d.json', $redmineIssueId);
+
+    $options = ['json' => $payload];
+    if ($useExtendedApi) {
+        $options['query'] = ['notify' => 'false', 'send_notification' => 0];
+    }
+
     try {
-        $client->put(sprintf('/issues/%d.json', $redmineIssueId), ['json' => $payload]);
+        $client->request($useExtendedApi ? 'patch' : 'put', $endpoint, $options);
     } catch (BadResponseException $exception) {
         $response = $exception->getResponse();
         $message = sprintf('Failed to create journal for Jira comment %s on issue %s', $jiraCommentId, $jiraIssueKey);
@@ -730,8 +784,17 @@ function processCommentPush(Client $client, PDO $pdo, array $comment, array $con
 
 /**
  * @param array<string, mixed> $history
+ * @param array<string, array{redmine_user_id: int}> $userLookup
  */
-function processChangelogPush(Client $client, PDO $pdo, array $history): void
+function processChangelogPush(
+    Client $client,
+    PDO $pdo,
+    array $history,
+    array $userLookup,
+    ?int $defaultAuthorId,
+    bool $useExtendedApi,
+    string $extendedApiPrefix
+): void
 {
     $mappingId = (int)$history['mapping_id'];
     $jiraIssueId = (string)$history['jira_issue_id'];
@@ -760,19 +823,30 @@ function processChangelogPush(Client $client, PDO $pdo, array $history): void
                 $field = (string)$item['field'];
                 $from = isset($item['fromString']) ? (string)$item['fromString'] : '';
                 $to = isset($item['toString']) ? (string)$item['toString'] : '';
-                $noteLines[] = sprintf('• %s: %s → %s', $field, $from !== '' ? $from : '[empty]', $to !== '' ? $to : '[empty]');
+                $noteLines[] = sprintf('- %s: %s -> %s', $field, $from !== '' ? $from : '[empty]', $to !== '' ? $to : '[empty]');
             }
         }
     }
 
+    $journalOverrides = buildJournalOverrides($history['author_account_id'] ?? null, $createdAt, $createdAt, $userLookup, $defaultAuthorId);
     $payload = [
-        'issue' => [
+        'issue' => array_filter([
             'notes' => implode(PHP_EOL, $noteLines),
-        ],
+            'journal' => $journalOverrides !== [] ? $journalOverrides : null,
+        ], static fn($value) => $value !== null && $value !== []),
     ];
 
+    $endpoint = $useExtendedApi
+        ? '/' . buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
+        : sprintf('/issues/%d.json', $redmineIssueId);
+
+    $options = ['json' => $payload];
+    if ($useExtendedApi) {
+        $options['query'] = ['notify' => 'false', 'send_notification' => 0];
+    }
+
     try {
-        $client->put(sprintf('/issues/%d.json', $redmineIssueId), ['json' => $payload]);
+        $client->request($useExtendedApi ? 'patch' : 'put', $endpoint, $options);
     } catch (BadResponseException $exception) {
         $response = $exception->getResponse();
         $message = sprintf('Failed to create journal for Jira changelog %s on issue %s', $historyId, $jiraIssueKey);
@@ -1339,12 +1413,132 @@ function normalizeDateTimeString(?string $value): ?string
         return null;
     }
 
-    $timestamp = strtotime($value);
-    if ($timestamp === false) {
+    $trimmed = trim($value);
+    if ($trimmed === '') {
         return null;
     }
 
-    return date('Y-m-d H:i:s', $timestamp);
+    try {
+        $dt = new DateTimeImmutable($trimmed);
+    } catch (Throwable) {
+        return null;
+    }
+
+    return $dt->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+}
+
+/**
+ * @return array<string, array{redmine_user_id: int}>
+ */
+function buildRedmineUserLookup(PDO $pdo): array
+{
+    $statement = $pdo->query('SELECT jira_account_id, redmine_user_id, migration_status FROM migration_mapping_users');
+    if ($statement === false) {
+        throw new RuntimeException('Failed to load user mappings.');
+    }
+
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $statement->closeCursor();
+
+    $lookup = [];
+    foreach ($rows as $row) {
+        $status = isset($row['migration_status']) ? (string)$row['migration_status'] : '';
+        if (!in_array($status, ['MATCH_FOUND', 'CREATION_SUCCESS'], true)) {
+            continue;
+        }
+
+        if (!isset($row['jira_account_id'], $row['redmine_user_id']) || $row['redmine_user_id'] === null) {
+            continue;
+        }
+
+        $lookup[(string)$row['jira_account_id']] = ['redmine_user_id' => (int)$row['redmine_user_id']];
+    }
+
+    return $lookup;
+}
+
+/**
+ * @param array<string, array{redmine_user_id: int}> $lookup
+ */
+function resolveRedmineUserId(array $lookup, ?string $jiraAccountId, ?int $defaultAuthorId): ?int
+{
+    if ($jiraAccountId !== null && isset($lookup[$jiraAccountId])) {
+        return $lookup[$jiraAccountId]['redmine_user_id'];
+    }
+
+    return $defaultAuthorId;
+}
+
+/**
+ * @param array<string, array{redmine_user_id: int}> $userLookup
+ * @return array<string, int|string>
+ */
+function buildJournalOverrides(
+    ?string $authorAccountId,
+    ?string $createdAt,
+    ?string $updatedAt,
+    array $userLookup,
+    ?int $defaultAuthorId
+): array {
+    $overrides = [];
+
+    $redmineUserId = resolveRedmineUserId($userLookup, $authorAccountId, $defaultAuthorId);
+    if ($redmineUserId !== null) {
+        $overrides['user_id'] = $redmineUserId;
+        $overrides['updated_by_id'] = $redmineUserId;
+    }
+
+    $created = normalizeJiraTimestamp($createdAt);
+    if ($created !== null) {
+        $overrides['created_on'] = $created;
+    }
+
+    $updated = normalizeJiraTimestamp($updatedAt ?? $createdAt);
+    if ($updated !== null) {
+        $overrides['updated_on'] = $updated;
+    }
+
+    return $overrides;
+}
+
+function extractDefaultJournalAuthorId(array $config): ?int
+{
+    $migrationConfig = $config['migration'] ?? [];
+    $journalConfig = isset($migrationConfig['journals']) && is_array($migrationConfig['journals'])
+        ? $migrationConfig['journals']
+        : [];
+
+    if (!isset($journalConfig['default_redmine_author_id'])) {
+        return null;
+    }
+
+    $value = $journalConfig['default_redmine_author_id'];
+    if (!is_numeric($value)) {
+        return null;
+    }
+
+    $intValue = (int)$value;
+
+    return $intValue > 0 ? $intValue : null;
+}
+
+function normalizeJiraTimestamp(mixed $value): ?string
+{
+    if ($value === null) {
+        return null;
+    }
+
+    if (is_string($value) && trim($value) === '') {
+        return null;
+    }
+
+    try {
+        $dateTime = new DateTimeImmutable((string)$value);
+    } catch (Throwable) {
+        return null;
+    }
+
+    return $dateTime->setTimezone(new DateTimeZone('UTC'))->format(DateTimeInterface::ATOM);
 }
 
 function convertJiraAdfToPlaintext(string $adfJson): string
@@ -1489,6 +1683,46 @@ function decodeJsonResponse(ResponseInterface $response): array
     return is_array($decoded) ? $decoded : [];
 }
 
+function shouldUseExtendedApi(array $redmineConfig, bool $force): bool
+{
+    if ($force) {
+        return true;
+    }
+
+    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
+        ? $redmineConfig['extended_api']
+        : [];
+
+    return (bool)($extendedConfig['enabled'] ?? false);
+}
+
+function resolveExtendedApiPrefix(array $redmineConfig): string
+{
+    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
+        ? $redmineConfig['extended_api']
+        : [];
+
+    $prefix = isset($extendedConfig['prefix']) ? trim((string)$extendedConfig['prefix']) : '/extended_api';
+
+    if ($prefix === '') {
+        $prefix = '/extended_api';
+    }
+
+    return trim($prefix, '/');
+}
+
+function buildExtendedApiPath(string $prefix, string $resource): string
+{
+    $normalizedPrefix = trim($prefix, '/');
+    $normalizedResource = ltrim($resource, '/');
+
+    if ($normalizedPrefix === '') {
+        return $normalizedResource;
+    }
+
+    return $normalizedPrefix . '/' . $normalizedResource;
+}
+
 function extractErrorBody(ResponseInterface $response): string
 {
     $body = trim((string)$response->getBody());
@@ -1587,6 +1821,11 @@ function parseCommandLineOptions(array $argv): array
             continue;
         }
 
+        if ($argument === '--use-extended-api') {
+            $options['use_extended_api'] = true;
+            continue;
+        }
+
         if (str_starts_with($argument, '--phases=')) {
             $options['phases'] = substr($argument, 9);
             continue;
@@ -1603,7 +1842,10 @@ function parseCommandLineOptions(array $argv): array
     return [$options, $arguments];
 }
 
+/**
+ * @throws DateMalformedStringException
+ */
 function formatCurrentTimestamp(): string
 {
-    return date('Y-m-d H:i:s');
+    return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s');
 }
