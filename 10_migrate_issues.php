@@ -1166,9 +1166,16 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
         $proposedDescription = $issueDescriptionHtml !== null
             ? convertJiraHtmlToMarkdown($issueDescriptionHtml, $issueAttachments)
             : null;
+
         if ($proposedDescription === null && $issueDescriptionAdf !== null) {
+            $proposedDescription = convertJiraAdfToMarkdown($issueDescriptionAdf);
+        }
+
+        if ($proposedDescription === null && $issueDescriptionAdf !== null) {
+            // laatste redmiddel
             $proposedDescription = convertJiraAdfToPlaintext($issueDescriptionAdf);
         }
+
         $proposedStartDate = $issueCreatedAt !== null ? substr($issueCreatedAt, 0, 10) : null;
         $proposedDueDate = $issueDueDate !== null ? $issueDueDate : null;
         $proposedDoneRatio = ($issueStatusCategory !== null && strtolower($issueStatusCategory) === 'done') ? 100 : null;
@@ -3174,6 +3181,14 @@ function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
         return null;
     }
 
+    // Jira geeft soms enkel: <!-- ADF macro (type = 'table') -->
+    // Dat is geen HTML inhoud, dus forceer fallback naar ADF.
+    $withoutComments = preg_replace('/<!--.*?-->/s', '', $trimmed);
+    $withoutComments = is_string($withoutComments) ? trim($withoutComments) : $trimmed;
+    if ($withoutComments === '' && stripos($trimmed, 'ADF macro') !== false) {
+        return null;
+    }
+
     $rewrittenHtml = rewriteJiraAttachmentLinks($trimmed, $attachments);
 
     static $converter = null;
@@ -3191,6 +3206,10 @@ function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
     } catch (Throwable) {
         $markdown = trim(strip_tags($rewrittenHtml));
     }
+
+    // extra safety: xml header die toch doorsijpelt
+    $markdown = preg_replace('/^\s*<\?xml[^>]*\?>\s*/i', '', $markdown ?? '') ?? $markdown;
+    $markdown = str_replace('<?xml encoding="utf-8"?>', '', $markdown);
 
     return $markdown !== '' ? $markdown : null;
 }
@@ -3953,4 +3972,191 @@ function normalizeJiraEmptyValue(mixed $v): mixed {
 
     return $v;
 }
+function convertJiraAdfToMarkdown(mixed $adf): ?string
+{
+    if ($adf === null) return null;
 
+    if (is_string($adf)) {
+        $t = trim($adf);
+        return $t !== '' ? $t : null;
+    }
+
+    if (!is_array($adf) || (($adf['type'] ?? null) !== 'doc')) {
+        return null;
+    }
+
+    $out = renderAdfNodeToMarkdown($adf);
+    $out = trim(preg_replace("/\n{3,}/", "\n\n", $out) ?? '');
+
+    return $out !== '' ? $out : null;
+}
+
+function renderAdfNodeToMarkdown(array $node): string
+{
+    $type = $node['type'] ?? null;
+    if (!is_string($type)) return '';
+
+    switch ($type) {
+        case 'doc':
+            return renderAdfChildren($node, '');
+
+        case 'paragraph':
+            $txt = trim(renderAdfChildren($node, ''));
+            return $txt === '' ? "\n" : $txt . "\n\n";
+
+        case 'text':
+            return (string)($node['text'] ?? '');
+
+        case 'hardBreak':
+            return "\n";
+
+        case 'heading':
+            $level = (int)($node['attrs']['level'] ?? 1);
+            if ($level < 1) $level = 1;
+            if ($level > 6) $level = 6;
+            $txt = trim(renderAdfChildren($node, ''));
+            return str_repeat('#', $level) . ' ' . $txt . "\n\n";
+
+        case 'bulletList':
+            return renderAdfChildren($node, '- ');
+
+        case 'orderedList':
+            // simpel: 1. voor elk item
+            return renderAdfChildren($node, '1. ');
+
+        case 'listItem':
+            // listItem bevat meestal paragraphs
+            $txt = trim(renderAdfChildren($node, ''));
+            $txt = preg_replace("/\n{2,}/", "\n", $txt) ?? $txt;
+            return $txt;
+
+        case 'blockquote':
+            $txt = trim(renderAdfChildren($node, ''));
+            $lines = $txt === '' ? [] : preg_split("/\r?\n/", $txt);
+            $lines = is_array($lines) ? $lines : [];
+            $lines = array_map(fn($l) => '> ' . $l, $lines);
+            return implode("\n", $lines) . "\n\n";
+
+        case 'rule':
+            return "---\n\n";
+
+        case 'codeBlock':
+            $txt = rtrim(renderAdfChildren($node, ''));
+            return "```\n" . $txt . "\n```\n\n";
+
+        case 'table':
+            return renderAdfTableToMarkdown($node) . "\n\n";
+
+        case 'tableRow':
+        case 'tableCell':
+        case 'tableHeader':
+            // worden door table renderer afgehandeld
+            return renderAdfChildren($node, '');
+
+        default:
+            // fallback: gewoon children renderen
+            return renderAdfChildren($node, '');
+    }
+}
+
+function renderAdfChildren(array $node, string $listPrefix): string
+{
+    $content = $node['content'] ?? null;
+    if (!is_array($content)) return '';
+
+    $out = '';
+    foreach ($content as $child) {
+        if (!is_array($child)) continue;
+
+        $childType = $child['type'] ?? null;
+
+        if ($listPrefix !== '' && $childType === 'listItem') {
+            $item = trim(renderAdfNodeToMarkdown($child));
+            if ($item === '') continue;
+
+            // indent eventuele multiline items
+            $lines = preg_split("/\r?\n/", $item);
+            $lines = is_array($lines) ? $lines : [$item];
+            $first = array_shift($lines);
+            $out .= $listPrefix . $first . "\n";
+            foreach ($lines as $l) {
+                if (trim($l) === '') continue;
+                $out .= '  ' . $l . "\n";
+            }
+            $out .= "\n";
+            continue;
+        }
+
+        $out .= renderAdfNodeToMarkdown($child);
+    }
+
+    return $out;
+}
+
+function renderAdfTableToMarkdown(array $tableNode): string
+{
+    $rows = $tableNode['content'] ?? null;
+    if (!is_array($rows) || $rows === []) return '';
+
+    // Eerst grid bouwen met colspans
+    $grid = [];
+    $maxCols = 0;
+
+    foreach ($rows as $row) {
+        if (!is_array($row) || (($row['type'] ?? null) !== 'tableRow')) continue;
+        $cells = $row['content'] ?? [];
+        if (!is_array($cells)) $cells = [];
+
+        $line = [];
+        foreach ($cells as $cell) {
+            if (!is_array($cell)) continue;
+            $cellType = $cell['type'] ?? null;
+            if ($cellType !== 'tableCell' && $cellType !== 'tableHeader') continue;
+
+            $colspan = (int)($cell['attrs']['colspan'] ?? 1);
+            if ($colspan < 1) $colspan = 1;
+
+            $txt = trim(renderAdfChildren($cell, ''));
+            $txt = preg_replace("/\s+/", ' ', $txt) ?? $txt;
+            $txt = str_replace('|', '\|', $txt);
+
+            // In markdown geen echte colspan. We dupen 1 inhoud + rest leeg.
+            $line[] = $txt;
+            for ($i = 1; $i < $colspan; $i++) {
+                $line[] = '';
+            }
+        }
+
+        $maxCols = max($maxCols, count($line));
+        $grid[] = $line;
+    }
+
+    if ($grid === []) return '';
+
+    // Normalize: elke rij evenveel cols
+    foreach ($grid as $i => $line) {
+        while (count($line) < $maxCols) $line[] = '';
+        $grid[$i] = $line;
+    }
+
+    // Header: als eerste rij leeg is of geen header cellen waren, toch header gebruiken
+    $header = $grid[0];
+    $hasRealHeaderText = false;
+    foreach ($header as $c) {
+        if (trim($c) !== '') { $hasRealHeaderText = true; break; }
+    }
+    if (!$hasRealHeaderText) {
+        // maak generieke header
+        $header = array_fill(0, $maxCols, '');
+    }
+
+    $lines = [];
+    $lines[] = '| ' . implode(' | ', $header) . ' |';
+    $lines[] = '| ' . implode(' | ', array_fill(0, $maxCols, '---')) . ' |';
+
+    for ($r = 1; $r < count($grid); $r++) {
+        $lines[] = '| ' . implode(' | ', $grid[$r]) . ' |';
+    }
+
+    return implode("\n", $lines);
+}
