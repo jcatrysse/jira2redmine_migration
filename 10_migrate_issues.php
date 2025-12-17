@@ -1151,7 +1151,7 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
         $redminePriorityId = $jiraPriorityId !== null ? resolveRedminePriorityId($priorityLookup, $jiraPriorityId) : null;
         $redmineAuthorId = $jiraReporterId !== null ? resolveRedmineUserId($userLookup, $jiraReporterId) : null;
         $redmineAssigneeId = $jiraAssigneeId !== null ? resolveRedmineUserId($userLookup, $jiraAssigneeId) : null;
-        $redmineParentIssueId = $jiraParentId !== null ? resolveRedmineParentIssueId($pdo, $jiraParentId) : null;
+        $redmineParentIssueId = null;
 
         $proposedProjectId = $redmineProjectId ?? $defaultProjectId;
         $proposedTrackerId = $redmineTrackerId ?? $defaultTrackerId;
@@ -1224,9 +1224,6 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
             }
             if ($jiraAssigneeId !== null && $proposedAssigneeId === null) {
                 $notes[] = 'Assignee not mapped to a Redmine user (and no default configured).';
-            }
-            if ($jiraParentId !== null && $proposedParentIssueId === null) {
-                $notes[] = 'Parent issue not yet created in Redmine.';
             }
 
             if ($notes === []) {
@@ -2512,24 +2509,28 @@ function buildMappedCustomFieldPayload(array $issuePayload, array $mappingIndex,
             continue;
         }
 
+        $raw = $fields[$jiraFieldId] ?? null;
+
+        // jouw normalisatie
         $normalizedValue = normalizeCustomFieldValue(
             $meta['field_format'],
             $meta['is_multiple'],
             $meta['enumeration_lookup'],
-            $fields[$jiraFieldId]
+            $raw
         );
 
-        if ($normalizedValue === null) {
-            if ($fields[$jiraFieldId] !== null && $fields[$jiraFieldId] !== '' && $fields[$jiraFieldId] !== []) {
-                $warnings[] = $jiraFieldId;
-            }
-            continue;
+        // alleen warnen als raw niet leeg was, maar normalisatie toch null gaf
+        if ($normalizedValue === null && normalizeJiraEmptyValue($raw) !== null) {
+            error_log("WARN normalize failed for {$jiraFieldId}, raw=" . json_encode($raw, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            $warnings[] = $jiraFieldId;
         }
 
-        $result[] = [
-            'id' => $meta['redmine_custom_field_id'],
-            'value' => $normalizedValue,
-        ];
+        if ($normalizedValue !== null) {
+            $result[] = [
+                'id' => $meta['redmine_custom_field_id'],
+                'value' => $normalizedValue,
+            ];
+        }
     }
 
     return $result;
@@ -2552,10 +2553,7 @@ function normalizeCustomFieldValue(
     // Special case: Jira label-manager object { labels: [...] }
     $labelsObject = extractJiraLabelsObject($rawValue);
     if ($labelsObject !== null) {
-        if ($isMultiple) {
-            return $labelsObject;        // kan [] zijn, maar jouw extract geeft nu null bij []
-        }
-        return $labelsObject[0] ?? null; // veilig bij []
+        return $isMultiple ? $labelsObject : ($labelsObject[0] ?? null);
     }
 
     $values = $isMultiple ? normalizeToList($rawValue) : [$rawValue];
@@ -2755,10 +2753,8 @@ function normalizeCustomFieldFormat(?string $fieldFormat): string
 function extractJiraCustomFieldString(mixed $value): ?string
 {
     if (is_string($value) || is_int($value) || is_float($value)) {
-        $trimmed = trim((string) $value);
-        if ($trimmed === '' || strtolower($trimmed) === 'none') {
-            return null;
-        }
+        $trimmed = trim((string)$value);
+        if ($trimmed === '' || strtolower($trimmed) === 'none') return null;
         return $trimmed;
     }
 
@@ -2767,12 +2763,39 @@ function extractJiraCustomFieldString(mixed $value): ?string
     }
 
     if (is_array($value)) {
+        // NEW: Jira ADF doc support
+        if (($value['type'] ?? null) === 'doc') {
+            $content = $value['content'] ?? null;
+
+            // content ontbreekt of is leeg => empty field
+            if (!is_array($content) || count($content) === 0) {
+                return null;
+            }
+
+            $txt = convertJiraAdfToPlaintext($value);
+            $txt = $txt !== null ? trim($txt) : null;
+            return ($txt === '') ? null : $txt;
+        }
+
+
+        // Jira "labels with colors" (zoals customfield_10067)
+        if (array_key_exists('labels', $value) && is_array($value['labels'])) {
+            $labels = array_values(array_filter(array_map(
+                fn($x) => is_scalar($x) ? trim((string)$x) : '',
+                $value['labels']
+            ), fn($s) => $s !== '' && strtolower($s) !== 'none'));
+
+            if (count($labels) === 0) return null;
+
+            // Redmine enumeration is single value -> pak de eerste
+            // (of implode(', ', $labels) als je toch multi wil bewaren)
+            return $labels[0];
+        }
+
         foreach (['value', 'name', 'label', 'id'] as $k) {
             if (isset($value[$k])) {
-                $candidate = trim((string) $value[$k]);
-                if ($candidate === '' || strtolower($candidate) === 'none') {
-                    return null;
-                }
+                $candidate = trim((string)$value[$k]);
+                if ($candidate === '' || strtolower($candidate) === 'none') return null;
                 return $candidate;
             }
         }
@@ -2924,24 +2947,6 @@ function resolveRedmineUserId(array $lookup, string $jiraAccountId): ?int
     }
 
     return $row['redmine_user_id'] !== null ? (int)$row['redmine_user_id'] : null;
-}
-
-function resolveRedmineParentIssueId(PDO $pdo, string $jiraParentIssueId): ?int
-{
-    $statement = $pdo->prepare('SELECT redmine_issue_id FROM migration_mapping_issues WHERE jira_issue_id = :jira_issue_id');
-    if ($statement === false) {
-        throw new RuntimeException('Failed to prepare parent issue lookup statement.');
-    }
-
-    $statement->execute(['jira_issue_id' => $jiraParentIssueId]);
-    $result = $statement->fetch(PDO::FETCH_ASSOC) ?: null;
-    $statement->closeCursor();
-
-    if ($result === null) {
-        return null;
-    }
-
-    return isset($result['redmine_issue_id']) && $result['redmine_issue_id'] !== null ? (int)$result['redmine_issue_id'] : null;
 }
 
 function computeIssueAutomationStateHash(
@@ -3279,7 +3284,7 @@ function rewriteJiraAttachmentLinks(string $html, array $attachments): string
 
     $converted = $document->saveHTML();
 
-    return $converted !== false ? $converted : $html;
+    return $converted !== false ? preg_replace('/^\s*<\?xml[^>]+\?>\s*/i', '', $converted) : $html;
 }
 
 function convertJiraAdfToPlaintext(mixed $descriptionAdf): ?string
@@ -3906,5 +3911,46 @@ function markUploadedAttachmentsAsSuccess(PDO $pdo, array $attachments, int $red
             $redmineIssueId
         );
     }
+}
+
+function normalizeJiraEmptyValue(mixed $v): mixed {
+    if ($v === null) return null;
+
+    if (is_string($v)) {
+        $t = trim($v);
+        if ($t === '' || strtolower($t) === 'none') {
+            return null;
+        }
+        return $t;
+    }
+
+    // NEW: Jira ADF doc empty check
+    if (is_array($v) && (($v['type'] ?? null) === 'doc')) {
+        $content = $v['content'] ?? null;
+        if (!is_array($content) || count($content) === 0) {
+            return null;
+        }
+        // optioneel: als content bestaat maar toch geen tekst oplevert
+        $txt = convertJiraAdfToPlaintext($v);
+        if ($txt === null || trim($txt) === '') {
+            return null;
+        }
+        return $v; // non-empty doc, laat door als "niet leeg"
+    }
+
+    if (is_array($v) && isset($v['labels']) && is_array($v['labels'])) {
+        $labels = array_filter(array_map(
+            fn($x) => is_scalar($x) ? trim((string)$x) : '',
+            $v['labels']
+        ), fn($s) => $s !== '' && strtolower($s) !== 'none');
+
+        if (count($labels) === 0) return null;
+    }
+
+    if ($v === []) {
+        return null;
+    }
+
+    return $v;
 }
 
