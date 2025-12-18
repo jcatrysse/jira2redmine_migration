@@ -11,6 +11,8 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use League\HTMLToMarkdown\HtmlConverter;
 use League\HTMLToMarkdown\Converter\TableConverter;
+use Karvaka\AdfToGfm\Converter as AdfConverter;
+
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.34';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issues into staging_jira_issues (and related staging tables).',
@@ -786,9 +788,7 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
                     $projectIssueCounter++;
                 } elseif ($rowCount === 2) {
                     $totalIssuesUpdated++;
-                } else {
-                    // 0 = unchanged, eventueel aparte teller
-                }
+                } ## else = 0
 
                 if (isset($fields['issuelinks']) && is_array($fields['issuelinks'])) {
                     foreach ($fields['issuelinks'] as $issueLink) {
@@ -1014,6 +1014,7 @@ function isListArray(mixed $value): bool
  */
 function runIssueTransformationPhase(PDO $pdo, array $config): array
 {
+    $adfConverter = new AdfConverter();
     syncIssueMappings($pdo);
 
     $projectLookup = buildProjectLookup($pdo);
@@ -1163,12 +1164,16 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
 
         $issueAttachments = $attachmentMetadata[$row['jira_issue_id']] ?? [];
         $proposedSubject = truncateString($issueSummary, 255);
-        $proposedDescription = $issueDescriptionHtml !== null
+        $proposedDescription = ($issueDescriptionHtml !== null && !str_contains($issueDescriptionHtml, "<!-- ADF macro (type = 'table') -->"))
             ? convertJiraHtmlToMarkdown($issueDescriptionHtml, $issueAttachments)
             : null;
 
+        //if ($proposedDescription === null && $issueDescriptionAdf !== null) {
+        //    $proposedDescription = convertJiraAdfToMarkdown($issueDescriptionAdf);
+        //}
+
         if ($proposedDescription === null && $issueDescriptionAdf !== null) {
-            $proposedDescription = convertJiraAdfToMarkdown($issueDescriptionAdf);
+            $proposedDescription = convertDescriptionToMarkdown($issueDescriptionAdf, $adfConverter);
         }
 
         if ($proposedDescription === null && $issueDescriptionAdf !== null) {
@@ -3989,6 +3994,21 @@ function convertJiraAdfToMarkdown(mixed $adf): ?string
     $out = trim(preg_replace("/\n{3,}/", "\n\n", $out) ?? '');
 
     return $out !== '' ? $out : null;
+}
+
+function convertDescriptionToMarkdown(
+    string $adfJson,
+    AdfConverter $adfToMd
+): string {
+    $adfJson = trim($adfJson);
+
+    if ($adfJson !== '') {
+        $node = $adfToMd->convert($adfJson);
+        $md   = trim((string)$node->toMarkdown());
+        if ($md !== '') return $md;
+    }
+
+    return '';
 }
 
 function renderAdfNodeToMarkdown(array $node): string
