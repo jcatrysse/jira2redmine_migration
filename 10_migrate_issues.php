@@ -1181,6 +1181,57 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
             $proposedDescription = convertJiraAdfToPlaintext($issueDescriptionAdf);
         }
 
+        // patterns om te detecteren of er Jira attachments in de uiteindelijke tekst voorkomen
+        $attachmentPatterns = [
+            '#/rest/api/\d+/attachment/content/(\d+)#i',
+            '#/rest/api/\d+/attachment/thumbnail/(\d+)#i',
+            '#/secure/attachment/(\d+)#i',
+            '#/attachment/content/(\d+)#i',
+            '#/attachment/(\d+)#i',
+            '#/attachments/(\d+)#i', // defensive
+            // fallback: zeer generiek, alleen gebruiken als geen van de bovenste patterns matcht
+            '#(\d+)(?:[^\d]|$)#'
+        ];
+
+        if ($proposedDescription !== null && trim((string)$proposedDescription) !== '') {
+            $found = false;
+
+            // eerste pass: kijk naar de specifieke patterns (zonder fallback)
+            foreach ($attachmentPatterns as $pat) {
+                if ($pat === '#(\d+)(?:[^\d]|$)#') continue; // fallback skippen nu
+                if (preg_match($pat, (string)$proposedDescription)) {
+                    $found = true;
+                    break;
+                }
+            }
+
+            // fallback (numeriek) alleen toepassen indien nog geen match,
+            // en alleen wanneer het getal daadwerkelijk een attachment is voor deze issue
+            if (!$found) {
+                if (preg_match('#(\d+)(?:[^\d]|$)#', (string)$proposedDescription, $m)) {
+                    $candidateId = (string)$m[1];
+                    $chk = $pdo->prepare('SELECT 1 FROM staging_jira_attachments WHERE id = :id AND issue_id = :issue_id LIMIT 1');
+                    if ($chk !== false) {
+                        $chk->execute(['id' => $candidateId, 'issue_id' => $row['jira_issue_id']]);
+                        if ($chk->fetchColumn() !== false) {
+                            $found = true;
+                        }
+                    }
+                }
+            }
+
+            if ($found) {
+                // call normalize; we pass de huidige beschrijving zodat de functie niet nogmaals uit de DB hoeft te lezen
+                // normalizeAttachmentsForMapping retourneert de genormaliseerde tekst of null als geen wijziging
+                $normalized = normalizeAttachmentsForMapping($pdo, (int)$row['mapping_id'], (string)$proposedDescription);
+                if ($normalized !== null) {
+                    $proposedDescription = $normalized;
+                    // verwijder heldere cases: link-title die exact de filename is
+                    $proposedDescription = preg_replace('/\]\((\d+__[^)\s]+)\s+"([^"]+)"\)/', ']($1)', $proposedDescription);
+                }
+            }
+        }
+
         $proposedStartDate = $issueCreatedAt !== null ? substr($issueCreatedAt, 0, 10) : null;
         $proposedDueDate = $issueDueDate !== null ? $issueDueDate : null;
         $proposedDoneRatio = ($issueStatusCategory !== null && strtolower($issueStatusCategory) === 'done') ? 100 : null;
@@ -1730,7 +1781,6 @@ function fetchPreparedAttachmentUploads(PDO $pdo, string $jiraIssueId): array
         FROM migration_mapping_attachments map
         JOIN staging_jira_attachments att ON att.id = map.jira_attachment_id
         WHERE map.jira_issue_id = :issue_id
-          AND map.association_hint = 'ISSUE'
           AND map.migration_status = 'PENDING_ASSOCIATION'
           AND (
             (map.redmine_upload_token IS NOT NULL AND map.redmine_upload_token <> '')
@@ -1795,7 +1845,6 @@ function summarizeAttachmentStatusesForIssue(PDO $pdo, string $jiraIssueId): arr
             SUM(IF(migration_status IN ('PENDING_DOWNLOAD', 'PENDING_UPLOAD'), 1, 0)) AS blocked_count
         FROM migration_mapping_attachments
         WHERE jira_issue_id = :issue_id
-          AND association_hint = 'ISSUE'
     SQL;
 
     $statement = $pdo->prepare($sql);
@@ -1819,7 +1868,6 @@ function countAssociationCandidates(PDO $pdo, string $jiraIssueId): int
         SELECT COUNT(*)
         FROM migration_mapping_attachments
         WHERE jira_issue_id = :issue_id
-          AND association_hint = 'ISSUE'
           AND migration_status = 'PENDING_ASSOCIATION'
           AND (
               (redmine_upload_token IS NOT NULL AND redmine_upload_token <> '')
@@ -1851,7 +1899,7 @@ function buildIssueUploadPayload(array $attachments): array
             continue;
         }
 
-        $filename = buildRedmineAttachmentFilename($attachment['jira_attachment_id'], $attachment['filename']);
+        $filename = buildUploadUniqueName($attachment['jira_attachment_id'], $attachment['filename']);
         $description = $attachment['filename'] !== ''
             ? $attachment['filename']
             : sprintf('Jira attachment %s', $attachment['jira_attachment_id']);
@@ -1891,6 +1939,16 @@ function appendSharePointLinksToDescription(?string $description, array $sharePo
         $label = $attachment['filename'] !== ''
             ? $attachment['filename']
             : $attachment['jira_attachment_id'];
+
+        // build unique name for the attachment (same as used by uploads)
+        $unique = buildUploadUniqueName((string)$attachment['jira_attachment_id'], $attachment['filename'] ?? '');
+
+        // Skip if description already contains the exact SharePoint URL or the attachment:unique marker
+        if (($description !== null && (strpos($description, $url) !== false
+                || strpos($description, 'attachment:' . $unique) !== false
+                || strpos($description, $unique) !== false))) {
+            continue;
+        }
 
         $lines[] = sprintf('- %s: %s', $label, $url);
     }
@@ -2241,7 +2299,7 @@ function buildAttachmentMetadataIndex(PDO $pdo): array
             $index[$issueId] = [];
         }
 
-        $index[$issueId][$attachmentId] = buildRedmineAttachmentFilename($attachmentId, $filename);
+        $index[$issueId][$attachmentId] = buildUploadUniqueName($attachmentId, $filename);
     }
 
     $statement->closeCursor();
@@ -3244,11 +3302,10 @@ function rewriteJiraAttachmentLinks(string $html, array $attachments): string
         return $html;
     }
 
+    // process anchors
     $links = iterator_to_array($document->getElementsByTagName('a'));
     foreach ($links as $link) {
-        if (!$link instanceof DOMElement) {
-            continue;
-        }
+        if (!$link instanceof DOMElement) continue;
 
         $href = $link->getAttribute('href');
         $attachmentId = null;
@@ -3266,6 +3323,7 @@ function rewriteJiraAttachmentLinks(string $html, array $attachments): string
             ? $attachments[$attachmentId]
             : sprintf('attachment-%s', $attachmentId);
 
+        // Als link geen tekst heeft: vul met filename (maar niet als alt/title!)
         $linkText = trim($link->textContent ?? '');
         if ($linkText === '') {
             while ($link->firstChild !== null) {
@@ -3274,14 +3332,19 @@ function rewriteJiraAttachmentLinks(string $html, array $attachments): string
             $link->appendChild($document->createTextNode($filename));
         }
 
-        $link->setAttribute('href', sprintf('attachment:%s', $filename));
+        // ZET href naar de unieke naam (geen "attachment:" prefix)
+        $link->setAttribute('href', $filename);
+
+        // VERWIJDER presentation/preview attributen zodat Markdown-converter geen title overneemt
+        foreach (['title', 'file-preview-title', 'file-preview-type', 'file-preview-id', 'data-linked-resource-id'] as $attr) {
+            if ($link->hasAttribute($attr)) $link->removeAttribute($attr);
+        }
     }
 
+    // process images
     $images = iterator_to_array($document->getElementsByTagName('img'));
     foreach ($images as $image) {
-        if (!$image instanceof DOMElement) {
-            continue;
-        }
+        if (!$image instanceof DOMElement) continue;
 
         $attachmentId = null;
         $source = $image->getAttribute('src');
@@ -3299,11 +3362,15 @@ function rewriteJiraAttachmentLinks(string $html, array $attachments): string
             ? $attachments[$attachmentId]
             : sprintf('attachment-%s', $attachmentId);
 
-        $image->setAttribute('src', sprintf('attachment:%s', $filename));
-        $alt = trim($image->getAttribute('alt'));
-        if ($alt === '') {
-            $image->setAttribute('alt', $filename);
+        // Zet src naar unieke naam (geen "attachment:" prefix)
+        $image->setAttribute('src', $filename);
+
+        // VEEL BELANGRIJKER: verwijder titel/alt/preview-attrs zodat converter géén title toevoegt.
+        foreach (['title', 'alt', 'data-attachment-name', 'data-attachment-type', 'data-media-services-id', 'data-media-services-type'] as $attr) {
+            if ($image->hasAttribute($attr)) $image->removeAttribute($attr);
         }
+        // (optioneel) zet lege alt als je absoluut een alt-attribuut wilt
+        // $image->setAttribute('alt', '');
     }
 
     $converted = $document->saveHTML();
@@ -4179,4 +4246,261 @@ function renderAdfTableToMarkdown(array $tableNode): string
     }
 
     return implode("\n", $lines);
+}
+
+/**
+ * Sanitize filename exactly like 09_migrate_attachments.php
+ */
+function sanitizeAttachmentFileName(string $filename): string
+{
+    $sanitized = preg_replace('/[^A-Za-z0-9._-]/u', '_', $filename);
+    if ($sanitized === null) {
+        return 'attachment';
+    }
+
+    $sanitized = trim($sanitized, '_');
+    if ($sanitized === '') {
+        return 'attachment';
+    }
+
+    return $sanitized;
+}
+
+/**
+ * Build the unique upload filename used during upload: "{id}__{sanitizedFilename}"
+ */
+function buildUploadUniqueName(string $attachmentId, string $originalFilename): string
+{
+    $san = sanitizeAttachmentFileName($originalFilename !== '' ? $originalFilename : ('attachment-' . $attachmentId));
+    return $attachmentId . '__' . $san;
+}
+
+/**
+ * Replace a single URL that points to a Jira attachment with either 'attachment:uniqueName' or SharePoint URL.
+ * Returns replacement string (not the whole markdown/img tag).
+ *
+ * @param string $url
+ * @param array<string, array{unique: string, sharepoint: ?string}> $attachmentsMap keyed by attachment id
+ * @return string replacement URL (or original $url if no match)
+ */
+function mapAttachmentUrlToTarget(string $url, array $attachmentsMap): string
+{
+    // try to find a numeric attachment id in a few common patterns
+    $patterns = [
+        '#/rest/api/\d+/attachment/content/(\d+)#i',
+        '#/rest/api/\d+/attachment/thumbnail/(\d+)#i',
+        '#/attachment/(\d+)#i',
+        '#/attachment/content/(\d+)#i',
+        '#attachment/content/(\d+)#i',
+        '#/attachments/(\d+)#i',
+        '#/secure/attachment/(\d+)#i',
+        '#(\d+)(?:[^\d]|$)#' // fallback
+    ];
+
+    foreach ($patterns as $pat) {
+        if (preg_match($pat, $url, $m)) {
+            $id = $m[1] ?? null;
+            if ($id === null) continue;
+            $id = (string)$id;
+            if (!isset($attachmentsMap[$id])) {
+                return $url; // not one of our attachments
+            }
+            $meta = $attachmentsMap[$id];
+            // prefer SharePoint absolute URLs
+            if (!empty($meta['sharepoint'])) {
+                return $meta['sharepoint'];
+            }
+            // return the unique filename (no "attachment:" prefix)
+            return $meta['unique'];
+        }
+    }
+
+    return $url;
+}
+
+/**
+ * Normalize attachment links in a text blob (markdown or HTML).
+ * - First does a DOM pass for <img> and <a> tags if HTML present.
+ * - Then does a markdown-style pass replacing inline links/images.
+ *
+ * @param string $text
+ * @param array<string, array{unique: string, sharepoint: ?string}> $attachmentsMap keyed by attachment id
+ * @return string
+ */
+function normalizeAttachmentLinksInText(string $text, array $attachmentsMap): string
+{
+    if (trim($text) === '') return $text;
+
+    // 1) If it contains HTML anchors/images we do a DOM pass
+    if (stripos($text, '<img') !== false || stripos($text, '<a') !== false || stripos($text, '<div') !== false) {
+        $doc = new DOMDocument();
+        $prev = libxml_use_internal_errors(true);
+        $options = 0;
+        if (defined('LIBXML_HTML_NOIMPLIED')) $options |= LIBXML_HTML_NOIMPLIED;
+        if (defined('LIBXML_HTML_NODEFDTD')) $options |= LIBXML_HTML_NODEFDTD;
+        $payload = '<?xml encoding="utf-8"?>' . $text;
+        if (@$doc->loadHTML($payload, $options)) {
+            // process <img>
+            foreach (iterator_to_array($doc->getElementsByTagName('img')) as $img) {
+                if (!$img instanceof DOMElement) continue;
+                $src = (string)$img->getAttribute('src');
+                if ($src === '') continue;
+                $new = mapAttachmentUrlToTarget($src, $attachmentsMap);
+                $img->setAttribute('src', $new);
+                // verwijder title/alt/preview attributen zodat converter geen title maakt
+                foreach (['title', 'alt', 'data-attachment-name', 'data-attachment-type'] as $attr) {
+                    if ($img->hasAttribute($attr)) $img->removeAttribute($attr);
+                }
+            }
+
+            // process <a>
+            foreach (iterator_to_array($doc->getElementsByTagName('a')) as $a) {
+                if (!$a instanceof DOMElement) continue;
+                $href = (string)$a->getAttribute('href');
+                if ($href === '') continue;
+                $new = mapAttachmentUrlToTarget($href, $attachmentsMap);
+                $a->setAttribute('href', $new);
+                // verwijder title en preview attrs
+                foreach (['title','file-preview-title','file-preview-id','file-preview-type','data-linked-resource-id'] as $attr) {
+                    if ($a->hasAttribute($attr)) $a->removeAttribute($attr);
+                }
+            }
+
+            $converted = $doc->saveHTML();
+            if ($converted !== false) {
+                // remove bogus xml prolog added earlier
+                $converted = preg_replace('/^\s*<\?xml[^>]+\?>\s*/i', '', $converted);
+                $text = $converted;
+            }
+        }
+        libxml_clear_errors();
+        libxml_use_internal_errors($prev);
+    }
+
+    // 2) Markdown-style: replace ![alt](URL) and [label](URL)
+    $text = preg_replace_callback('/(!?\[[^]]*])\(\s*([^)]+?)\s*\)/m', function ($m) use ($attachmentsMap) {
+        $label = $m[1];
+        $url = trim($m[2]);
+
+        // keep absolute SharePoint URLs untouched
+        if (preg_match('#^https?://#i', $url) && strpos($url, 'sharepoint.com') !== false) {
+            return $m[0];
+        }
+
+        $new = mapAttachmentUrlToTarget($url, $attachmentsMap);
+        return $label . '(' . $new . ')';
+    }, $text);
+
+    // 3) leftover plain URLs pointing to attachments (not inside markdown): replace them
+    $text = preg_replace_callback('#https?://[^\s)\]}]+/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+)[^\s)\]}]*#i', function ($m) use ($attachmentsMap) {
+        $id = $m[1] ?? null;
+        if ($id === null) return $m[0];
+        if (!isset($attachmentsMap[$id])) return $m[0];
+        $meta = $attachmentsMap[$id];
+        return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
+    }, $text);
+
+    // Replace relative REST API attachment URLs like "/rest/api/3/attachment/content/10001"
+    $text = preg_replace_callback(
+        '#(?:/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+))[^\s)\]}]*#i',
+        function ($m) use ($attachmentsMap) {
+            $id = $m[1] ?? null;
+            if ($id === null) return $m[0];
+            if (!isset($attachmentsMap[$id])) return $m[0];
+            $meta = $attachmentsMap[$id];
+            return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
+        },
+        $text
+    );
+
+    // Also replace patterns like "/attachment/1234" or "/secure/attachment/1234" if they appear plain
+    $text = preg_replace_callback('#(?:/secure/attachment/|/attachment/|/attachment/content/)(\d+)#i', function ($m) use ($attachmentsMap) {
+        $id = $m[1] ?? null;
+        if ($id === null) return $m[0];
+        if (!isset($attachmentsMap[$id])) return $m[0];
+        $meta = $attachmentsMap[$id];
+        return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
+    }, $text);
+
+    return $text;
+}
+
+/**
+ * Normalise attachment links in the proposed_description for a migration_mapping_issues row.
+ * Deze functie leest attachments uit de DB, normaliseert de tekst en retourneert de nieuwe
+ * proposed_description of NULL indien er geen wijziging nodig is of niet van toepassing.
+ *
+ * Let op: deze functie schrijft **niet** naar de database.
+ *
+ * @param PDO $pdo
+ * @param int $mappingId
+ * @param string|null $proposedDescription
+ * @return string|null  Genormaliseerde description of null als geen wijziging
+ */
+function normalizeAttachmentsForMapping(PDO $pdo, int $mappingId, ?string $proposedDescription = null): ?string
+{
+    // Haal jira_issue_id (altijd nodig) en optioneel de huidige proposed_description
+    $selectSql = 'SELECT jira_issue_id' . ($proposedDescription === null ? ', proposed_description' : '') . ' FROM migration_mapping_issues WHERE mapping_id = :mid';
+    $stmt = $pdo->prepare($selectSql);
+    if ($stmt === false) {
+        throw new RuntimeException('Failed to prepare mapping fetch statement.');
+    }
+    $stmt->execute(['mid' => $mappingId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $stmt->closeCursor();
+
+    if (!is_array($row) || empty($row['jira_issue_id'])) {
+        return null;
+    }
+
+    $jiraIssueId = (string)$row['jira_issue_id'];
+
+    // use passed description if provided, otherwise use DB value
+    if ($proposedDescription === null) {
+        $proposedDescription = $row['proposed_description'] ?? null;
+    }
+
+    if ($proposedDescription === null || trim((string)$proposedDescription) === '') {
+        return null;
+    }
+
+    // fetch attachments
+    $sql = <<<SQL
+SELECT map.jira_attachment_id AS aid, map.sharepoint_url AS sp, att.filename AS orig_name, map.redmine_upload_token
+FROM migration_mapping_attachments map
+JOIN staging_jira_attachments att ON att.id = map.jira_attachment_id
+WHERE map.jira_issue_id = :issue_id
+ORDER BY map.mapping_id
+SQL;
+    $stmt = $pdo->prepare($sql);
+    if ($stmt === false) {
+        throw new RuntimeException('Failed to prepare attachments fetch.');
+    }
+    $stmt->execute(['issue_id' => $jiraIssueId]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $stmt->closeCursor();
+
+    if ($rows === []) {
+        return null;
+    }
+
+    // build attachmentsMap (attachmentId => ['unique' => ..., 'sharepoint' => ...])
+    $attachmentsMap = [];
+    foreach ($rows as $r) {
+        $aid = (string)($r['aid'] ?? '');
+        if ($aid === '') continue;
+        $orig = isset($r['orig_name']) ? (string)$r['orig_name'] : '';
+        $unique = buildUploadUniqueName($aid, $orig);
+        $sp = isset($r['sp']) ? trim((string)$r['sp']) : '';
+        $attachmentsMap[$aid] = ['unique' => $unique, 'sharepoint' => $sp !== '' ? $sp : null];
+    }
+
+    // normalize tekst (DOM-pass + markdown replacements)
+    $new = normalizeAttachmentLinksInText((string)$proposedDescription, $attachmentsMap);
+    if ($new === $proposedDescription) {
+        return null;
+    }
+
+    // GEEN DB UPDATE: alleen retour geven
+    return $new;
 }
