@@ -1227,7 +1227,7 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
                 if ($normalized !== null) {
                     $proposedDescription = $normalized;
                     // verwijder heldere cases: link-title die exact de filename is
-                    $proposedDescription = preg_replace('/\]\((\d+__[^)\s]+)\s+"([^"]+)"\)/', ']($1)', $proposedDescription);
+                    $proposedDescription = preg_replace('/]\((\d+__[^)\s]+)\s+"([^"]+)"\)/', ']($1)', $proposedDescription);
                 }
             }
         }
@@ -3274,6 +3274,16 @@ function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
     $markdown = preg_replace('/^\s*<\?xml[^>]*\?>\s*/i', '', $markdown ?? '') ?? $markdown;
     $markdown = str_replace('<?xml encoding="utf-8"?>', '', $markdown);
 
+    // UNESCAPE: verwijder door de Markdown-converter toegevoegde backslashes
+    // alleen binnen attachment: tokens (bv. attachment:10876\_\_Report\_... -> attachment:10876__Report_...)
+    $markdown = preg_replace_callback(
+        '/attachment:\d+\\\\_\\\\_[^)\s]*/i',
+        function ($m) {
+            return str_replace('\\_', '_', $m[0]);
+        },
+        $markdown
+    );
+
     return $markdown !== '' ? $markdown : null;
 }
 
@@ -3283,97 +3293,164 @@ function rewriteJiraAttachmentLinks(string $html, array $attachments): string
         return $html;
     }
 
-    $document = new DOMDocument();
+    // normalize attachments into the same shape used by mapAttachmentUrlToTarget
+    $imgExts = ['jpg','jpeg','png','gif','bmp','svg','webp','tif','tiff'];
+    $attachmentsMeta = [];
+    foreach ($attachments as $aid => $unique) {
+        $ext = strtolower(pathinfo($unique, PATHINFO_EXTENSION));
+        $isImage = $ext !== '' && in_array($ext, $imgExts, true);
+        $attachmentsMeta[(string)$aid] = [
+            'unique' => (string)$unique,
+            'sharepoint' => null,
+            // convenience flag for this function
+            'is_image' => $isImage,
+        ];
+    }
+
+    $doc = new DOMDocument();
     $previous = libxml_use_internal_errors(true);
     $options = 0;
-    if (defined('LIBXML_HTML_NOIMPLIED')) {
-        $options |= LIBXML_HTML_NOIMPLIED;
-    }
-    if (defined('LIBXML_HTML_NODEFDTD')) {
-        $options |= LIBXML_HTML_NODEFDTD;
-    }
+    if (defined('LIBXML_HTML_NOIMPLIED')) $options |= LIBXML_HTML_NOIMPLIED;
+    if (defined('LIBXML_HTML_NODEFDTD')) $options |= LIBXML_HTML_NODEFDTD;
 
-    $htmlPayload = '<?xml encoding="utf-8"?>' . $html;
-    $loaded = $document->loadHTML($htmlPayload, $options);
-    libxml_clear_errors();
-    libxml_use_internal_errors($previous);
-
-    if (!$loaded) {
+    $payload = '<?xml encoding="utf-8"?>' . $html;
+    if (!@$doc->loadHTML($payload, $options)) {
+        libxml_clear_errors();
+        libxml_use_internal_errors($previous);
         return $html;
     }
 
-    // process anchors
-    $links = iterator_to_array($document->getElementsByTagName('a'));
-    foreach ($links as $link) {
-        if (!$link instanceof DOMElement) continue;
+    // 1) Eerst images normaliseren: zet src naar unique/SharePoint en verwijder preview attrs
+    foreach (iterator_to_array($doc->getElementsByTagName('img')) as $img) {
+        if (!$img instanceof DOMElement) continue;
+        $src = (string)$img->getAttribute('src');
+        if ($src === '') continue;
 
-        $href = $link->getAttribute('href');
-        $attachmentId = null;
-        if ($href !== '' && preg_match('#attachment/(\d+)#', $href, $matches)) {
-            $attachmentId = $matches[1];
-        } elseif ($link->hasAttribute('data-linked-resource-id')) {
-            $attachmentId = (string)$link->getAttribute('data-linked-resource-id');
-        }
+        // resolve via mapAttachmentUrlToTarget (dit zal absolute SharePoint URL's ook respecteren)
+        $new = mapAttachmentUrlToTarget($src, $attachmentsMeta);
+        $img->setAttribute('src', $new);
 
-        if ($attachmentId === null || !isset($attachments[$attachmentId])) {
-            continue;
-        }
-
-        $filename = $attachments[$attachmentId] !== ''
-            ? $attachments[$attachmentId]
-            : sprintf('attachment-%s', $attachmentId);
-
-        // Als link geen tekst heeft: vul met filename (maar niet als alt/title!)
-        $linkText = trim($link->textContent ?? '');
-        if ($linkText === '') {
-            while ($link->firstChild !== null) {
-                $link->removeChild($link->firstChild);
-            }
-            $link->appendChild($document->createTextNode($filename));
-        }
-
-        // ZET href naar de unieke naam (geen "attachment:" prefix)
-        $link->setAttribute('href', $filename);
-
-        // VERWIJDER presentation/preview attributen zodat Markdown-converter geen title overneemt
-        foreach (['title', 'file-preview-title', 'file-preview-type', 'file-preview-id', 'data-linked-resource-id'] as $attr) {
-            if ($link->hasAttribute($attr)) $link->removeAttribute($attr);
-        }
-    }
-
-    // process images
-    $images = iterator_to_array($document->getElementsByTagName('img'));
-    foreach ($images as $image) {
-        if (!$image instanceof DOMElement) continue;
-
-        $attachmentId = null;
-        $source = $image->getAttribute('src');
-        if ($source !== '' && preg_match('#attachment/(\d+)#', $source, $matches)) {
-            $attachmentId = $matches[1];
-        } elseif ($image->hasAttribute('data-linked-resource-id')) {
-            $attachmentId = (string)$image->getAttribute('data-linked-resource-id');
-        }
-
-        if ($attachmentId === null || !isset($attachments[$attachmentId])) {
-            continue;
-        }
-
-        $filename = $attachments[$attachmentId] !== ''
-            ? $attachments[$attachmentId]
-            : sprintf('attachment-%s', $attachmentId);
-
-        // Zet src naar unieke naam (geen "attachment:" prefix)
-        $image->setAttribute('src', $filename);
-
-        // VEEL BELANGRIJKER: verwijder titel/alt/preview-attrs zodat converter géén title toevoegt.
+        // remove noisy attributes so Markdown converter niet met titles/alt's komt
         foreach (['title', 'alt', 'data-attachment-name', 'data-attachment-type', 'data-media-services-id', 'data-media-services-type'] as $attr) {
-            if ($image->hasAttribute($attr)) $image->removeAttribute($attr);
+            if ($img->hasAttribute($attr)) $img->removeAttribute($attr);
         }
-        // (optioneel) zet lege alt als je absoluut een alt-attribuut wilt
-        // $image->setAttribute('alt', '');
+
+        // remove tiny rendericons (they are not our attachments)
+        $cls = strtolower((string)$img->getAttribute('class'));
+        if (strpos($cls, 'rendericon') !== false || strpos((string)$src, '/images/icons/') !== false) {
+            $parent = $img->parentNode;
+            if ($parent !== null) $parent->removeChild($img);
+        }
     }
 
-    $converted = $document->saveHTML();
+    // 2) Process anchors
+    $links = iterator_to_array($doc->getElementsByTagName('a'));
+    foreach ($links as $a) {
+        if (!$a instanceof DOMElement) continue;
+
+        $href = (string)$a->getAttribute('href');
+        // quick-skip empty hrefs
+        if ($href === '') {
+            // still remove small rendericons if present
+            foreach (iterator_to_array($a->getElementsByTagName('img')) as $chImg) {
+                if (!$chImg instanceof DOMElement) continue;
+                $cls = strtolower((string)$chImg->getAttribute('class'));
+                $src = (string)$chImg->getAttribute('src');
+                if (strpos($cls, 'rendericon') !== false || strpos($src, '/images/icons/') !== false) {
+                    $parent = $chImg->parentNode;
+                    if ($parent !== null) $parent->removeChild($chImg);
+                }
+            }
+            continue;
+        }
+
+        // verwijder preview/title/preview attributen zodat Markdown geen "title" toevoegt
+        foreach (['title','file-preview-title','file-preview-id','file-preview-type','data-linked-resource-id','data-attachment-name','data-attachment-type'] as $attr) {
+            if ($a->hasAttribute($attr)) $a->removeAttribute($attr);
+        }
+
+        // normaliseer target URL naar unieke naam of SharePoint (mapAttachmentUrlToTarget kent de REST patronen)
+        $new = mapAttachmentUrlToTarget($href, $attachmentsMeta);
+
+        // Als de anchor een IMG bevat: kijk of het een echte attachment-image is.
+        $imgs = $a->getElementsByTagName('img');
+        if ($imgs->length > 0) {
+            $firstImg = $imgs->item(0);
+            if ($firstImg instanceof DOMElement) {
+                $imgSrc = (string)$firstImg->getAttribute('src');
+
+                // Als img src naar een unique filename verwijst, detecteer attachment id
+                if (preg_match('/^(\d+)__.+$/', $imgSrc, $mImg)) {
+                    $aidImg = $mImg[1];
+                    $isImgAttachment = $attachmentsMeta[$aidImg]['is_image'] ?? true;
+                } else {
+                    // fallback: probeer mapAttachmentUrlToTarget op originele src
+                    $resolved = mapAttachmentUrlToTarget($imgSrc, $attachmentsMeta);
+                    if (preg_match('/^(\d+)__.+$/', $resolved, $mImg2)) {
+                        $aidImg = $mImg2[1];
+                        $isImgAttachment = $attachmentsMeta[$aidImg]['is_image'] ?? true;
+                        // ensure img src is the resolved one
+                        $firstImg->setAttribute('src', $resolved);
+                    } else {
+                        $isImgAttachment = false;
+                    }
+                }
+
+                if ($isImgAttachment) {
+                    // vervang <a><img/></a> door alleen de <img/> (geen klikbare link)
+                    $parent = $a->parentNode;
+                    if ($parent !== null) {
+                        // when we move $firstImg it is removed from $a automatically
+                        $parent->replaceChild($firstImg, $a);
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Nu: geen embedded image — behandel anchor zelf
+        // Als $new is onze unique filename (pattern 'digits__...') => kijk of image of niet
+        if (preg_match('/^(\d+)__(.+)$/', $new, $mNew)) {
+            $aid = $mNew[1];
+            $isImage = $attachmentsMeta[$aid]['is_image'] ?? false;
+
+            if (!$isImage) {
+                // Non-image: vervang de hele <a> door plain text "attachment:{unique}"
+                $textNode = $doc->createTextNode('attachment:' . $new);
+                $parent = $a->parentNode;
+                if ($parent !== null) {
+                    $parent->replaceChild($textNode, $a);
+                    continue;
+                }
+            } else {
+                // image (maar zonder inner <img>): laat anchor bestaan en zet href naar unique
+                $a->setAttribute('href', $new);
+                $linkText = trim((string)$a->textContent);
+                if ($linkText === '') {
+                    $a->textContent = $new; // fallback linktekst
+                }
+                continue;
+            }
+        } else {
+            // $new is waarschijnlijk een SharePoint absolute URL of andere externe URL
+            $a->setAttribute('href', $new);
+            $linkText = trim((string)$a->textContent);
+            if ($linkText === '') {
+                $parts = parse_url($new);
+                if (isset($parts['path'])) {
+                    $basename = basename($parts['path']);
+                    $a->textContent = $basename !== '' ? $basename : $new;
+                } else {
+                    $a->textContent = $new;
+                }
+            }
+            continue;
+        }
+    } // end foreach anchors
+
+    $converted = $doc->saveHTML();
+    libxml_clear_errors();
+    libxml_use_internal_errors($previous);
 
     return $converted !== false ? preg_replace('/^\s*<\?xml[^>]+\?>\s*/i', '', $converted) : $html;
 }
@@ -4340,7 +4417,7 @@ function normalizeAttachmentLinksInText(string $text, array $attachmentsMap): st
         if (defined('LIBXML_HTML_NODEFDTD')) $options |= LIBXML_HTML_NODEFDTD;
         $payload = '<?xml encoding="utf-8"?>' . $text;
         if (@$doc->loadHTML($payload, $options)) {
-            // process <img>
+            // process <img> (globaal cleanup)
             foreach (iterator_to_array($doc->getElementsByTagName('img')) as $img) {
                 if (!$img instanceof DOMElement) continue;
                 $src = (string)$img->getAttribute('src');
@@ -4354,17 +4431,106 @@ function normalizeAttachmentLinksInText(string $text, array $attachmentsMap): st
             }
 
             // process <a>
+            // we nemen een statische lijst (iterator_to_array) omdat we nodes kunnen vervangen
             foreach (iterator_to_array($doc->getElementsByTagName('a')) as $a) {
                 if (!$a instanceof DOMElement) continue;
                 $href = (string)$a->getAttribute('href');
                 if ($href === '') continue;
+
+                // verwijder rendericons / kleine Jira attachment icons binnen de <a>
+                foreach (iterator_to_array($a->getElementsByTagName('img')) as $innerImg) {
+                    if (!$innerImg instanceof DOMElement) continue;
+                    $cls = $innerImg->getAttribute('class') ?? '';
+                    $srcInner = $innerImg->getAttribute('src') ?? '';
+                    $isRenderIcon = stripos($cls, 'rendericon') !== false || stripos($srcInner, '/images/icons/') !== false;
+                    if ($isRenderIcon) {
+                        $parent = $innerImg->parentNode;
+                        if ($parent !== null) {
+                            $parent->removeChild($innerImg);
+                            // als parent <sup> nu leeg is, verwijder ook het <sup>
+                            if ($parent instanceof DOMElement && strtolower($parent->nodeName) === 'sup') {
+                                $txt = trim($parent->textContent ?? '');
+                                if ($txt === '') {
+                                    $grand = $parent->parentNode;
+                                    if ($grand !== null) $grand->removeChild($parent);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // normaliseer target URL naar unieke naam of SharePoint
                 $new = mapAttachmentUrlToTarget($href, $attachmentsMap);
-                $a->setAttribute('href', $new);
-                // verwijder title en preview attrs
+
+                // verwijder title en preview attrs zodat Markdown geen "title" toevoegt
                 foreach (['title','file-preview-title','file-preview-id','file-preview-type','data-linked-resource-id'] as $attr) {
                     if ($a->hasAttribute($attr)) $a->removeAttribute($attr);
                 }
-            }
+
+                // Als deze anchor een IMG bevat en die IMG verwijst naar één van onze attachments:
+                // → maak van <a><img/></a> gewoon <img/> (geen klikbare link).
+                $imgs = $a->getElementsByTagName('img');
+                if ($imgs->length > 0) {
+                    $firstImg = $imgs->item(0);
+                    $imgSrc = (string)$firstImg->getAttribute('src');
+
+                    // detecteer unique pattern en bijhorend attachment id
+                    if (preg_match('/^(\d+)__.+$/', $imgSrc, $m)) {
+                        $aid = $m[1];
+                        $isImgAttachment = $attachmentsMap[$aid]['is_image'] ?? true;
+                    } else {
+                        $isImgAttachment = false;
+                    }
+
+                    if ($isImgAttachment) {
+                        // verplaats img buiten de anchor (vervang anchor door child img)
+                        $parent = $a->parentNode;
+                        if ($parent !== null) {
+                            // important: $firstImg is child of $a. Wanneer we het naar parent verplaatsen,
+                            // wordt het node automatisch verwijderd uit $a en toegevoegd op de plaats van $a.
+                            $parent->replaceChild($firstImg, $a);
+                            continue; // anchor verwerkt; volgende anchor
+                        }
+                    }
+                }
+
+                // Nu: geen embedded image — als de target een unieke uploadnaam is:
+                if (preg_match('/^(\d+)__(.+)$/', $new, $mNew)) {
+                    $aid = $mNew[1];
+                    $isImage = $attachmentsMap[$aid]['is_image'] ?? false;
+
+                    if (!$isImage) {
+                        // Niet-image attachment: VERVANG de hele <a> door een plain text node: attachment:<unique>
+                        $textNode = $doc->createTextNode('attachment:' . $new);
+                        $parent = $a->parentNode;
+                        if ($parent !== null) {
+                            $parent->replaceChild($textNode, $a);
+                            continue;
+                        }
+                    } else {
+                        // image attachment maar geen inner img: laat anchor bestaan, zet fallback text als leeg
+                        $linkText = trim((string)$a->textContent);
+                        if ($linkText === '') {
+                            $a->textContent = $new; // fallback linktekst
+                        }
+                        $a->setAttribute('href', $new);
+                    }
+                } else {
+                    // new is een SharePoint absolute URL of een andere absolute URL
+                    $a->setAttribute('href', $new);
+                    $linkText = trim((string)$a->textContent);
+                    if ($linkText === '') {
+                        // vul linktekst met basename van de URL
+                        $parts = parse_url($new);
+                        if (isset($parts['path'])) {
+                            $basename = basename($parts['path']);
+                            $a->textContent = $basename !== '' ? $basename : $new;
+                        } else {
+                            $a->textContent = $new;
+                        }
+                    }
+                }
+            } // end foreach anchors
 
             $converted = $doc->saveHTML();
             if ($converted !== false) {
@@ -4378,18 +4544,33 @@ function normalizeAttachmentLinksInText(string $text, array $attachmentsMap): st
     }
 
     // 2) Markdown-style: replace ![alt](URL) and [label](URL)
-    $text = preg_replace_callback('/(!?\[[^]]*])\(\s*([^)]+?)\s*\)/m', function ($m) use ($attachmentsMap) {
-        $label = $m[1];
-        $url = trim($m[2]);
+    // Improved regex: capture optional "title" so we can ignore it (no "title" in final)
+    $text = preg_replace_callback(
+        '/(!?\[[^]]*])\(\s*([^\s)]+)(?:\s+"([^"]*)")?\s*\)/m',
+        function ($m) use ($attachmentsMap) {
+            $label = $m[1];              // '[..]' or '![..]'
+            $url   = trim($m[2]);        // the URL
+            // $title = $m[3] ?? null;   // intentionally ignored
 
-        // keep absolute SharePoint URLs untouched
-        if (preg_match('#^https?://#i', $url) && strpos($url, 'sharepoint.com') !== false) {
-            return $m[0];
-        }
+            // keep absolute SharePoint URLs and prefixed attachment: untouched
+            if (str_starts_with($url, 'attachment:') || (preg_match('#^https?://#i', $url) && strpos($url, 'sharepoint.com') !== false)) {
+                return $m[0];
+            }
 
-        $new = mapAttachmentUrlToTarget($url, $attachmentsMap);
-        return $label . '(' . $new . ')';
-    }, $text);
+            $new = mapAttachmentUrlToTarget($url, $attachmentsMap);
+
+            // If label is NOT an image link and the replacement is a bare unique filename, prefix with attachment:
+            $isImageLabel = str_starts_with($label, '!');
+
+            // heuristic: unique-upload filenames have the pattern: digits__something
+            if (!$isImageLabel && preg_match('/^\d+__.+$/', $new)) {
+                $new = 'attachment:' . $new;
+            }
+
+            return $label . '(' . $new . ')';
+        },
+        $text
+    );
 
     // 3) leftover plain URLs pointing to attachments (not inside markdown): replace them
     $text = preg_replace_callback('#https?://[^\s)\]}]+/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+)[^\s)\]}]*#i', function ($m) use ($attachmentsMap) {
@@ -4402,7 +4583,7 @@ function normalizeAttachmentLinksInText(string $text, array $attachmentsMap): st
 
     // Replace relative REST API attachment URLs like "/rest/api/3/attachment/content/10001"
     $text = preg_replace_callback(
-        '#(?:/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+))[^\s)\]}]*#i',
+        '#/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+)[^\s)\]}]*#i',
         function ($m) use ($attachmentsMap) {
             $id = $m[1] ?? null;
             if ($id === null) return $m[0];
@@ -4421,6 +4602,15 @@ function normalizeAttachmentLinksInText(string $text, array $attachmentsMap): st
         $meta = $attachmentsMap[$id];
         return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
     }, $text);
+
+    // UNESCAPE: zelfde als bij HTML->Markdown, voor het markdown-pad
+    $text = preg_replace_callback(
+        '/attachment:\d+\\\\_\\\\_[^)\s]*/i',
+        function ($m) {
+            return str_replace('\\_', '_', $m[0]);
+        },
+        $text
+    );
 
     return $text;
 }
@@ -4464,9 +4654,9 @@ function normalizeAttachmentsForMapping(PDO $pdo, int $mappingId, ?string $propo
         return null;
     }
 
-    // fetch attachments
+    // fetch attachments (we vragen nu ook mime_type op zodat we images kunnen detecteren)
     $sql = <<<SQL
-SELECT map.jira_attachment_id AS aid, map.sharepoint_url AS sp, att.filename AS orig_name, map.redmine_upload_token
+SELECT map.jira_attachment_id AS aid, map.sharepoint_url AS sp, att.filename AS orig_name, att.mime_type, map.redmine_upload_token
 FROM migration_mapping_attachments map
 JOIN staging_jira_attachments att ON att.id = map.jira_attachment_id
 WHERE map.jira_issue_id = :issue_id
@@ -4484,15 +4674,42 @@ SQL;
         return null;
     }
 
-    // build attachmentsMap (attachmentId => ['unique' => ..., 'sharepoint' => ...])
+    // build attachmentsMap (attachmentId => ['unique' => ..., 'sharepoint' => ..., 'is_image' => bool])
     $attachmentsMap = [];
     foreach ($rows as $r) {
         $aid = (string)($r['aid'] ?? '');
         if ($aid === '') continue;
+
         $orig = isset($r['orig_name']) ? (string)$r['orig_name'] : '';
         $unique = buildUploadUniqueName($aid, $orig);
         $sp = isset($r['sp']) ? trim((string)$r['sp']) : '';
-        $attachmentsMap[$aid] = ['unique' => $unique, 'sharepoint' => $sp !== '' ? $sp : null];
+
+        // detect extension (indien aanwezig)
+        $ext = '';
+        if ($orig !== '' && preg_match('/\.([A-Za-z0-9]{1,10})$/', $orig, $mext)) {
+            $ext = strtolower($mext[1]);
+        }
+
+        // eenvoudige extensie-check
+        $isImage = in_array($ext, ['jpg','jpeg','png','gif','bmp','webp','svg','tif','tiff'], true);
+
+        // fallback: gebruik mime_type als ext niets zegt
+        if (!$isImage && isset($r['mime_type'])) {
+            $mt = strtolower(trim((string)$r['mime_type']));
+            if ($mt !== '') {
+                if (str_starts_with($mt, 'image/')) {
+                    $isImage = true;
+                } elseif ($mt === 'image/svg+xml') {
+                    $isImage = true;
+                }
+            }
+        }
+
+        $attachmentsMap[$aid] = [
+            'unique' => $unique,
+            'sharepoint' => $sp !== '' ? $sp : null,
+            'is_image' => $isImage,
+        ];
     }
 
     // normalize tekst (DOM-pass + markdown replacements)
@@ -4504,3 +4721,4 @@ SQL;
     // GEEN DB UPDATE: alleen retour geven
     return $new;
 }
+
