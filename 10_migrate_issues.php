@@ -1278,6 +1278,10 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
                 $cascadingCustomFields = buildCascadingCustomFieldPayload($decodedIssue, $cascadingFieldIndex, $cascadingWarnings);
 
                 $mergedCustomFields = array_values(array_merge($proposedCustomFields, $cascadingCustomFields));
+
+                // Clean empty/invalid custom field entries (remove id-less entries, empty arrays, empty strings, etc.)
+                $mergedCustomFields = cleanCustomFieldEntries($mergedCustomFields);
+
                 $proposedCustomFieldPayload = $mergedCustomFields !== []
                     ? encodeJsonColumn($mergedCustomFields)
                     : null;
@@ -2667,26 +2671,25 @@ function buildRedmineAttachmentFilename(string $jiraAttachmentId, string $origin
     return $filename;
 }
 
-
 /**
- * @return array<string, array{parent_field_id: int, child_field_id: int, child_lookup: array<string, array{parent_label: string, parent_id: string|null, child_label: string, child_id: string}>, child_label_lookup: array<string, array<int, string>>}>|
- *         array{}
+ * @return array<string, array{parent_field_id: int, child_field_id: int, child_lookup: array<string, array{parent_option_id: int|null, child_option_id: int|null, parent_label: string, child_label: string}>, child_label_lookup: array<string, array<int,string>>, parent_options: array<string,int>, child_options: array<string,int>, parent_jira_options: array<string,int>}>|array{}
  */
-function buildCascadingFieldIndex(PDO $pdo): array
-{
+function buildCascadingFieldIndex(PDO $pdo): array {
     $sql = <<<SQL
         SELECT
             child.jira_field_id,
             child.jira_field_name,
             child.jira_allowed_values,
             child.redmine_custom_field_id AS child_redmine_custom_field_id,
+            child.redmine_custom_field_enumerations AS child_redmine_custom_field_enumerations,
             child.mapping_parent_custom_field_id,
             parent.mapping_id AS parent_mapping_id,
-            parent.redmine_custom_field_id AS parent_redmine_custom_field_id
+            parent.redmine_custom_field_id AS parent_redmine_custom_field_id,
+            parent.redmine_custom_field_enumerations AS parent_redmine_custom_field_enumerations
         FROM migration_mapping_custom_fields child
         LEFT JOIN migration_mapping_custom_fields parent
             ON parent.mapping_id = child.mapping_parent_custom_field_id
-        WHERE child.proposed_field_format = 'depending_list'
+        WHERE child.proposed_field_format IN ('depending_list','depending_enumeration')
           AND child.redmine_custom_field_id IS NOT NULL
           AND child.mapping_parent_custom_field_id IS NOT NULL
           AND child.migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS', 'READY_FOR_UPDATE', 'READY_FOR_CREATION')
@@ -2697,7 +2700,6 @@ function buildCascadingFieldIndex(PDO $pdo): array
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to build cascading field index: ' . $exception->getMessage(), 0, $exception);
     }
-
     if ($statement === false) {
         throw new RuntimeException('Failed to build cascading field index.');
     }
@@ -2705,54 +2707,107 @@ function buildCascadingFieldIndex(PDO $pdo): array
     $index = [];
     while (true) {
         $row = $statement->fetch(PDO::FETCH_ASSOC);
-        if ($row === false) {
-            break;
-        }
+        if ($row === false) break;
 
         $jiraFieldId = isset($row['jira_field_id']) ? (string)$row['jira_field_id'] : '';
-        if ($jiraFieldId === '') {
-            continue;
-        }
+        if ($jiraFieldId === '') continue;
 
         $allowedValues = decodeJsonColumn($row['jira_allowed_values'] ?? null);
-        if (!is_array($allowedValues)) {
-            continue;
-        }
+        if (!is_array($allowedValues)) continue;
 
-        $parentRedmineId = isset($row['parent_redmine_custom_field_id']) ? (int)$row['parent_redmine_custom_field_id'] : null;
-        $childRedmineId = isset($row['child_redmine_custom_field_id']) ? (int)$row['child_redmine_custom_field_id'] : null;
-        if ($parentRedmineId === null && isset($row['parent_mapping_id'])) {
-            $resolvedParentId = resolveParentRedmineFieldId($pdo, (int)$row['parent_mapping_id']);
-            if ($resolvedParentId !== null) {
-                $parentRedmineId = $resolvedParentId;
+        $parentRedmineFieldId = isset($row['parent_redmine_custom_field_id']) ? (int)$row['parent_redmine_custom_field_id'] : null;
+        $childRedmineFieldId = isset($row['child_redmine_custom_field_id']) ? (int)$row['child_redmine_custom_field_id'] : null;
+        if ($parentRedmineFieldId === null || $childRedmineFieldId === null) continue;
+
+        $descriptor = parseCascadingAllowedValues($allowedValues);
+        if ($descriptor === null) continue;
+
+        // decode enumerations for child and parent (Redmine option lists)
+        $childEnums = decodeJsonColumn($row['child_redmine_custom_field_enumerations'] ?? null);
+        $parentEnums = decodeJsonColumn($row['parent_redmine_custom_field_enumerations'] ?? null);
+
+        // build normalized name->optionId maps for quick lookup
+        $childOptions = [];
+        if (is_array($childEnums)) {
+            foreach ($childEnums as $e) {
+                if (!is_array($e)) continue;
+                if (!isset($e['name']) && !isset($e['label'])) continue;
+                $name = isset($e['name']) ? (string)$e['name'] : (string)$e['label'];
+                if (!isset($e['id']) || $e['id'] === null) continue;
+                $id = (string)$e['id'];
+                $childOptions[ normalizeLabelKey($name) ] = $id;
             }
         }
 
-        if ($parentRedmineId === null || $childRedmineId === null) {
-            continue;
+        $parentOptions = [];
+        if (is_array($parentEnums)) {
+            foreach ($parentEnums as $e) {
+                if (!is_array($e)) continue;
+                if (!isset($e['name']) && !isset($e['label'])) continue;
+                $name = isset($e['name']) ? (string)$e['name'] : (string)$e['label'];
+                if (!isset($e['id']) || $e['id'] === null) continue;
+                $id = (string)$e['id'];
+                $parentOptions[ normalizeLabelKey($name) ] = $id;
+            }
         }
 
-        $descriptor = parseCascadingAllowedValues($allowedValues);
-        if ($descriptor === null) {
-            continue;
+        // build child_lookup keyed by Jira child id (if present in descriptor['child_lookup'])
+        $childLookup = [];
+        $childLabelLookup = []; // normalized child label => array of parent option ids (strings)
+        $descriptorChildLookup = $descriptor['child_lookup'] ?? [];
+        foreach ($descriptorChildLookup as $jiraChildId => $info) {
+            $parentLabel = $info['parent_label'] ?? '';
+            $childLabel = $info['child_label'] ?? '';
+
+            $normParentLabel = normalizeLabelKey((string)$parentLabel);
+            $normChildLabel = normalizeLabelKey((string)$childLabel);
+
+            $parentOptionId = $parentOptions[$normParentLabel] ?? null;
+            $childOptionId = $childOptions[$normChildLabel] ?? null;
+
+            $childLookup[(string)$jiraChildId] = [
+                'parent_option_id' => $parentOptionId !== null ? (int)$parentOptionId : null,
+                'child_option_id' => $childOptionId !== null ? (int)$childOptionId : null,
+                'parent_label' => (string)$parentLabel,
+                'child_label' => (string)$childLabel,
+            ];
+
+            // also register reversed mapping: child label -> parent option id(s)
+            if ($normChildLabel !== '') {
+                if (!isset($childLabelLookup[$normChildLabel])) $childLabelLookup[$normChildLabel] = [];
+                if ($parentOptionId !== null) $childLabelLookup[$normChildLabel][] = $parentOptionId;
+            }
         }
 
-        $childLookup = isset($descriptor['child_lookup']) && is_array($descriptor['child_lookup']) ? $descriptor['child_lookup'] : [];
-        $childLabelLookup = isset($descriptor['child_label_lookup']) && is_array($descriptor['child_label_lookup']) ? $descriptor['child_label_lookup'] : [];
-        if ($childLookup === [] && $childLabelLookup === []) {
-            continue;
+        // ensure parents with no children still present in childLabelLookup (childless parent => empty array)
+        foreach ($childLabelLookup as $k => $arr) {
+            $childLabelLookup[$k] = array_values(array_unique($arr));
+        }
+
+        // build mapping of Jira parent ids -> redmine parent option id (helpful to detect parent ids)
+        $parentJiraOptions = [];
+        $descriptorParentIndex = $descriptor['parent_index'] ?? [];
+        if (is_array($descriptorParentIndex)) {
+            foreach ($descriptorParentIndex as $parentLabel => $jiraParentId) {
+                $normParentLabel = normalizeLabelKey((string)$parentLabel);
+                if (isset($parentOptions[$normParentLabel])) {
+                    $parentJiraOptions[(string)$jiraParentId] = (int)$parentOptions[$normParentLabel];
+                }
+            }
         }
 
         $index[$jiraFieldId] = [
-            'parent_field_id' => $parentRedmineId,
-            'child_field_id' => $childRedmineId,
+            'parent_field_id' => $parentRedmineFieldId,
+            'child_field_id' => $childRedmineFieldId,
             'child_lookup' => $childLookup,
             'child_label_lookup' => $childLabelLookup,
+            'parent_options' => $parentOptions, // normalized name => optionId (string)
+            'child_options' => $childOptions,   // normalized name => optionId (string)
+            'parent_jira_options' => $parentJiraOptions, // jira_parent_id => redmine_parent_option_id (int)
         ];
     }
 
     $statement->closeCursor();
-
     return $index;
 }
 
@@ -2826,7 +2881,7 @@ function buildCustomFieldMappingIndex(PDO $pdo): array
 
 /**
  * @param array<string, mixed> $issuePayload
- * @param array<string, array{parent_field_id: int, child_field_id: int, child_lookup: array<string, array{parent_label: string, parent_id: string|null, child_label: string, child_id: string}>, child_label_lookup: array<string, array<int, string>>}> $cascadingIndex
+ * @param array<string, array{parent_field_id: int, child_field_id: int, child_lookup: array<string, array{parent_option_id: int|null, child_option_id: int|null, parent_label: string, child_label: string}>, child_label_lookup: array<string, array<int,string>>, parent_options: array<string,int>, child_options: array<string,int>, parent_jira_options: array<string,int>}> $cascadingIndex
  * @param array<int, string> $warnings
  * @return array<int, array{id: int, value: string}>
  */
@@ -2849,34 +2904,90 @@ function buildCascadingCustomFieldPayload(array $issuePayload, array $cascadingI
             continue;
         }
 
-        $parentLabel = null;
-        $childLabel = null;
+        $parentOptionId = null;
+        $childOptionId = null;
 
-        if ($selection['child_id'] !== null && isset($meta['child_lookup'][$selection['child_id']])) {
-            $lookup = $meta['child_lookup'][$selection['child_id']];
-            $parentLabel = $lookup['parent_label'];
-            $childLabel = $lookup['child_label'];
-        } elseif ($selection['child_label'] !== null && isset($meta['child_label_lookup'][$selection['child_label']])) {
-            $potentialParents = $meta['child_label_lookup'][$selection['child_label']];
-            if (count($potentialParents) === 1) {
-                $parentLabel = current($potentialParents);
-                $childLabel = $selection['child_label'];
+        // Normalize ids to string
+        $selChildId = $selection['child_id'] !== null ? (string)$selection['child_id'] : null;
+        $selChildLabel = $selection['child_label'] ?? null;
+
+        // 1) If Jira provides a child_id and we have a lookup for it, use that (best case)
+        if ($selChildId !== null && isset($meta['child_lookup'][$selChildId])) {
+            $lk = $meta['child_lookup'][$selChildId];
+            $parentOptionId = $lk['parent_option_id'] ?? null;
+            $childOptionId = $lk['child_option_id'] ?? null;
+        } elseif ($selChildId !== null && isset($meta['parent_jira_options'][$selChildId])) {
+            // 1b) The provided numeric id is actually a Jira *parent* id (happens in Jira),
+            // so map it directly to the Redmine parent option id.
+            $parentOptionId = (int)$meta['parent_jira_options'][$selChildId];
+            $childOptionId = null;
+        } else {
+            // normalise child_label if present
+            $childLabel = $selChildLabel ?? null;
+            $normChildLabel = $childLabel !== null ? normalizeLabelKey($childLabel) : null;
+
+            // 2) If child_label matches a child option, find the child option id
+            if ($normChildLabel !== null && isset($meta['child_options'][$normChildLabel])) {
+                $childOptionId = (int)$meta['child_options'][$normChildLabel];
+                // try to find parent via child_label_lookup (list of parent option ids)
+                $possibleParents = $meta['child_label_lookup'][$normChildLabel] ?? [];
+                if (count($possibleParents) === 1) {
+                    $parentOptionId = (int)current($possibleParents);
+                } elseif (count($possibleParents) > 1) {
+                    // ambiguous -> if this label also exists as a parent label we prefer parent only mapping
+                    if (isset($meta['parent_options'][$normChildLabel])) {
+                        $parentOptionId = (int)$meta['parent_options'][$normChildLabel];
+                        $childOptionId = null;
+                    } else {
+                        $warnings[] = $jiraFieldId;
+                        continue;
+                    }
+                } else {
+                    // if no parent found, try to match parent via parent_options (maybe child label == parent label)
+                    if (isset($meta['parent_options'][$normChildLabel])) {
+                        $parentOptionId = (int)$meta['parent_options'][$normChildLabel];
+                        // in this case, treat this as parent only (child missing)
+                        $childOptionId = null;
+                    } else {
+                        $warnings[] = $jiraFieldId;
+                        continue;
+                    }
+                }
+            } else {
+                // 3) Maybe Jira value is actually a parent label (child missing) — map to parent only
+                $maybeParent = $selChildLabel ?? null;
+                if ($maybeParent !== null) {
+                    $normParent = normalizeLabelKey($maybeParent);
+                    if (isset($meta['parent_options'][$normParent])) {
+                        $parentOptionId = (int)$meta['parent_options'][$normParent];
+                        $childOptionId = null;
+                    } else {
+                        $warnings[] = $jiraFieldId;
+                        continue;
+                    }
+                } else {
+                    // nothing we can do
+                    $warnings[] = $jiraFieldId;
+                    continue;
+                }
             }
         }
 
-        if ($parentLabel === null || $childLabel === null) {
-            $warnings[] = $jiraFieldId;
-            continue;
+        // If we have parentOptionId, push it (parent custom field)
+        if ($parentOptionId !== null) {
+            $result[] = [
+                'id' => $meta['parent_field_id'],
+                'value' => (string)$parentOptionId,
+            ];
         }
 
-        $result[] = [
-            'id' => $meta['parent_field_id'],
-            'value' => $parentLabel,
-        ];
-        $result[] = [
-            'id' => $meta['child_field_id'],
-            'value' => $childLabel,
-        ];
+        // If we have childOptionId, push it (child custom field)
+        if ($childOptionId !== null) {
+            $result[] = [
+                'id' => $meta['child_field_id'],
+                'value' => (string)$childOptionId,
+            ];
+        }
     }
 
     return $result;
@@ -3028,10 +3139,12 @@ function normalizeCustomFieldValue(
     // Special case: Jira label-manager object { labels: [...] }
     $labelsObject = extractJiraLabelsObject($rawValue);
     if ($labelsObject !== null) {
-        return $isMultiple ? $labelsObject : ($labelsObject[0] ?? null);
+        // NIET vroegtijdig returnen: zet waarden zodat ze nog genormaliseerd worden
+        $values = $isMultiple ? $labelsObject : [ $labelsObject[0] ?? null ];
+    } else {
+        $values = $isMultiple ? normalizeToList($rawValue) : [$rawValue];
     }
 
-    $values = $isMultiple ? normalizeToList($rawValue) : [$rawValue];
     $normalizedValues = [];
 
     foreach ($values as $value) {
@@ -3121,10 +3234,30 @@ function normalizeCustomFieldSingleValue(string $fieldFormat, array $enumeration
 
             $timestamp = strtotime($stringValue);
             return $timestamp !== false ? date('Y-m-d', $timestamp) : null;
-        case 'list':
-        case 'enumeration':
         case 'string':
         case 'text':
+        case 'enumeration':
+        case 'list':
+            // list / enumeration / string / text
+            $stringValue = extractJiraCustomFieldString($rawValue);
+            if ($stringValue === null) {
+                return null;
+            }
+
+            // First try the full normalisation that we use for enumeration lookup keys
+            $normKey = normalizeLabelKey($stringValue);
+            if ($normKey !== '' && isset($enumerationLookup[$normKey])) {
+                return $enumerationLookup[$normKey];
+            }
+
+            // Fall back to simple lower-case trim (backwards compatibility)
+            $normalized = strtolower(trim($stringValue));
+            if ($normalized !== '' && isset($enumerationLookup[$normalized])) {
+                return $enumerationLookup[$normalized];
+            }
+
+            // Not found in the enumeration lookup — return original string value
+            return $stringValue;
         default:
             $stringValue = extractJiraCustomFieldString($rawValue);
             if ($stringValue === null) {
@@ -3154,8 +3287,8 @@ function normalizeToList(mixed $value): array
 }
 
 /**
- * @param array<int, array<string, mixed>> $enumerations
- * @return array<string, string>
+ * @param array<int, array<string,mixed>> $enumerations
+ * @return array<string, string>  // normalized_jira_value => redmine_option_id_or_label
  */
 function buildEnumerationLookup(array $enumerations): array
 {
@@ -3166,18 +3299,23 @@ function buildEnumerationLookup(array $enumerations): array
             continue;
         }
 
+        // prefer 'name' or 'label' as human label
         $redmineLabel = null;
         if (isset($entry['name'])) {
             $redmineLabel = (string)$entry['name'];
         } elseif (isset($entry['label'])) {
             $redmineLabel = (string)$entry['label'];
         }
-
         $redmineLabel = $redmineLabel !== null ? trim($redmineLabel) : null;
-        if ($redmineLabel === null || $redmineLabel === '') {
-            continue;
+
+        // option id, if present
+        $redmineOptionId = null;
+        if (isset($entry['id']) && ($entry['id'] !== null && $entry['id'] !== '')) {
+            // store as string for consistency
+            $redmineOptionId = (string)$entry['id'];
         }
 
+        // Candidate Jira inputs that should map to this enumeration entry
         $jiraValues = [];
         if (isset($entry['jira_value'])) {
             $jiraValues[] = $entry['jira_value'];
@@ -3189,21 +3327,47 @@ function buildEnumerationLookup(array $enumerations): array
             $jiraValues[] = $entry['jira_option_id'];
         }
 
+        // fallback — if nothing Jira-specific supplied, allow matching by redmine label
         if ($jiraValues === []) {
-            $jiraValues[] = $redmineLabel;
+            if ($redmineLabel !== null) {
+                $jiraValues[] = $redmineLabel;
+            } elseif ($redmineOptionId !== null) {
+                // last resort: map id to itself
+                $jiraValues[] = $redmineOptionId;
+            }
         }
 
         foreach ($jiraValues as $jiraValue) {
             if (!is_scalar($jiraValue)) {
                 continue;
             }
-
-            $normalized = strtolower(trim((string)$jiraValue));
+            $normalized = normalizeLabelKey((string)$jiraValue);
             if ($normalized === '') {
                 continue;
             }
 
-            $lookup[$normalized] = $redmineLabel;
+            // prefer to return the Redmine option id when available, otherwise the label
+            if ($redmineOptionId !== null) {
+                $lookup[$normalized] = $redmineOptionId;
+            } elseif ($redmineLabel !== null) {
+                $lookup[$normalized] = $redmineLabel;
+            }
+        }
+
+        // also map normalized redmine label -> option id (helps when incoming value is label)
+        if ($redmineOptionId !== null && $redmineLabel !== null) {
+            $normalizedLabel = normalizeLabelKey($redmineLabel);
+            if ($normalizedLabel !== '') {
+                $lookup[$normalizedLabel] = $redmineOptionId;
+            }
+        }
+
+        // Also keep a plain lowercased fallback (compatibility)
+        if ($redmineLabel !== null) {
+            $lc = strtolower(trim($redmineLabel));
+            if ($lc !== '' && !isset($lookup[$lc])) {
+                $lookup[$lc] = $redmineOptionId !== null ? $redmineOptionId : $redmineLabel;
+            }
         }
     }
 
@@ -4876,4 +5040,98 @@ function descriptionContainsAttachmentReference(string $description, array $issu
     }
 
     return false;
+}
+
+/**
+ * Normaliseer label voor vergelijkingen: lowercase, NBSP->space, collapse whitespace, trim.
+ */
+function normalizeLabelKey(string $s): string {
+    // NBSP -> normale spatie
+    $s = str_replace("\xc2\xa0", ' ', $s);
+    // trim and collapse whitespace
+    $s = trim(preg_replace('/\s+/u', ' ', $s));
+    // to lower
+    if (function_exists('mb_strtolower')) {
+        $s = mb_strtolower($s);
+    } else {
+        $s = strtolower($s);
+    }
+    return $s;
+}
+
+/**
+ * Remove empty/invalid custom field entries and normalise values:
+ * - if value is an array: remove empty elements, keep only non-empty strings, remove entry if array becomes empty
+ * - if value is scalar: remove if null/empty-string
+ * - ensure multi-values are arrays of non-empty strings, single-values are strings
+ *
+ * @param array<int,array{id:int, value: mixed}> $entries
+ * @return array<int,array{id:int, value: string|array<int,string>}>
+ */
+function cleanCustomFieldEntries(array $entries): array
+{
+    $out = [];
+
+    foreach ($entries as $entry) {
+        if (!is_array($entry)) continue;
+        if (!isset($entry['id'])) continue;
+        $id = $entry['id'];
+
+        $value = $entry['value'] ?? null;
+
+        // array -> trim/filter elements
+        if (is_array($value)) {
+            $clean = [];
+            foreach ($value as $v) {
+                if ($v === null) continue;
+                if (is_bool($v)) {
+                    $clean[] = $v ? '1' : '0';
+                    continue;
+                }
+                // only accept scalar values
+                if (!is_scalar($v)) continue;
+                $s = trim((string)$v);
+                if ($s === '') continue;
+                $clean[] = $s;
+            }
+            $clean = array_values(array_unique($clean));
+            if ($clean === []) {
+                // skip empty array values
+                continue;
+            }
+            $out[] = [
+                'id' => (int)$id,
+                'value' => $clean,
+            ];
+            continue;
+        }
+
+        // scalar or null
+        if ($value === null) {
+            continue;
+        }
+
+        if (is_bool($value)) {
+            $val = $value ? '1' : '0';
+            $out[] = ['id' => (int)$id, 'value' => $val];
+            continue;
+        }
+
+        if (!is_scalar($value)) {
+            continue;
+        }
+
+        $s = trim((string)$value);
+        if ($s === '') {
+            continue;
+        }
+
+        // keep single scalar value (string or numeric-as-string)
+        $out[] = [
+            'id' => (int)$id,
+            'value' => $s,
+        ];
+    }
+
+    return $out;
 }
