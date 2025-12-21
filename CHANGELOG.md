@@ -14,6 +14,22 @@ All notable changes to this project will be documented in this file.
 - Create the missing scripts: labels/tags, watchers, checklists, relations, workflows, custom workflows...
 - re-enable: RAILS_ENV=development bundle exec rake --silent redmine:attachments:prune
 
+## [0.0.77]
+
+- Persist transformed journal notes in `migration_mapping_journals.proposed_notes`
+  with an `automation_hash` so journal text can be reviewed before pushing.
+- Update journal pushes to prefer stored notes while keeping token insertion
+  confined to push-time.
+- Extend Jira issue link replacement to update stored journal notes alongside
+  issue descriptions and staged comment HTML.
+- Bump the journal migration script to `0.0.20`.
+
+## [0.0.78]
+
+- Include Jira resolution values in the issue custom field payload when a
+  matching `resolution` mapping exists.
+- Bump the issue migration script to `0.0.37`.
+
 ## [0.0.75]
 
 - Add a two-step issue push that creates issues without descriptions first, then

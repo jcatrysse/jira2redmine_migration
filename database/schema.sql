@@ -700,6 +700,8 @@ CREATE TABLE `migration_mapping_journals` (
                                               `redmine_journal_id` INT NULL,
                                               `migration_status` ENUM('PENDING', 'SUCCESS', 'FAILED', 'IGNORED') NOT NULL DEFAULT 'PENDING',
                                               `notes` TEXT,
+                                              `proposed_notes` LONGTEXT NULL,
+                                              `automation_hash` VARCHAR(64) NULL,
                                               `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                               `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                                               UNIQUE KEY `uk_jira_journal_entity` (`jira_entity_id`, `entity_type`)

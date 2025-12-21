@@ -11,7 +11,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
 
-const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.36';
+const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.37';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issues into staging_jira_issues (and related staging tables).',
     'transform' => 'Reconcile Jira issues with Redmine dependencies to populate migration mappings.',
@@ -1245,6 +1245,11 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
             $jiraIssueUrl
         );
 
+        // Replace Jira user profile links by user#redmine_id (transform-time)
+        if ($proposedDescription !== null && trim($proposedDescription) !== '') {
+            $proposedDescription = replaceJiraUserLinksWithRedmineIds($proposedDescription, $userLookup);
+        }
+
         $proposedStartDate = $issueCreatedAt !== null ? substr($issueCreatedAt, 0, 10) : null;
         $proposedDueDate = $issueDueDate !== null ? $issueDueDate : null;
         $proposedDoneRatio = ($issueStatusCategory !== null && strtolower($issueStatusCategory) === 'done') ? 100 : null;
@@ -1262,6 +1267,12 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
                 }
                 $customFieldWarnings = [];
                 $proposedCustomFields = buildMappedCustomFieldPayload($decodedIssue, $customFieldMappingIndex, $customFieldWarnings);
+                $proposedCustomFields = appendResolutionCustomFieldPayload(
+                    $decodedIssue,
+                    $customFieldMappingIndex,
+                    $proposedCustomFields,
+                    $customFieldWarnings
+                );
 
                 $cascadingWarnings = [];
                 $cascadingCustomFields = buildCascadingCustomFieldPayload($decodedIssue, $cascadingFieldIndex, $cascadingWarnings);
@@ -1870,6 +1881,19 @@ function runIssuePushPhase(
             ]);
             printf("  [error] %s%s", $message, PHP_EOL);
             continue;
+        }
+
+        // --- Post-push: vervang canonical Jira browse/links door #redmine_id (DB en optioneel Redmine)
+        // Alleen uitvoeren wanneer geen dry-run en push bevestigd is (we zitten al in push dus dat geldt)
+        try {
+            // $client bestaat eerder in deze functie (createRedmineClient)
+            // useExtendedApi/extendedApiPrefix zijn parameters van de functie
+            // updateRedmine = true => we proberen ook Redmine te PATCHen zodat description op Redmine verandert
+            replaceIssueLinksWithRedmineIds($pdo, $client, $useExtendedApi, $extendedApiPrefix, true);
+            printf("  [info] Post-push: Jira browse-links vervangen door #redmine_id in DB (en gepushed naar Redmine).%s", PHP_EOL);
+        } catch (Throwable $e) {
+            // niet fatale fout: log en ga verder
+            printf("  [warn] Post-push replacement of browse-links failed: %s%s", $e->getMessage(), PHP_EOL);
         }
 
         $updateStatement->execute([
@@ -2907,6 +2931,84 @@ function buildMappedCustomFieldPayload(array $issuePayload, array $mappingIndex,
     }
 
     return $result;
+}
+
+/**
+ * @param array<string, mixed> $issuePayload
+ * @param array<string, array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, is_multiple: bool, enumeration_lookup: array<string, string>}> $mappingIndex
+ * @param array<int, array{id: int, value: string|array<int, string>}> $currentPayload
+ * @param array<int, string> $warnings
+ * @return array<int, array{id: int, value: string|array<int, string>}>
+ */
+function appendResolutionCustomFieldPayload(
+    array $issuePayload,
+    array $mappingIndex,
+    array $currentPayload,
+    array &$warnings
+): array {
+    if ($mappingIndex === []) {
+        return $currentPayload;
+    }
+
+    $resolutionMeta = resolveCustomFieldMappingByName($mappingIndex, 'resolution');
+    if ($resolutionMeta === null) {
+        return $currentPayload;
+    }
+
+    $redmineFieldId = $resolutionMeta['redmine_custom_field_id'];
+    foreach ($currentPayload as $entry) {
+        if (isset($entry['id']) && (int)$entry['id'] === $redmineFieldId) {
+            return $currentPayload;
+        }
+    }
+
+    $fields = $issuePayload['fields'] ?? null;
+    if (!is_array($fields)) {
+        return $currentPayload;
+    }
+
+    $resolutionRaw = $fields['resolution'] ?? null;
+    if ($resolutionRaw === null) {
+        return $currentPayload;
+    }
+
+    $normalizedValue = normalizeCustomFieldValue(
+        $resolutionMeta['field_format'],
+        $resolutionMeta['is_multiple'],
+        $resolutionMeta['enumeration_lookup'],
+        $resolutionRaw
+    );
+
+    if ($normalizedValue === null && normalizeJiraEmptyValue($resolutionRaw) !== null) {
+        $warnings[] = 'resolution';
+        return $currentPayload;
+    }
+
+    if ($normalizedValue !== null) {
+        $currentPayload[] = [
+            'id' => $redmineFieldId,
+            'value' => $normalizedValue,
+        ];
+    }
+
+    return $currentPayload;
+}
+
+/**
+ * @param array<string, array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, is_multiple: bool, enumeration_lookup: array<string, string>}> $mappingIndex
+ * @return array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, is_multiple: bool, enumeration_lookup: array<string, string>}|null
+ */
+function resolveCustomFieldMappingByName(array $mappingIndex, string $fieldName): ?array
+{
+    $target = strtolower($fieldName);
+    foreach ($mappingIndex as $meta) {
+        $name = strtolower((string)($meta['jira_field_name'] ?? ''));
+        if ($name === $target) {
+            return $meta;
+        }
+    }
+
+    return null;
 }
 
 /**

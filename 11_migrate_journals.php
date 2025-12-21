@@ -10,7 +10,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
-const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.19';
+const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.20';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira comments and changelog entries into staging tables.',
     'transform' => 'Populate and classify journal mappings based on issue availability.',
@@ -104,6 +104,25 @@ function main(array $config, array $cliOptions): void
             $summary['failed'],
             PHP_EOL
         );
+        try {
+            transformDescriptionsForUsersAndCanonicalizeIssues($pdo);
+            printf("  [transform] Issue/comment descriptions: avatars removed and user links canonicalized.%s", PHP_EOL);
+        } catch (Throwable $e) {
+            printf("  [warn] transformDescriptionsForUsersAndCanonicalizeIssues failed: %s%s", $e->getMessage(), PHP_EOL);
+        }
+        try {
+            $noteSummary = populateProposedJournalNotes($pdo);
+            printf(
+                "  [transform] Proposed journal notes updated: %d (skipped manual overrides: %d).%s",
+                $noteSummary['updated'],
+                $noteSummary['skipped_manual'],
+                PHP_EOL
+            );
+        } catch (Throwable $e) {
+            printf("  [warn] populateProposedJournalNotes failed: %s%s", $e->getMessage(), PHP_EOL);
+        }
+        updateMigrationJournalProposedNotesWithRedmineIds($pdo);
+        printf("  [transform] Canonicalised proposed journal notes with #redmine_id.%s", PHP_EOL);
         if ($summary['status_breakdown'] !== []) {
             printf("  Current journal status breakdown:%s", PHP_EOL);
             foreach ($summary['status_breakdown'] as $status => $count) {
@@ -495,6 +514,176 @@ function summariseJournalStatuses(PDO $pdo): array
 }
 
 /**
+ * @return array{updated: int, skipped_manual: int}
+ * @throws JsonException
+ * @throws JsonException
+ */
+function populateProposedJournalNotes(PDO $pdo): array
+{
+    $userLookup = buildRedmineUserLookup($pdo);
+    $userMap = [];
+    foreach ($userLookup as $jiraAccountId => $meta) {
+        if (isset($meta['redmine_user_id'])) {
+            $userMap[$jiraAccountId] = (int)$meta['redmine_user_id'];
+        }
+    }
+
+    $attachmentMetadata = buildAttachmentMetadataIndex($pdo);
+    $adfConverter = new AdfConverter();
+
+    $sql = <<<SQL
+        SELECT
+            map.mapping_id,
+            map.jira_entity_id,
+            map.jira_issue_id,
+            map.entity_type,
+            map.proposed_notes,
+            map.automation_hash,
+            c.author_account_id AS comment_author,
+            c.body_adf AS comment_body_adf,
+            c.body_html AS comment_body_html,
+            c.created_at AS comment_created_at,
+            h.author_account_id AS history_author,
+            h.created_at AS history_created_at,
+            h.items_json AS history_items_json
+        FROM migration_mapping_journals map
+        LEFT JOIN staging_jira_comments c ON c.id = map.jira_entity_id AND map.entity_type = 'COMMENT'
+        LEFT JOIN staging_jira_changelogs h ON h.id = map.jira_entity_id AND map.entity_type = 'CHANGELOG'
+        JOIN migration_mapping_issues issue_map ON issue_map.jira_issue_id = map.jira_issue_id
+        WHERE issue_map.redmine_issue_id IS NOT NULL
+        ORDER BY map.mapping_id
+    SQL;
+
+    $statement = $pdo->query($sql);
+    if ($statement === false) {
+        throw new RuntimeException('Failed to load journal mappings for proposed note transform.');
+    }
+
+    $updateStatement = $pdo->prepare(<<<SQL
+        UPDATE migration_mapping_journals
+        SET
+            proposed_notes = :proposed_notes,
+            automation_hash = :automation_hash,
+            last_updated_at = CURRENT_TIMESTAMP
+        WHERE mapping_id = :mapping_id
+    SQL);
+
+    if ($updateStatement === false) {
+        throw new RuntimeException('Failed to prepare journal proposed note update statement.');
+    }
+
+    $updated = 0;
+    $skippedManual = 0;
+
+    while ($row = $statement->fetch(PDO::FETCH_ASSOC)) {
+        $mappingId = (int)$row['mapping_id'];
+        $jiraIssueId = (string)$row['jira_issue_id'];
+        $entityType = (string)$row['entity_type'];
+
+        $storedProposed = $row['proposed_notes'] ?? null;
+        $storedAutomationHash = normalizeStoredAutomationHash($row['automation_hash'] ?? null);
+        $currentHash = is_string($storedProposed) ? hash('sha256', $storedProposed) : null;
+
+        if ($storedAutomationHash !== null && $currentHash !== null && !hash_equals($storedAutomationHash, $currentHash)) {
+            $skippedManual++;
+            continue;
+        }
+
+        if ($entityType === 'COMMENT') {
+            $createdAt = isset($row['comment_created_at']) ? (string)$row['comment_created_at'] : null;
+            $authorId = isset($row['comment_author']) ? (string)$row['comment_author'] : null;
+            $bodyAdf = isset($row['comment_body_adf']) ? (string)$row['comment_body_adf'] : null;
+            $bodyHtml = isset($row['comment_body_html']) ? (string)$row['comment_body_html'] : null;
+
+            $displayAuthor = $authorId;
+            if ($authorId !== null && isset($userLookup[$authorId]['redmine_user_id'])) {
+                $displayAuthor = 'user#' . (int)$userLookup[$authorId]['redmine_user_id'];
+            }
+
+            $noteParts = [];
+            if ($authorId !== null) {
+                $noteParts[] = sprintf('Comment by %s', $displayAuthor);
+            } else {
+                $noteParts[] = 'Comment';
+            }
+            if ($createdAt !== null) {
+                $noteParts[] = sprintf('created at %s', $createdAt);
+            }
+            $noteParts[] = '';
+
+            $issueAttachments = $attachmentMetadata[$jiraIssueId] ?? [];
+            $bodyText = convertJournalBodyToMarkdown($bodyHtml, $bodyAdf, $issueAttachments, $adfConverter);
+            $bodyText = transform_text_in_transform_phase($bodyText, $userMap);
+
+            $note = implode(' ', array_filter($noteParts, static fn($part) => $part !== '')) . PHP_EOL . $bodyText;
+
+        } else {
+            $createdAt = isset($row['history_created_at']) ? (string)$row['history_created_at'] : null;
+            $itemsJson = isset($row['history_items_json']) ? (string)$row['history_items_json'] : null;
+
+            $noteLines = [];
+            $noteLines[] = sprintf(
+                'Jira history %s%s',
+                $row['jira_entity_id'],
+                $createdAt !== null ? ' at ' . $createdAt : ''
+            );
+
+            if ($itemsJson !== null) {
+                try {
+                    $items = json_decode($itemsJson, true, 512, JSON_THROW_ON_ERROR);
+                } catch (JsonException) {
+                    $items = [];
+                }
+
+                if (is_array($items)) {
+                    foreach ($items as $item) {
+                        if (!is_array($item) || !isset($item['field'])) {
+                            continue;
+                        }
+                        $field = (string)$item['field'];
+                        $from = isset($item['fromString']) ? (string)$item['fromString'] : '';
+                        $to = isset($item['toString']) ? (string)$item['toString'] : '';
+                        $noteLines[] = sprintf(
+                            '- %s: %s -> %s',
+                            $field,
+                            $from !== '' ? $from : '[empty]',
+                            $to !== '' ? $to : '[empty]'
+                        );
+                    }
+                }
+            }
+
+            $note = implode(PHP_EOL, $noteLines);
+            $note = transform_text_in_transform_phase($note, $userMap);
+
+        }
+        $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt);
+        $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
+        if ($attachmentBlock !== null) {
+            $note = rtrim($note) . PHP_EOL . PHP_EOL . $attachmentBlock;
+        }
+
+        $note = trim($note);
+        $newHash = hash('sha256', $note);
+
+        if ($storedProposed === $note && $storedAutomationHash === $newHash) {
+            continue;
+        }
+
+        $updateStatement->execute([
+            'proposed_notes' => $note,
+            'automation_hash' => $newHash,
+            'mapping_id' => $mappingId,
+        ]);
+        $updated++;
+    }
+
+    $statement->closeCursor();
+
+    return ['updated' => $updated, 'skipped_manual' => $skippedManual];
+}
+
+/**
  * @throws Throwable
  */
 function runJournalPushPhase(
@@ -552,6 +741,13 @@ function runJournalPushPhase(
     $attachmentMetadata = buildAttachmentMetadataIndex($pdo);
     $adfConverter = new AdfConverter();
 
+    try {
+        replaceIssueLinksWithRedmineIds($pdo, null, false, '', false);
+        printf("  [pre-push] Replaced Jira browse/selectedIssue links by #redmine_id in staging.%s", PHP_EOL);
+    } catch (Throwable $e) {
+        printf("  [warn] replaceIssueLinksWithRedmineIds(pre-push) failed: %s%s", $e->getMessage(), PHP_EOL);
+    }
+
     foreach ($candidateComments as $comment) {
         processCommentPush(
             $redmineClient,
@@ -591,6 +787,7 @@ function fetchPushableComments(PDO $pdo): array
             map.jira_issue_id,
             issue_map.jira_issue_key,
             issue_map.redmine_issue_id,
+            map.proposed_notes,
             c.author_account_id,
             c.body_adf,
             c.body_html,
@@ -628,6 +825,7 @@ function fetchPushableChangelog(PDO $pdo): array
             map.jira_issue_id,
             issue_map.jira_issue_key,
             issue_map.redmine_issue_id,
+            map.proposed_notes,
             h.author_account_id,
             h.created_at,
             h.items_json
@@ -654,6 +852,7 @@ function fetchPushableChangelog(PDO $pdo): array
  * @param array<string, mixed> $comment
  * @param array<string, array<string, string>> $attachmentMetadata
  * @param array<string, array{redmine_user_id: int}> $userLookup
+ * @throws JsonException
  */
 function processCommentPush(
     Client $client,
@@ -678,31 +877,59 @@ function processCommentPush(
     $updatedAt = isset($comment['updated_at']) ? (string)$comment['updated_at'] : null;
     $bodyAdf = isset($comment['body_adf']) ? (string)$comment['body_adf'] : null;
     $bodyHtml = isset($comment['body_html']) ? (string)$comment['body_html'] : null;
+    $proposedNotes = isset($comment['proposed_notes']) ? (string)$comment['proposed_notes'] : null;
 
-    $noteParts = [];
-    if ($authorId !== null) {
-        $noteParts[] = sprintf('Comment by %s', $authorId);
+    if ($proposedNotes !== null && trim($proposedNotes) !== '') {
+        $note = $proposedNotes;
     } else {
-        $noteParts[] = 'Comment';
-    }
-    if ($createdAt !== null) {
-        $noteParts[] = sprintf('created at %s', $createdAt);
-    }
-    $noteParts[] = '';
+        // resolve display author: prefer user#<id> wanneer mapping bestaat
+        $displayAuthor = $authorId;
+        if ($authorId !== null && isset($userLookup[$authorId]) && isset($userLookup[$authorId]['redmine_user_id'])) {
+            $displayAuthor = 'user#' . (int)$userLookup[$authorId]['redmine_user_id'];
+        }
 
-    $issueAttachments = $attachmentMetadata[$jiraIssueId] ?? [];
-    $bodyText = convertJournalBodyToMarkdown($bodyHtml, $bodyAdf, $issueAttachments, $adfConverter);
+        $noteParts = [];
+        if ($authorId !== null) {
+            $noteParts[] = sprintf('Comment by %s', $displayAuthor);
+        } else {
+            $noteParts[] = 'Comment';
+        }
+        if ($createdAt !== null) {
+            $noteParts[] = sprintf('created at %s', $createdAt);
+        }
+        $noteParts[] = '';
 
-    // build base note
-    $note = implode(' ', array_filter($noteParts, static fn($part) => $part !== '')) . PHP_EOL . $bodyText;
+        $issueAttachments = $attachmentMetadata[$jiraIssueId] ?? [];
+        $bodyText = convertJournalBodyToMarkdown($bodyHtml, $bodyAdf, $issueAttachments, $adfConverter);
+        // safety: replace any remaining profile links (ADF -> Markdown cases) to user#id
+        $bodyText = replaceJiraUserLinksWithRedmineIds($bodyText, $userLookup);
 
-    // fetch only attachments that are relevant and already uploaded / have sharepoint links
-    $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt);
+        // safety: replace any remaining browse/selectedIssue links to #redmine_id using mapping
+        // build jira->redmine map once per push
+        static $jiraToRedmineMap = null;
+        if ($jiraToRedmineMap === null) {
+            $jiraToRedmineMap = [];
+            $stmt = $pdo->query("SELECT jira_issue_key, redmine_issue_id FROM migration_mapping_issues WHERE redmine_issue_id IS NOT NULL");
+            while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $jiraToRedmineMap[strtoupper($r['jira_issue_key'])] = (int)$r['redmine_issue_id'];
+            }
+            $stmt->closeCursor();
+        }
+        if (!empty($jiraToRedmineMap)) {
+            $bodyText = inlineReplaceJiraIssueKeysWithHashes($bodyText, $jiraToRedmineMap);
+        }
 
-    // append journal attachment references (read-only, no DB modifications here)
-    $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
-    if ($attachmentBlock !== null) {
-        $note = rtrim($note) . PHP_EOL . PHP_EOL . $attachmentBlock;
+        // build base note
+        $note = implode(' ', array_filter($noteParts, static fn($part) => $part !== '')) . PHP_EOL . $bodyText;
+
+        // fetch only attachments that are relevant and already uploaded / have sharepoint links
+        $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt);
+
+        // append journal attachment references (read-only, no DB modifications here)
+        $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
+        if ($attachmentBlock !== null) {
+            $note = rtrim($note) . PHP_EOL . PHP_EOL . $attachmentBlock;
+        }
     }
 
     // add token only when we don't use the extended API (fallback matching)
@@ -740,7 +967,7 @@ function processCommentPush(
         $response = $client->request($useExtendedApi ? 'patch' : 'put', $endpoint, $options);
     } catch (BadResponseException $exception) {
         $response = $exception->getResponse();
-        $message = sprintf('Failed to create journal for Jira %s on issue %s', 'comment ' . $jiraCommentId, $jiraIssueKey);
+        $message = sprintf('Failed to create journal for Jira comment %s on issue %s', $jiraCommentId, $jiraIssueKey);
         if ($response instanceof ResponseInterface) {
             $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
             $message .= ': ' . extractErrorBody($response);
@@ -751,7 +978,7 @@ function processCommentPush(
         printf("  [error] %s%s", $message, PHP_EOL);
         return;
     } catch (GuzzleException $exception) {
-        $message = sprintf('Failed to create journal for Jira %s on issue %s: %s', 'comment ' . $jiraCommentId, $jiraIssueKey, $exception->getMessage());
+        $message = sprintf('Failed to create journal for Jira comment %s on issue %s: %s', $jiraCommentId, $jiraIssueKey, $exception->getMessage());
         markJournalPushFailure($pdo, $mappingId, $message);
         printf("  [error] %s%s", $message, PHP_EOL);
         return;
@@ -824,43 +1051,84 @@ function processChangelogPush(
 
     $createdAt = isset($history['created_at']) ? (string)$history['created_at'] : null;
     $itemsJson = isset($history['items_json']) ? (string)$history['items_json'] : null;
+    $proposedNotes = isset($history['proposed_notes']) ? (string)$history['proposed_notes'] : null;
 
-    $noteLines = [];
-    $noteLines[] = sprintf('Jira history %s%s', $historyId, $createdAt !== null ? ' at ' . $createdAt : '');
+    // If a user has explicitly provided proposed_notes, use them.
+    if ($proposedNotes !== null && trim($proposedNotes) !== '') {
+        $baseNote = $proposedNotes;
+    } else {
+        // detect attachments referenced for this journal
+        $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt);
 
-    if ($itemsJson !== null) {
-        try {
-            $items = json_decode($itemsJson, true, 512, JSON_THROW_ON_ERROR);
-        } catch (JsonException $exception) {
-            $items = [];
-        }
-
-        if (is_array($items)) {
-            foreach ($items as $item) {
-                if (!is_array($item) || !isset($item['field'])) {
-                    continue;
-                }
-                $field = (string)$item['field'];
-                $from = isset($item['fromString']) ? (string)$item['fromString'] : '';
-                $to = isset($item['toString']) ? (string)$item['toString'] : '';
-                $noteLines[] = sprintf('- %s: %s -> %s', $field, $from !== '' ? $from : '[empty]', $to !== '' ? $to : '[empty]');
+        // detect whether items mention attachments (best-effort)
+        $items = [];
+        if ($itemsJson !== null) {
+            try {
+                $items = json_decode($itemsJson, true, 512, JSON_THROW_ON_ERROR) ?: [];
+            } catch (JsonException) {
+                $items = [];
             }
         }
+        $mentionsAttachment = false;
+        if (is_array($items)) {
+            foreach ($items as $it) {
+                if (!is_array($it) || !isset($it['field'])) continue;
+                $f = strtolower((string)$it['field']);
+                if (str_contains($f, 'attachment')) {
+                    $mentionsAttachment = true;
+                    break;
+                }
+            }
+        }
+
+        // If neither attachments mapped nor a mention of attachments, skip (we don't want to pollute Redmine).
+        if (empty($journalAttachments) && !$mentionsAttachment) {
+            $msg = 'Skipped changelog push: no proposed note and no attachments to show.';
+            markJournalPushSkipped($pdo, $mappingId, $msg);
+            printf("  [skip] %s (jira history %s on %s)%s", $msg, $historyId, $jiraIssueKey, PHP_EOL);
+            return;
+        }
+
+        // Build a concise note focusing on attachments (and only include items if they look meaningful)
+        $noteLines = [];
+        $noteLines[] = sprintf('Jira history %s%s', $historyId, $createdAt !== null ? ' at ' . $createdAt : '');
+
+        // If items contain more than attachment changes, we might include them — but keep concise.
+        $meaningfulItems = [];
+        if (is_array($items)) {
+            foreach ($items as $it) {
+                if (!is_array($it) || !isset($it['field'])) continue;
+                $field = (string)$it['field'];
+                $from = isset($it['fromString']) ? (string)$it['fromString'] : '';
+                $to = isset($it['toString']) ? (string)$it['toString'] : '';
+                // include only if not pure status/priority changes? We'll include all if they mention attachment
+                if (str_contains(strtolower($field), 'attachment')) {
+                    // skip — we'll handle via attachment block
+                    continue;
+                }
+                // optionally include small summary for other fields if you want:
+                // $meaningfulItems[] = sprintf('- %s: %s -> %s', $field, $from !== '' ? $from : '[empty]', $to !== '' ? $to : '[empty]');
+            }
+        }
+
+        // If there are meaningful items and you want to include them, uncomment:
+        // foreach ($meaningfulItems as $li) $noteLines[] = $li;
+
+        // Always append an attachment block if present
+        $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
+        if ($attachmentBlock !== null) {
+            $noteLines[] = '';
+            $noteLines[] = $attachmentBlock;
+        } elseif ($mentionsAttachment) {
+            // Fallback message if Jira mentions attachments but we have no mapped attachments
+            $noteLines[] = '';
+            $noteLines[] = '> Attachments were added in Jira (not available / not mapped).';
+        }
+
+        $baseNote = implode(PHP_EOL, $noteLines);
     }
 
-    $baseNote = implode(PHP_EOL, $noteLines);
-
-    // fetch attachments for this issue/journal (read-only)
-    $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt);
-
-    // append attachment block if any
-    $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
-    if ($attachmentBlock !== null) {
-        $baseNote = rtrim($baseNote) . PHP_EOL . PHP_EOL . $attachmentBlock;
-    }
-
-    // Add invisible migration token
-    // add token only when we don't use the extended API (fallback matching)
+    // Add invisible migration token (if not using extended API)
     if (!$useExtendedApi) {
         $token = sprintf('<!-- MIGRATE:%d -->', $mappingId);
         $baseNote = rtrim($baseNote) . PHP_EOL . PHP_EOL . $token;
@@ -868,7 +1136,7 @@ function processChangelogPush(
         $token = null;
     }
 
-    // only include journal overrides (timestamps & user) when extended API is used
+    // Build journal overrides same as for comments
     $journalOverrides = $useExtendedApi
         ? buildJournalOverrides($history['author_account_id'] ?? null, $createdAt, $createdAt, $userLookup, $defaultAuthorId, true)
         : [];
@@ -890,7 +1158,7 @@ function processChangelogPush(
         $options['query'] = ['notify' => 'false', 'send_notification' => 0];
     }
 
-    // execute the request and capture the response
+    // execute and handle response similar to comments...
     try {
         $response = $client->request($useExtendedApi ? 'patch' : 'put', $endpoint, $options);
     } catch (BadResponseException $exception) {
@@ -912,11 +1180,9 @@ function processChangelogPush(
         return;
     }
 
-    // If we're using the extended API, prefer the returned journal id
+    // handle response (extended api vs token/time like in comment flow)
     if ($useExtendedApi) {
         $respBody = decodeJsonResponse($response);
-
-        // Best-effort locations: top-level 'journal' or nested under 'extended_api'
         $journalId = null;
         if (isset($respBody['journal']['id'])) {
             $journalId = (int)$respBody['journal']['id'];
@@ -925,11 +1191,9 @@ function processChangelogPush(
         }
 
         if ($journalId !== null) {
-            // success, mark and continue
             markJournalPushSuccess($pdo, $mappingId, $journalId);
-            printf("  [journal] (extended api) Jira %s %s → Redmine issue #%d, journal #%d%s",
-                isset($jiraCommentId) ? 'comment' : 'changelog',
-                ($jiraCommentId ?? $historyId),
+            printf("  [journal] (extended api) Jira history %s → Redmine issue #%d, journal #%d%s",
+                $historyId,
                 $redmineIssueId,
                 $journalId,
                 PHP_EOL
@@ -937,18 +1201,16 @@ function processChangelogPush(
             return;
         }
 
-        // Extended API did not return a journal id — treat as failure so it gets investigated
-        $msg = sprintf('Extended API did not return journal id for Jira %s on Redmine issue %s', 'history ' . $historyId, $jiraIssueKey);
+        $msg = sprintf('Extended API did not return journal id for Jira history %s on Redmine issue %s', $historyId, $jiraIssueKey);
         markJournalPushFailure($pdo, $mappingId, $msg);
         printf("  [error] %s%s", $msg, PHP_EOL);
         return;
     }
 
-    // If we reach here, not using extended API — do the token/time-based search
     $journalId = fetchLatestJournalId($client, $redmineIssueId, $token, $createdAt);
 
     if ($journalId === null) {
-        $msg = sprintf('Unable to confirm Redmine journal for Jira %s on issue %s', 'history ' . $historyId, $jiraIssueKey);
+        $msg = sprintf('Unable to confirm Redmine journal for Jira history %s on issue %s', $historyId, $jiraIssueKey);
         markJournalPushFailure($pdo, $mappingId, $msg);
         printf("  [error] %s%s", $msg, PHP_EOL);
         return;
@@ -1162,6 +1424,9 @@ function buildRedmineAttachmentFilename(string $jiraAttachmentId, string $origin
     return $filename;
 }
 
+/**
+ * @throws JsonException
+ */
 function convertJournalBodyToMarkdown(?string $bodyHtml, ?string $bodyAdf, array $issueAttachments, AdfConverter $adfConverter): string
 {
     $bodyText = null;
@@ -1212,6 +1477,16 @@ function normalizeDateTimeString(?string $value): ?string
     }
 
     return $dt->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+}
+
+function normalizeStoredAutomationHash(mixed $value): ?string
+{
+    if (!is_string($value)) {
+        return null;
+    }
+
+    $trimmed = trim($value);
+    return $trimmed !== '' ? $trimmed : null;
 }
 
 /**
@@ -1688,4 +1963,86 @@ function buildJournalAttachmentBlock(array $attachments): ?string
     }
 
     return implode(PHP_EOL, $lines);
+}
+
+function updateMigrationJournalProposedNotesWithRedmineIds(PDO $pdo): void
+{
+    // build jira->redmine map
+    $jiraToRedmine = [];
+    $stmt = $pdo->query("SELECT jira_issue_key, redmine_issue_id FROM migration_mapping_issues WHERE redmine_issue_id IS NOT NULL");
+    while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $jiraToRedmine[strtoupper($r['jira_issue_key'])] = (int)$r['redmine_issue_id'];
+    }
+    $stmt->closeCursor();
+    if ($jiraToRedmine === []) {
+        return;
+    }
+
+    // build userMap (for transform_text_in_transform_phase) and userLookup (for replaceJiraUserLinksWithRedmineIds)
+    $userLookup = buildRedmineUserLookup($pdo); // jiraAccountId => ['redmine_user_id' => int]
+    $userMap = [];
+    foreach ($userLookup as $jiraAcc => $meta) {
+        if (!empty($meta['redmine_user_id'])) {
+            $userMap[(string)$jiraAcc] = (int)$meta['redmine_user_id'];
+        }
+    }
+
+    // select proposed_notes for journals whose issue is already mapped (we can canonicalize then)
+    $selSql = <<<SQL
+SELECT map.mapping_id, map.proposed_notes
+FROM migration_mapping_journals map
+JOIN migration_mapping_issues im ON im.jira_issue_id = map.jira_issue_id
+WHERE im.redmine_issue_id IS NOT NULL
+  AND map.proposed_notes IS NOT NULL
+  AND map.proposed_notes <> ''
+SQL;
+    $sel = $pdo->query($selSql);
+    if ($sel === false) {
+        throw new RuntimeException('Failed to select migration_mapping_journals for canonicalization.');
+    }
+
+    $upd = $pdo->prepare("UPDATE migration_mapping_journals SET proposed_notes = :notes, automation_hash = :ahash, last_updated_at = CURRENT_TIMESTAMP WHERE mapping_id = :mid");
+    if ($upd === false) {
+        throw new RuntimeException('Failed to prepare update for migration_mapping_journals.');
+    }
+
+    while ($row = $sel->fetch(PDO::FETCH_ASSOC)) {
+        $mid = (int)$row['mapping_id'];
+        $notes = (string)$row['proposed_notes'];
+
+        // 1) transform (avatars/profile links → placeholders and profile links → user#N)
+        $transformed = transform_text_in_transform_phase($notes, $userMap);
+        $transformed = replaceJiraUserLinksWithRedmineIds($transformed, $userLookup);
+
+        // 2) canonicalise jira issue links → #redmine_id
+        $canonical = inlineReplaceJiraIssueKeysWithHashes($transformed, $jiraToRedmine);
+
+        if ($canonical !== $notes) {
+            $newHash = hash('sha256', $canonical);
+            $upd->execute([':notes' => $canonical, ':ahash' => $newHash, ':mid' => $mid]);
+        }
+    }
+
+    $sel->closeCursor();
+}
+
+function markJournalPushSkipped(PDO $pdo, int $mappingId, string $message = null): void
+{
+    $sql = <<<SQL
+        UPDATE migration_mapping_journals
+        SET
+            migration_status = 'SKIPPED',
+            notes = :notes,
+            last_updated_at = CURRENT_TIMESTAMP
+        WHERE mapping_id = :mapping_id
+    SQL;
+
+    $stmt = $pdo->prepare($sql);
+    if ($stmt === false) throw new RuntimeException('Failed to prepare journal skipped update.');
+
+    $stmt->execute([
+        'notes' => $message,
+        'mapping_id' => $mappingId,
+    ]);
+    $stmt->closeCursor();
 }

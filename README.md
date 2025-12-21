@@ -918,7 +918,7 @@ php 10_migrate_issues.php --help
    Cascading parent/child pairs remain a dedicated special case built from the
    same filtered mapping set. This makes the rule explicit: only custom fields
    that are enabled and mapped in `migration_mapping_custom_fields` are sent to
-   Redmine, including system fields such as `resolution` and `resolutiondate`
+   Redmine, including system fields such as `resolution`
    when you add them to the mapping table.
 3. **Push (`push`)** – executes in two steps so issue creation and later updates
    are independently restartable. The first step lists rows in
@@ -1010,14 +1010,17 @@ php 11_migrate_journals.php --help
 2. **Transform (`transform`)** – inserts missing rows into
    `migration_mapping_journals`, joins them with the issue mapping table, and
    marks entries as `READY_FOR_PUSH` once the target Redmine issue identifier is
-   known. Failed rows keep their diagnostic notes for follow-up.
+   known. The transform now persists each journal's proposed Markdown into
+   `migration_mapping_journals.proposed_notes` (plus an `automation_hash`) so
+   you can review the exact note text before pushing; manual edits are preserved
+   unless you clear the hash. Failed rows keep their diagnostic notes for
+   follow-up.
 3. **Push (`push`)** – in dry-run mode prints the target issue and entity ID for
-   each queued comment/changelog. With `--confirm-push` the script converts the
-   rendered HTML bodies to CommonMark (falling back to the ADF JSON when needed),
-   rewrites Jira attachment links to `attachment:` references, and updates
-   Redmine with notes only. When `--use-extended-api` is enabled the request
-   travels through `/extended_api/issues/:id.json`, carrying the original author
-   and timestamp metadata so journal history matches Jira.
+   each queued comment/changelog. With `--confirm-push` the script prefers the
+   stored `proposed_notes` content (adding the migration token only when needed)
+   and updates Redmine with notes only. When `--use-extended-api` is enabled the
+   request travels through `/extended_api/issues/:id.json`, carrying the
+   original author and timestamp metadata so journal history matches Jira.
 
 > **Prerequisites:** run `10_migrate_issues.php --phases=push --confirm-push` to
 > create the parent issues first.
