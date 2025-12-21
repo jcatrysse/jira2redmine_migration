@@ -62,6 +62,9 @@ return [
             'jql' => '',
             // Number of issues requested per Jira search page (max 100).
             'batch_size' => 100,
+            // Optional base URL used to link back to the original Jira issue in migrated descriptions.
+            // Defaults to the Jira base_url when left null.
+            'jira_issue_base_url' => null,
             // Optional Redmine identifiers used as fallbacks when Jira data cannot be matched automatically.
             'default_redmine_project_id' => null,
             'default_redmine_tracker_id' => null,

@@ -8,12 +8,48 @@ All notable changes to this project will be documented in this file.
 - Fine-tune the issues, and journals scripts.
 - Migrate issues script:
     - on a rerun, newer issues should be fetched.
-    - on transform, the script should ignore custom fields we didn't create in Redmine, based on the migration_mapping_custom_fields table.
     - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
         - I manually added in the database, after the transform phase but before the push phase: INSERT INTO `migration_mapping_custom_fields` (`mapping_id`, `jira_field_id`, `jira_field_name`, `jira_schema_type`, `jira_schema_custom`, `jira_project_ids`, `jira_issue_type_ids`, `jira_allowed_values`, `redmine_custom_field_id`, `mapping_parent_custom_field_id`, `redmine_custom_field_enumerations`, `proposed_redmine_name`, `proposed_field_format`, `proposed_is_required`, `proposed_is_filter`, `proposed_is_for_all`, `proposed_is_multiple`, `proposed_possible_values`, `proposed_value_dependencies`, `proposed_default_value`, `proposed_tracker_ids`, `proposed_role_ids`, `proposed_project_ids`, `migration_status`, `notes`, `automation_hash`, `created_at`, `last_updated_at`) VALUES (NULL, 'resolution', 'resolution', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'Resolution', 'text', NULL, NULL, '1', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'READY_FOR_CREATION', NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), (NULL, 'resolutiondate', 'resolutiondate', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'Resolution date', 'date', NULL, '1', '1', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'READY_FOR_CREATION', NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         - Ensure this logic fits the issue migration logic.
-- Create the missing scripts: labels/tags, watchers, checklists, relations, subtasks, workflows, custom workflows...
+- Create the missing scripts: labels/tags, watchers, checklists, relations, workflows, custom workflows...
 - re-enable: RAILS_ENV=development bundle exec rake --silent redmine:attachments:prune
+
+## [0.0.75]
+
+- Add a two-step issue push that creates issues without descriptions first, then
+  updates descriptions and parent links in a restartable second pass using the
+  new `READY_FOR_UPDATE` / `UPDATE_FAILED` statuses in
+  `migration_mapping_issues`.
+- Append SharePoint attachment links and a "Original Jira issue" backlink to
+  transformed issue descriptions, with an optional
+  `migration.issues.jira_issue_base_url` override.
+- Align journal note conversion with the issue description pipeline (HTML →
+  ADF → plaintext) while limiting journal pushes to notes only.
+- Bump the issue migration script to `0.0.35` and the journal migration script
+  to `0.0.18`.
+
+## [0.0.76]
+
+- Move Jira description conversion helpers into a shared `description_conversion.php`
+  module so issues and journals reuse the same HTML/ADF pipeline.
+- Adjust SharePoint and Jira backlink formatting in issue descriptions to the
+  requested heading-style layout.
+- Bump the issue migration script to `0.0.36` and the journal migration script
+  to `0.0.19`.
+
+## [0.0.75]
+
+- Add a two-step issue push that creates issues without descriptions first, then
+  updates descriptions and parent links in a restartable second pass using the
+  new `READY_FOR_UPDATE` / `UPDATE_FAILED` statuses in
+  `migration_mapping_issues`.
+- Append SharePoint attachment links and a "Original Jira issue" backlink to
+  transformed issue descriptions, with an optional
+  `migration.issues.jira_issue_base_url` override.
+- Align journal note conversion with the issue description pipeline (HTML →
+  ADF → plaintext) while limiting journal pushes to notes only.
+- Bump the issue migration script to `0.0.35` and the journal migration script
+  to `0.0.18`.
 
 ## [0.0.74]
 

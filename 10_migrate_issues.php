@@ -9,11 +9,9 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
-use League\HTMLToMarkdown\HtmlConverter;
-use League\HTMLToMarkdown\Converter\TableConverter;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
 
-const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.34';
+const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.36';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issues into staging_jira_issues (and related staging tables).',
     'transform' => 'Reconcile Jira issues with Redmine dependencies to populate migration mappings.',
@@ -24,12 +22,14 @@ if (PHP_SAPI !== 'cli') {
     throw new RuntimeException('This script is intended to be run from the command line.');
 }
 
+require_once __DIR__ . '/lib/description_conversion.php';
+
 /**
  * @param array<string, mixed> $candidate
  * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string}> $attachments
  * @return array{endpoint: string, body: string}|null
  */
-function buildIssuePayloadForPreview(
+function buildIssueCreationPayloadForPreview(
     array $candidate,
     array $attachments,
     bool $useExtendedApi,
@@ -38,19 +38,11 @@ function buildIssuePayloadForPreview(
 ): ?array {
     $jiraIssueKey = (string)$candidate['jira_issue_key'];
 
-    $description = $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null;
-
     $redmineUploads = array_values(array_filter(
         $attachments,
         static fn($attachment) => $attachment['redmine_upload_token'] !== ''
             && ($attachment['sharepoint_url'] ?? '') === ''
     ));
-    $sharePointLinks = array_values(array_filter(
-        $attachments,
-        static fn($attachment) => ($attachment['sharepoint_url'] ?? '') !== ''
-    ));
-
-    $descriptionWithSharePoint = appendSharePointLinksToDescription($description, $sharePointLinks);
 
     try {
         $customFieldPayload = decodeCustomFieldPayload($candidate['proposed_custom_field_payload']);
@@ -71,7 +63,6 @@ function buildIssuePayloadForPreview(
         'status_id' => $candidate['proposed_status_id'] !== null ? (int)$candidate['proposed_status_id'] : null,
         'priority_id' => $candidate['proposed_priority_id'] !== null ? (int)$candidate['proposed_priority_id'] : null,
         'subject' => isset($candidate['proposed_subject']) ? (string)$candidate['proposed_subject'] : null,
-        'description' => $descriptionWithSharePoint,
         'start_date' => $candidate['proposed_start_date'] !== null ? (string)$candidate['proposed_start_date'] : null,
         'due_date' => $candidate['proposed_due_date'] !== null ? (string)$candidate['proposed_due_date'] : null,
         'assigned_to_id' => $candidate['proposed_assigned_to_id'] !== null ? (int)$candidate['proposed_assigned_to_id'] : null,
@@ -107,6 +98,55 @@ function buildIssuePayloadForPreview(
     $endpoint = $useExtendedApi
         ? buildExtendedApiPath($extendedApiPrefix, 'issues.json')
         : 'issues.json';
+
+    return [
+        'endpoint' => $endpoint,
+        'body' => $encoded,
+    ];
+}
+
+/**
+ * @param array<string, mixed> $candidate
+ * @return array{endpoint: string, body: string}|null
+ */
+function buildIssueUpdatePayloadForPreview(
+    array $candidate,
+    bool $useExtendedApi,
+    string $extendedApiPrefix
+): ?array {
+    $jiraIssueKey = (string)$candidate['jira_issue_key'];
+
+    $issuePayload = array_filter([
+        'description' => $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null,
+        'parent_issue_id' => $candidate['parent_redmine_issue_id'] ?? null,
+    ], static fn($value) => $value !== null);
+
+    if ($issuePayload === []) {
+        return null;
+    }
+
+    if ($useExtendedApi) {
+        $issuePayload = array_merge($issuePayload, buildExtendedIssueUpdateOverrides($candidate));
+    }
+
+    $payload = ['issue' => $issuePayload];
+
+    try {
+        $encoded = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    } catch (JsonException $exception) {
+        printf(
+            "      - [error] Unable to encode update payload for Jira issue %s: %s%s",
+            $jiraIssueKey,
+            $exception->getMessage(),
+            PHP_EOL
+        );
+
+        return null;
+    }
+
+    $endpoint = $useExtendedApi
+        ? buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', (int)$candidate['redmine_issue_id']))
+        : sprintf('issues/%d.json', (int)$candidate['redmine_issue_id']);
 
     return [
         'endpoint' => $endpoint,
@@ -1034,6 +1074,8 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
     $defaultAssigneeId = isset($issueConfig['default_redmine_assignee_id']) ? normalizeInteger($issueConfig['default_redmine_assignee_id'], 1) : null;
     $defaultIsPrivate = array_key_exists('default_is_private', $issueConfig) ? normalizeBooleanFlag($issueConfig['default_is_private']) : null;
     $attachmentMetadata = buildAttachmentMetadataIndex($pdo);
+    $sharePointAttachmentIndex = buildSharePointAttachmentIndex($pdo);
+    $jiraIssueBaseUrl = resolveJiraIssueBaseUrl($config);
 
     $mappings = fetchIssueMappingsForTransform($pdo);
 
@@ -1194,6 +1236,15 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
             }
         }
 
+        $sharePointLinks = $sharePointAttachmentIndex[$row['jira_issue_id']] ?? [];
+        $jiraIssueUrl = buildJiraIssueUrl($jiraIssueBaseUrl, $jiraIssueKey);
+        $proposedDescription = appendIssueLinksToDescription(
+            $proposedDescription,
+            $sharePointLinks,
+            $jiraIssueKey,
+            $jiraIssueUrl
+        );
+
         $proposedStartDate = $issueCreatedAt !== null ? substr($issueCreatedAt, 0, 10) : null;
         $proposedDueDate = $issueDueDate !== null ? $issueDueDate : null;
         $proposedDoneRatio = ($issueStatusCategory !== null && strtolower($issueStatusCategory) === 'done') ? 100 : null;
@@ -1345,28 +1396,11 @@ function runIssuePushPhase(
     ?int $defaultIssueUserId
 ): void
 {
-    $candidateStatement = $pdo->prepare(<<<SQL
-        SELECT
-            map.*,
-            issue.created_at AS jira_created_at,
-            issue.updated_at AS jira_updated_at,
-            issue.raw_payload AS jira_raw_payload
-        FROM migration_mapping_issues map
-        JOIN staging_jira_issues issue ON issue.id = map.jira_issue_id
-        WHERE map.migration_status = 'READY_FOR_CREATION'
-        ORDER BY map.mapping_id
-    SQL);
+    $creationCandidates = fetchIssueCreationCandidates($pdo);
+    $updateCandidates = fetchIssueUpdateCandidates($pdo);
 
-    if ($candidateStatement === false) {
-        throw new RuntimeException('Failed to prepare issue selection statement for push phase.');
-    }
-
-    $candidateStatement->execute();
-    $candidates = $candidateStatement->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    $candidateStatement->closeCursor();
-
-    if ($candidates === []) {
-        printf("  No issues queued for creation.%s", PHP_EOL);
+    if ($creationCandidates === [] && $updateCandidates === []) {
+        printf("  No issues queued for creation or update.%s", PHP_EOL);
         $danglingAttachments = countAttachmentsAwaitingAssociation($pdo);
         if ($danglingAttachments > 0) {
             printf("  %d attachment(s) still waiting for upload tokens in migration_mapping_attachments.%s", $danglingAttachments, PHP_EOL);
@@ -1374,10 +1408,15 @@ function runIssuePushPhase(
         return;
     }
 
-    printf("  %d issue(s) queued for creation.%s", count($candidates), PHP_EOL);
+    if ($creationCandidates !== []) {
+        printf("  %d issue(s) queued for creation.%s", count($creationCandidates), PHP_EOL);
+    }
+    if ($updateCandidates !== []) {
+        printf("  %d issue(s) queued for update (description/parent).%s", count($updateCandidates), PHP_EOL);
+    }
 
     $attachmentsByIssue = [];
-    foreach ($candidates as $candidate) {
+    foreach ($creationCandidates as $candidate) {
         $jiraIssueId = (string)$candidate['jira_issue_id'];
         $attachmentsByIssue[$jiraIssueId] = fetchPreparedAttachmentUploads($pdo, $jiraIssueId);
 
@@ -1422,7 +1461,7 @@ function runIssuePushPhase(
         }
 
         if ($isDryRun) {
-            $dryRunPayload = buildIssuePayloadForPreview(
+            $dryRunPayload = buildIssueCreationPayloadForPreview(
                 $candidate,
                 $attachmentsByIssue[$jiraIssueId],
                 $useExtendedApi,
@@ -1439,13 +1478,41 @@ function runIssuePushPhase(
         }
     }
 
+    foreach ($updateCandidates as $candidate) {
+        $subject = isset($candidate['proposed_subject']) ? (string)$candidate['proposed_subject'] : '[missing subject]';
+        $redmineIssueId = isset($candidate['redmine_issue_id']) ? (int)$candidate['redmine_issue_id'] : null;
+
+        printf(
+            "  - %s → update Redmine #%s%s",
+            $subject,
+            $redmineIssueId !== null ? (string)$redmineIssueId : '[missing id]',
+            PHP_EOL
+        );
+
+        if ($isDryRun) {
+            $dryRunPayload = buildIssueUpdatePayloadForPreview(
+                $candidate,
+                $useExtendedApi,
+                $extendedApiPrefix
+            );
+
+            if ($dryRunPayload === null) {
+                printf("      - [skip] No description or parent update required.%s", PHP_EOL);
+                continue;
+            }
+
+            printf("      - endpoint: %s%s", $dryRunPayload['endpoint'], PHP_EOL);
+            printf("      - payload: %s%s", $dryRunPayload['body'], PHP_EOL);
+        }
+    }
+
     if ($isDryRun) {
         printf("  Dry-run active; no API calls will be made (issues remain queued).%s", PHP_EOL);
         return;
     }
 
     if (!$confirmPush) {
-        printf("  Push confirmation missing; rerun with --confirm-push to create the issues.%s", PHP_EOL);
+        printf("  Push confirmation missing; rerun with --confirm-push to process the issues.%s", PHP_EOL);
         return;
     }
 
@@ -1455,7 +1522,7 @@ function runIssuePushPhase(
         verifyExtendedApiAvailability($client, $extendedApiPrefix, 'issues.json');
     }
 
-    $updateStatement = $pdo->prepare(<<<SQL
+    $creationUpdateStatement = $pdo->prepare(<<<SQL
         UPDATE migration_mapping_issues
         SET
             redmine_issue_id = :redmine_issue_id,
@@ -1465,18 +1532,18 @@ function runIssuePushPhase(
         WHERE mapping_id = :mapping_id
     SQL);
 
-    if ($updateStatement === false) {
-        throw new RuntimeException('Failed to prepare mapping update statement during push.');
+    if ($creationUpdateStatement === false) {
+        throw new RuntimeException('Failed to prepare mapping update statement during creation push.');
     }
 
-    foreach ($candidates as $candidate) {
+    foreach ($creationCandidates as $candidate) {
         $mappingId = (int)$candidate['mapping_id'];
         $jiraIssueKey = (string)$candidate['jira_issue_key'];
         $jiraIssueId = (string)$candidate['jira_issue_id'];
 
         $attachmentSummary = summarizeAttachmentStatusesForIssue($pdo, $jiraIssueId);
         if (($attachmentSummary['blocked'] ?? 0) > 0) {
-            $updateStatement->execute([
+            $creationUpdateStatement->execute([
                 'mapping_id' => $mappingId,
                 'redmine_issue_id' => null,
                 'migration_status' => 'MANUAL_INTERVENTION_REQUIRED',
@@ -1500,7 +1567,7 @@ function runIssuePushPhase(
         $statusId = $candidate['proposed_status_id'] !== null ? (int)$candidate['proposed_status_id'] : null;
 
         if ($projectId === null || $trackerId === null || $statusId === null) {
-            $updateStatement->execute([
+            $creationUpdateStatement->execute([
                 'mapping_id' => $mappingId,
                 'redmine_issue_id' => null,
                 'migration_status' => 'MANUAL_INTERVENTION_REQUIRED',
@@ -1518,7 +1585,7 @@ function runIssuePushPhase(
         // dan moeten we er ook effectief evenveel "usable" hebben (token of sharepoint_url).
         $assocCount = countAssociationCandidates($pdo, $jiraIssueId);
         if ($assocCount > 0 && count($preparedAttachments) !== $assocCount) {
-            $updateStatement->execute([
+            $creationUpdateStatement->execute([
                 'mapping_id' => $mappingId,
                 'redmine_issue_id' => null,
                 'migration_status' => 'MANUAL_INTERVENTION_REQUIRED',
@@ -1559,9 +1626,6 @@ function runIssuePushPhase(
             static fn($attachment) => ($attachment['sharepoint_url'] ?? '') !== ''
         ));
 
-        $description = $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null;
-        $descriptionWithSharePoint = appendSharePointLinksToDescription($description, $sharePointLinks);
-
         try {
             $customFieldPayload = decodeCustomFieldPayload($candidate['proposed_custom_field_payload']);
         } catch (JsonException $exception) {
@@ -1571,7 +1635,7 @@ function runIssuePushPhase(
                 $exception->getMessage()
             );
 
-            $updateStatement->execute([
+            $creationUpdateStatement->execute([
                 'mapping_id' => $mappingId,
                 'redmine_issue_id' => null,
                 'migration_status' => 'MANUAL_INTERVENTION_REQUIRED',
@@ -1588,7 +1652,6 @@ function runIssuePushPhase(
             'status_id' => $statusId,
             'priority_id' => $candidate['proposed_priority_id'] !== null ? (int)$candidate['proposed_priority_id'] : null,
             'subject' => isset($candidate['proposed_subject']) ? (string)$candidate['proposed_subject'] : null,
-            'description' => $descriptionWithSharePoint,
             'start_date' => $candidate['proposed_start_date'] !== null ? (string)$candidate['proposed_start_date'] : null,
             'due_date' => $candidate['proposed_due_date'] !== null ? (string)$candidate['proposed_due_date'] : null,
             'assigned_to_id' => $candidate['proposed_assigned_to_id'] !== null ? (int)$candidate['proposed_assigned_to_id'] : null,
@@ -1625,14 +1688,14 @@ function runIssuePushPhase(
             $response = $exception->getResponse();
             $message = 'Failed to create issue in Redmine';
             if ($response instanceof ResponseInterface) {
-                $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
-                $message .= ': ' . extractErrorBody($response);
-            }
+            $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+            $message .= ': ' . extractErrorBody($response);
+        }
 
-            $updateStatement->execute([
-                'mapping_id' => $mappingId,
-                'redmine_issue_id' => null,
-                'migration_status' => 'CREATION_FAILED',
+        $creationUpdateStatement->execute([
+            'mapping_id' => $mappingId,
+            'redmine_issue_id' => null,
+            'migration_status' => 'CREATION_FAILED',
                 'notes' => $message,
             ]);
 
@@ -1640,7 +1703,7 @@ function runIssuePushPhase(
             continue;
         } catch (GuzzleException $exception) {
             $message = 'Failed to create issue in Redmine: ' . $exception->getMessage();
-            $updateStatement->execute([
+            $creationUpdateStatement->execute([
                 'mapping_id' => $mappingId,
                 'redmine_issue_id' => null,
                 'migration_status' => 'CREATION_FAILED',
@@ -1656,7 +1719,7 @@ function runIssuePushPhase(
 
         if ($redmineIssueId === null) {
             $message = 'Redmine did not return an issue identifier.';
-            $updateStatement->execute([
+            $creationUpdateStatement->execute([
                 'mapping_id' => $mappingId,
                 'redmine_issue_id' => null,
                 'migration_status' => 'CREATION_FAILED',
@@ -1667,7 +1730,7 @@ function runIssuePushPhase(
             continue;
         }
 
-        $finalStatus = 'CREATION_SUCCESS';
+        $finalStatus = 'READY_FOR_UPDATE';
         $finalNotes = null;
 
         printf("  [created] Jira issue %s → Redmine issue #%d%s", $jiraIssueKey, $redmineIssueId, PHP_EOL);
@@ -1680,13 +1743,202 @@ function runIssuePushPhase(
             markSharePointAttachmentsAsLinked($pdo, $sharePointLinks, $redmineIssueId);
         }
 
-        $updateStatement->execute([
+        $creationUpdateStatement->execute([
             'mapping_id' => $mappingId,
             'redmine_issue_id' => $redmineIssueId,
             'migration_status' => $finalStatus,
             'notes' => $finalNotes,
         ]);
     }
+
+    if ($updateCandidates === []) {
+        return;
+    }
+
+    $updateStatement = $pdo->prepare(<<<SQL
+        UPDATE migration_mapping_issues
+        SET
+            redmine_parent_issue_id = COALESCE(:redmine_parent_issue_id, redmine_parent_issue_id),
+            proposed_parent_issue_id = COALESCE(:proposed_parent_issue_id, proposed_parent_issue_id),
+            migration_status = :migration_status,
+            notes = :notes,
+            last_updated_at = CURRENT_TIMESTAMP
+        WHERE mapping_id = :mapping_id
+    SQL);
+
+    if ($updateStatement === false) {
+        throw new RuntimeException('Failed to prepare mapping update statement during update push.');
+    }
+
+    foreach ($updateCandidates as $candidate) {
+        $mappingId = (int)$candidate['mapping_id'];
+        $jiraIssueKey = (string)$candidate['jira_issue_key'];
+        $redmineIssueId = $candidate['redmine_issue_id'] !== null ? (int)$candidate['redmine_issue_id'] : null;
+        $parentRedmineId = $candidate['parent_redmine_issue_id'] !== null ? (int)$candidate['parent_redmine_issue_id'] : null;
+        $jiraParentIssueId = $candidate['jira_parent_issue_id'] !== null ? (string)$candidate['jira_parent_issue_id'] : null;
+
+        if ($redmineIssueId === null) {
+            $message = 'Missing Redmine issue ID; rerun creation phase.';
+            $updateStatement->execute([
+                'mapping_id' => $mappingId,
+                'redmine_parent_issue_id' => null,
+                'proposed_parent_issue_id' => null,
+                'migration_status' => 'UPDATE_FAILED',
+                'notes' => $message,
+            ]);
+            printf("  [error] Jira issue %s missing Redmine ID; update skipped.%s", $jiraIssueKey, PHP_EOL);
+            continue;
+        }
+
+        if ($jiraParentIssueId !== null && $parentRedmineId === null) {
+            $message = 'Parent issue has not been created yet; rerun after the parent exists.';
+            $updateStatement->execute([
+                'mapping_id' => $mappingId,
+                'redmine_parent_issue_id' => null,
+                'proposed_parent_issue_id' => null,
+                'migration_status' => 'UPDATE_FAILED',
+                'notes' => $message,
+            ]);
+            printf("  [blocked] Jira issue %s missing parent mapping; update skipped.%s", $jiraIssueKey, PHP_EOL);
+            continue;
+        }
+
+        $issuePayload = array_filter([
+            'description' => $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null,
+            'parent_issue_id' => $parentRedmineId,
+        ], static fn($value) => $value !== null);
+
+        if ($issuePayload === []) {
+            $updateStatement->execute([
+                'mapping_id' => $mappingId,
+                'redmine_parent_issue_id' => $parentRedmineId,
+                'proposed_parent_issue_id' => $parentRedmineId,
+                'migration_status' => 'CREATION_SUCCESS',
+                'notes' => null,
+            ]);
+            printf("  [skip] Jira issue %s has no description or parent to update.%s", $jiraIssueKey, PHP_EOL);
+            continue;
+        }
+
+        if ($useExtendedApi) {
+            $issuePayload = array_merge($issuePayload, buildExtendedIssueUpdateOverrides($candidate));
+        }
+
+        $payload = ['issue' => $issuePayload];
+        $endpoint = $useExtendedApi
+            ? buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
+            : sprintf('issues/%d.json', $redmineIssueId);
+
+        $endpoint = ltrim($endpoint, '/');
+
+        $method = $useExtendedApi ? 'patch' : 'put';
+        $options = ['json' => $payload];
+        if ($useExtendedApi) {
+            $options['query'] = ['notify' => 'false', 'send_notification' => 0];
+        }
+
+        try {
+            $client->request($method, $endpoint, $options);
+        } catch (BadResponseException $exception) {
+            $response = $exception->getResponse();
+            $message = sprintf('Failed to update issue details for Jira issue %s', $jiraIssueKey);
+            if ($response instanceof ResponseInterface) {
+                $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+                $message .= ': ' . extractErrorBody($response);
+            } else {
+                $message .= ': ' . $exception->getMessage();
+            }
+
+            $updateStatement->execute([
+                'mapping_id' => $mappingId,
+                'redmine_parent_issue_id' => $parentRedmineId,
+                'proposed_parent_issue_id' => $parentRedmineId,
+                'migration_status' => 'UPDATE_FAILED',
+                'notes' => $message,
+            ]);
+
+            printf("  [error] %s%s", $message, PHP_EOL);
+            continue;
+        } catch (GuzzleException $exception) {
+            $message = sprintf('Failed to update issue details for Jira issue %s: %s', $jiraIssueKey, $exception->getMessage());
+            $updateStatement->execute([
+                'mapping_id' => $mappingId,
+                'redmine_parent_issue_id' => $parentRedmineId,
+                'proposed_parent_issue_id' => $parentRedmineId,
+                'migration_status' => 'UPDATE_FAILED',
+                'notes' => $message,
+            ]);
+            printf("  [error] %s%s", $message, PHP_EOL);
+            continue;
+        }
+
+        $updateStatement->execute([
+            'mapping_id' => $mappingId,
+            'redmine_parent_issue_id' => $parentRedmineId,
+            'proposed_parent_issue_id' => $parentRedmineId,
+            'migration_status' => 'CREATION_SUCCESS',
+            'notes' => null,
+        ]);
+
+        printf("  [updated] Jira issue %s → Redmine issue #%d%s", $jiraIssueKey, $redmineIssueId, PHP_EOL);
+    }
+}
+
+/**
+ * @return array<int, array<string, mixed>>
+ */
+function fetchIssueCreationCandidates(PDO $pdo): array
+{
+    $candidateStatement = $pdo->prepare(<<<SQL
+        SELECT
+            map.*,
+            issue.created_at AS jira_created_at,
+            issue.updated_at AS jira_updated_at,
+            issue.raw_payload AS jira_raw_payload
+        FROM migration_mapping_issues map
+        JOIN staging_jira_issues issue ON issue.id = map.jira_issue_id
+        WHERE map.migration_status = 'READY_FOR_CREATION'
+        ORDER BY map.mapping_id
+    SQL);
+
+    if ($candidateStatement === false) {
+        throw new RuntimeException('Failed to prepare issue selection statement for creation phase.');
+    }
+
+    $candidateStatement->execute();
+    $candidates = $candidateStatement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $candidateStatement->closeCursor();
+
+    return $candidates;
+}
+
+/**
+ * @return array<int, array<string, mixed>>
+ */
+function fetchIssueUpdateCandidates(PDO $pdo): array
+{
+    $candidateStatement = $pdo->prepare(<<<SQL
+        SELECT
+            map.*,
+            issue.updated_at AS jira_updated_at,
+            parent.redmine_issue_id AS parent_redmine_issue_id
+        FROM migration_mapping_issues map
+        JOIN staging_jira_issues issue ON issue.id = map.jira_issue_id
+        LEFT JOIN migration_mapping_issues parent ON parent.jira_issue_id = map.jira_parent_issue_id
+        WHERE map.migration_status IN ('READY_FOR_UPDATE', 'UPDATE_FAILED')
+          AND map.redmine_issue_id IS NOT NULL
+        ORDER BY map.mapping_id
+    SQL);
+
+    if ($candidateStatement === false) {
+        throw new RuntimeException('Failed to prepare issue selection statement for update phase.');
+    }
+
+    $candidateStatement->execute();
+    $candidates = $candidateStatement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $candidateStatement->closeCursor();
+
+    return $candidates;
 }
 
 function countAttachmentsAwaitingAssociation(PDO $pdo): int
@@ -1875,23 +2127,52 @@ function buildIssueUploadPayload(array $attachments): array
 }
 
 /**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string}> $sharePointLinks
+ * @param array<int, array{jira_attachment_id: string, filename: string, sharepoint_url: string}> $sharePointLinks
  */
-function appendSharePointLinksToDescription(?string $description, array $sharePointLinks): ?string
+function appendIssueLinksToDescription(?string $description, array $sharePointLinks, string $jiraIssueKey, ?string $jiraIssueUrl): ?string
 {
-    if ($sharePointLinks === []) {
+    $blocks = [];
+
+    $sharePointBlock = buildSharePointAttachmentBlock($description, $sharePointLinks);
+    if ($sharePointBlock !== null) {
+        $blocks[] = $sharePointBlock;
+    }
+
+    $jiraBlock = buildJiraIssueLinkBlock($description, $jiraIssueKey, $jiraIssueUrl);
+    if ($jiraBlock !== null) {
+        $blocks[] = $jiraBlock;
+    }
+
+    if ($blocks === []) {
         return $description;
     }
 
-    $lines = [
-        '',
-        '---',
-        '**Attachments stored on SharePoint:**',
-    ];
+    $block = implode(PHP_EOL . PHP_EOL, $blocks);
 
+    if ($description === null || trim($description) === '') {
+        return ltrim($block);
+    }
+
+    return rtrim($description) . PHP_EOL . PHP_EOL . $block;
+}
+
+/**
+ * @param array<int, array{jira_attachment_id: string, filename: string, sharepoint_url: string}> $sharePointLinks
+ */
+function buildSharePointAttachmentBlock(?string $description, array $sharePointLinks): ?string
+{
+    if ($sharePointLinks === []) {
+        return null;
+    }
+
+    $lines = [];
     foreach ($sharePointLinks as $attachment) {
-        $url = (string)($attachment['sharepoint_url'] ?? '');
+        $url = trim((string)($attachment['sharepoint_url'] ?? ''));
         if ($url === '') {
+            continue;
+        }
+
+        if ($description !== null && str_contains($description, $url)) {
             continue;
         }
 
@@ -1899,26 +2180,32 @@ function appendSharePointLinksToDescription(?string $description, array $sharePo
             ? $attachment['filename']
             : $attachment['jira_attachment_id'];
 
-        // build unique name for the attachment (same as used by uploads)
-        $unique = buildUploadUniqueName((string)$attachment['jira_attachment_id'], $attachment['filename'] ?? '');
-
-        // Skip if description already contains the exact SharePoint URL or the attachment:unique marker
-        if (($description !== null && (str_contains($description, $url)
-                || str_contains($description, 'attachment:' . $unique)
-                || str_contains($description, $unique)))) {
-            continue;
-        }
-
-        $lines[] = sprintf('- %s: %s', $label, $url);
+        $lines[] = sprintf('> SharePoint attachment: [%s](%s)', $label, $url);
     }
 
-    $block = implode(PHP_EOL, $lines);
-
-    if ($description === null || trim($description) === '') {
-        return ltrim($block);
+    if ($lines === []) {
+        return null;
     }
 
-    return rtrim($description) . PHP_EOL . PHP_EOL . $block;
+    $blockLines = array_merge(['---'], $lines);
+
+    return implode(PHP_EOL, $blockLines);
+}
+
+function buildJiraIssueLinkBlock(?string $description, string $jiraIssueKey, ?string $jiraIssueUrl): ?string
+{
+    if ($jiraIssueUrl === null || $jiraIssueUrl === '') {
+        return null;
+    }
+
+    if ($description !== null && (str_contains($description, $jiraIssueUrl) || str_contains($description, 'Original Jira issue'))) {
+        return null;
+    }
+
+    return implode(PHP_EOL, [
+        '---',
+        sprintf('> Original Jira issue: [%s](%s)', $jiraIssueKey, $jiraIssueUrl),
+    ]);
 }
 
 /**
@@ -2259,6 +2546,63 @@ function buildAttachmentMetadataIndex(PDO $pdo): array
         }
 
         $index[$issueId][$attachmentId] = buildUploadUniqueName($attachmentId, $filename);
+    }
+
+    $statement->closeCursor();
+
+    return $index;
+}
+
+/**
+ * @return array<string, array<int, array{jira_attachment_id: string, filename: string, sharepoint_url: string}>>
+ */
+function buildSharePointAttachmentIndex(PDO $pdo): array
+{
+    $sql = <<<SQL
+        SELECT
+            map.jira_issue_id,
+            map.jira_attachment_id,
+            map.sharepoint_url,
+            att.filename
+        FROM migration_mapping_attachments map
+        JOIN staging_jira_attachments att ON att.id = map.jira_attachment_id
+        WHERE map.sharepoint_url IS NOT NULL
+          AND map.sharepoint_url <> ''
+        ORDER BY map.mapping_id
+    SQL;
+
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to build SharePoint attachment index: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement === false) {
+        throw new RuntimeException('Failed to build SharePoint attachment index.');
+    }
+
+    $index = [];
+    while (true) {
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            break;
+        }
+
+        $issueId = isset($row['jira_issue_id']) ? (string)$row['jira_issue_id'] : '';
+        $attachmentId = isset($row['jira_attachment_id']) ? (string)$row['jira_attachment_id'] : '';
+        $sharePointUrl = isset($row['sharepoint_url']) ? trim((string)$row['sharepoint_url']) : '';
+
+        if ($issueId === '' || $attachmentId === '' || $sharePointUrl === '') {
+            continue;
+        }
+
+        $filename = isset($row['filename']) ? (string)$row['filename'] : '';
+
+        $index[$issueId][] = [
+            'jira_attachment_id' => $attachmentId,
+            'filename' => $filename,
+            'sharepoint_url' => $sharePointUrl,
+        ];
     }
 
     $statement->closeCursor();
@@ -3038,6 +3382,9 @@ function computeIssueAutomationStateHash(
     return hash('sha256', $encoded);
 }
 
+/**
+ * @throws JsonException
+ */
 function decodeCustomFieldPayload(mixed $payload): ?array
 {
     if ($payload === null) {
@@ -3192,260 +3539,6 @@ function encodeJsonColumn(mixed $value): ?string
     }
 }
 
-function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
-{
-    if ($html === null) {
-        return null;
-    }
-
-    $trimmed = trim($html);
-    if ($trimmed === '') {
-        return null;
-    }
-
-    // Jira geeft soms enkel: <!-- ADF macro (type = 'table') -->
-    // Dat is geen HTML inhoud, dus forceer fallback naar ADF.
-    $withoutComments = preg_replace('/<!--.*?-->/s', '', $trimmed);
-    $withoutComments = is_string($withoutComments) ? trim($withoutComments) : $trimmed;
-    if ($withoutComments === '' && stripos($trimmed, 'ADF macro') !== false) {
-        return null;
-    }
-
-    $rewrittenHtml = rewriteJiraAttachmentLinks($trimmed, $attachments);
-
-    static $converter = null;
-    if ($converter === null) {
-        $converter = new HtmlConverter([
-            'strip_tags' => true,
-            'hard_break' => true,
-            'remove_nodes' => 'script style',
-        ]);
-        $converter->getEnvironment()->addConverter(new TableConverter());
-    }
-
-    try {
-        $markdown = trim($converter->convert($rewrittenHtml));
-    } catch (Throwable) {
-        $markdown = trim(strip_tags($rewrittenHtml));
-    }
-
-    // extra safety: xml header die toch doorsijpelt
-    $markdown = preg_replace('/^\s*<\?xml[^>]*\?>\s*/i', '', $markdown ?? '') ?? $markdown;
-    $markdown = str_replace('<?xml encoding="utf-8"?>', '', $markdown);
-
-    // UNESCAPE: verwijder door de Markdown-converter toegevoegde backslashes
-    // alleen binnen attachment: tokens (bv. attachment:10876\_\_Report\_... -> attachment:10876__Report_...)
-    $markdown = preg_replace_callback(
-        '/attachment:\d+\\\\_\\\\_[^)\s]*/i',
-        function ($m) {
-            return str_replace('\\_', '_', $m[0]);
-        },
-        $markdown
-    );
-
-    return $markdown !== '' ? $markdown : null;
-}
-
-function rewriteJiraAttachmentLinks(string $html, array $attachments): string
-{
-    if ($attachments === []) {
-        return $html;
-    }
-
-    // normalize attachments into the same shape used by mapAttachmentUrlToTarget
-    $imgExts = ['jpg','jpeg','png','gif','bmp','svg','webp','tif','tiff'];
-    $attachmentsMeta = [];
-    foreach ($attachments as $aid => $unique) {
-        $ext = strtolower(pathinfo($unique, PATHINFO_EXTENSION));
-        $isImage = $ext !== '' && in_array($ext, $imgExts, true);
-        $attachmentsMeta[(string)$aid] = [
-            'unique' => (string)$unique,
-            'sharepoint' => null,
-            // convenience flag for this function
-            'is_image' => $isImage,
-        ];
-    }
-
-    $doc = new DOMDocument();
-    $previous = libxml_use_internal_errors(true);
-    $options = 0;
-    if (defined('LIBXML_HTML_NOIMPLIED')) $options |= LIBXML_HTML_NOIMPLIED;
-    if (defined('LIBXML_HTML_NODEFDTD')) $options |= LIBXML_HTML_NODEFDTD;
-
-    $payload = '<?xml encoding="utf-8"?>' . $html;
-    if (!@$doc->loadHTML($payload, $options)) {
-        libxml_clear_errors();
-        libxml_use_internal_errors($previous);
-        return $html;
-    }
-
-    // 1) Eerst images normaliseren: zet src naar unique/SharePoint en verwijder preview attrs
-    foreach (iterator_to_array($doc->getElementsByTagName('img')) as $img) {
-        if (!$img instanceof DOMElement) continue;
-        $src = (string)$img->getAttribute('src');
-        if ($src === '') continue;
-
-        // resolve via mapAttachmentUrlToTarget (dit zal absolute SharePoint URL's ook respecteren)
-        $new = mapAttachmentUrlToTarget($src, $attachmentsMeta);
-        $img->setAttribute('src', $new);
-
-        // remove noisy attributes so Markdown converter niet met titles/alt's komt
-        foreach (['title', 'alt', 'data-attachment-name', 'data-attachment-type', 'data-media-services-id', 'data-media-services-type'] as $attr) {
-            if ($img->hasAttribute($attr)) $img->removeAttribute($attr);
-        }
-
-        // remove tiny rendericons (they are not our attachments)
-        $cls = strtolower((string)$img->getAttribute('class'));
-        if (str_contains($cls, 'rendericon') || str_contains($src, '/images/icons/')) {
-            $parent = $img->parentNode;
-            $parent?->removeChild($img);
-        }
-    }
-
-    // 2) Process anchors
-    $links = iterator_to_array($doc->getElementsByTagName('a'));
-    foreach ($links as $a) {
-        if (!$a instanceof DOMElement) continue;
-
-        $href = (string)$a->getAttribute('href');
-        // quick-skip empty hrefs
-        if ($href === '') {
-            // still remove small rendericons if present
-            foreach (iterator_to_array($a->getElementsByTagName('img')) as $chImg) {
-                if (!$chImg instanceof DOMElement) continue;
-                $cls = strtolower((string)$chImg->getAttribute('class'));
-                $src = (string)$chImg->getAttribute('src');
-                if (str_contains($cls, 'rendericon') || str_contains($src, '/images/icons/')) {
-                    $parent = $chImg->parentNode;
-                    $parent?->removeChild($chImg);
-                }
-            }
-            continue;
-        }
-
-        // verwijder preview/title/preview attributen zodat Markdown geen "title" toevoegt
-        foreach (['title','file-preview-title','file-preview-id','file-preview-type','data-linked-resource-id','data-attachment-name','data-attachment-type'] as $attr) {
-            if ($a->hasAttribute($attr)) $a->removeAttribute($attr);
-        }
-
-        // normaliseer target URL naar unieke naam of SharePoint (mapAttachmentUrlToTarget kent de REST patronen)
-        $new = mapAttachmentUrlToTarget($href, $attachmentsMeta);
-
-        // Als de anchor een IMG bevat: kijk of het een echte attachment-image is.
-        $imgs = $a->getElementsByTagName('img');
-        if ($imgs->length > 0) {
-            $firstImg = $imgs->item(0);
-            if ($firstImg instanceof DOMElement) {
-                $imgSrc = (string)$firstImg->getAttribute('src');
-
-                // Als img src naar een unique filename verwijst, detecteer attachment id
-                if (preg_match('/^(\d+)__.+$/', $imgSrc, $mImg)) {
-                    $aidImg = $mImg[1];
-                    $isImgAttachment = $attachmentsMeta[$aidImg]['is_image'] ?? false;
-                } else {
-                    // fallback: probeer mapAttachmentUrlToTarget op originele src
-                    $resolved = mapAttachmentUrlToTarget($imgSrc, $attachmentsMeta);
-                    if (preg_match('/^(\d+)__.+$/', $resolved, $mImg2)) {
-                        $aidImg = $mImg2[1];
-                        $isImgAttachment = $attachmentsMeta[$aidImg]['is_image'] ?? false;
-                        // ensure img src is the resolved one
-                        $firstImg->setAttribute('src', $resolved);
-                    } else {
-                        $isImgAttachment = false;
-                    }
-                }
-
-                if ($isImgAttachment) {
-                    // vervang <a><img/></a> door alleen de <img/> (geen klikbare link)
-                    $parent = $a->parentNode;
-                    if ($parent !== null) {
-                        // when we move $firstImg it is removed from $a automatically
-                        $parent->replaceChild($firstImg, $a);
-                        continue;
-                    }
-                }
-            }
-        }
-
-        // Nu: geen embedded image — behandel anchor zelf
-        // Als $new is onze unique filename (pattern 'digits__...') => kijk of image of niet
-        if (preg_match('/^(\d+)__(.+)$/', $new, $mNew)) {
-            $aid = $mNew[1];
-            $isImage = $attachmentsMeta[$aid]['is_image'] ?? false;
-
-            if (!$isImage) {
-                // Non-image: vervang de hele <a> door plain text "attachment:{unique}"
-                $textNode = $doc->createTextNode('attachment:' . $new);
-                $parent = $a->parentNode;
-                $parent?->replaceChild($textNode, $a);
-            } else {
-                // image (maar zonder inner <img>): laat anchor bestaan en zet href naar unique
-                $a->setAttribute('href', $new);
-                $linkText = trim((string)$a->textContent);
-                if ($linkText === '') {
-                    $a->textContent = $new; // fallback linktekst
-                }
-            }
-        } else {
-            // $new is waarschijnlijk een SharePoint absolute URL of andere externe URL
-            $a->setAttribute('href', $new);
-            $linkText = trim((string)$a->textContent);
-            if ($linkText === '') {
-                $parts = parse_url($new);
-                if (isset($parts['path'])) {
-                    $basename = basename($parts['path']);
-                    $a->textContent = $basename !== '' ? $basename : $new;
-                } else {
-                    $a->textContent = $new;
-                }
-            }
-        }
-    } // end foreach anchors
-
-    $converted = $doc->saveHTML();
-    libxml_clear_errors();
-    libxml_use_internal_errors($previous);
-
-    return $converted !== false ? preg_replace('/^\s*<\?xml[^>]+\?>\s*/i', '', $converted) : $html;
-}
-
-function convertJiraAdfToPlaintext(mixed $descriptionAdf): ?string
-{
-    if ($descriptionAdf === null) {
-        return null;
-    }
-
-    if (is_string($descriptionAdf)) {
-        $trimmed = trim($descriptionAdf);
-        return $trimmed !== '' ? $trimmed : null;
-    }
-
-    if (!is_array($descriptionAdf)) {
-        return null;
-    }
-
-    $fragments = [];
-
-    $stack = [$descriptionAdf];
-    while ($stack !== []) {
-        $current = array_pop($stack);
-        if (is_array($current)) {
-            if (isset($current['text']) && is_string($current['text'])) {
-                $fragments[] = $current['text'];
-            }
-            if (isset($current['content']) && is_array($current['content'])) {
-                foreach (array_reverse($current['content']) as $child) {
-                    $stack[] = $child;
-                }
-                $fragments[] = PHP_EOL;
-            }
-        }
-    }
-
-    $text = trim(preg_replace('/\n{3,}/', PHP_EOL . PHP_EOL, implode('', $fragments)) ?? '');
-
-    return $text !== '' ? $text : null;
-}
 
 function encodeJsonIfNotNull(array $value): ?string
 {
@@ -3637,6 +3730,22 @@ function buildExtendedIssueOverrides(array $candidate, ?int $defaultAuthorId = n
     return $overrides;
 }
 
+/**
+ * @param array<string, mixed> $candidate
+ * @return array<string, mixed>
+ */
+function buildExtendedIssueUpdateOverrides(array $candidate): array
+{
+    $overrides = [];
+
+    $updated = normalizeJiraTimestamp($candidate['jira_updated_at'] ?? null);
+    if ($updated !== null) {
+        $overrides['updated_on'] = $updated;
+    }
+
+    return $overrides;
+}
+
 function extractDefaultIssueAuthorId(array $config): ?int
 {
     $migrationConfig = $config['migration'] ?? [];
@@ -3656,6 +3765,39 @@ function extractDefaultIssueAuthorId(array $config): ?int
     $intValue = (int)$value;
 
     return $intValue > 0 ? $intValue : null;
+}
+
+function resolveJiraIssueBaseUrl(array $config): ?string
+{
+    $migrationConfig = $config['migration'] ?? [];
+    $issueConfig = isset($migrationConfig['issues']) && is_array($migrationConfig['issues'])
+        ? $migrationConfig['issues']
+        : [];
+
+    $candidate = $issueConfig['jira_issue_base_url'] ?? null;
+    if (!is_string($candidate) || trim($candidate) === '') {
+        $candidate = $config['jira']['base_url'] ?? null;
+    }
+
+    if (!is_string($candidate) || trim($candidate) === '') {
+        return null;
+    }
+
+    return rtrim(trim($candidate), '/');
+}
+
+function buildJiraIssueUrl(?string $baseUrl, string $jiraIssueKey): ?string
+{
+    if ($baseUrl === null || $baseUrl === '') {
+        return null;
+    }
+
+    $issueKey = trim($jiraIssueKey);
+    if ($issueKey === '') {
+        return null;
+    }
+
+    return sprintf('%s/browse/%s', $baseUrl, rawurlencode($issueKey));
 }
 
 function normalizeJiraTimestamp(mixed $value, bool $allowMicros = false): ?string
@@ -4077,21 +4219,6 @@ function normalizeJiraEmptyValue(mixed $v): mixed {
     return $v;
 }
 
-function convertDescriptionToMarkdown(
-    string $adfJson,
-    AdfConverter $adfToMd
-): string {
-    $adfJson = trim($adfJson);
-
-    if ($adfJson !== '') {
-        $node = $adfToMd->convert($adfJson);
-        $md   = trim($node->toMarkdown());
-        if ($md !== '') return $md;
-    }
-
-    return '';
-}
-
 function renderAdfNodeToMarkdown(array $node): string
 {
     $type = $node['type'] ?? null;
@@ -4286,56 +4413,6 @@ function buildUploadUniqueName(string $attachmentId, string $originalFilename): 
 {
     $san = sanitizeAttachmentFileName($originalFilename !== '' ? $originalFilename : ('attachment-' . $attachmentId));
     return $attachmentId . '__' . $san;
-}
-
-/**
- * Replace a single URL that points to a Jira attachment with either 'attachment:uniqueName' or SharePoint URL.
- * Returns replacement string (not the whole markdown/img tag).
- *
- * @param string $url
- * @param array<string, array{unique: string, sharepoint: ?string}> $attachmentsMap keyed by attachment id
- * @return string replacement URL (or original $url if no match)
- */
-function mapAttachmentUrlToTarget(string $url, array $attachmentsMap): string
-{
-    // Support explicit unique tokens "attachment:{id}__name" or bare "1234__name"
-    $uniqueCandidate = $url;
-    if (str_starts_with($uniqueCandidate, 'attachment:')) {
-        $uniqueCandidate = substr($uniqueCandidate, strlen('attachment:'));
-    }
-    if (preg_match('/^(\d+)__/', $uniqueCandidate, $m)) {
-        $id = $m[1];
-        if (isset($attachmentsMap[$id])) {
-            $meta = $attachmentsMap[$id];
-            return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
-        }
-    }
-
-    // Patterns to find numeric attachment ids in common Jira URL shapes
-    $patterns = [
-        '#/rest/api/\d+/attachment/content/(\d+)#i',
-        '#/rest/api/\d+/attachment/thumbnail/(\d+)#i',
-        '#/attachment/content/(\d+)#i',
-        '#/attachment/(\d+)#i',
-        '#/attachments/(\d+)#i',
-        '#/secure/attachment/(\d+)#i',
-        '#attachment/content/(\d+)#i',
-        '#(\d+)(?:[^\d]|$)#' // fallback
-    ];
-
-    foreach ($patterns as $pat) {
-        if (preg_match($pat, $url, $m)) {
-            $id = $m[1] ?? null;
-            if ($id === null) continue;
-            if (!isset($attachmentsMap[$id])) {
-                return $url; // niet een van onze attachments
-            }
-            $meta = $attachmentsMap[$id];
-            return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
-        }
-    }
-
-    return $url;
 }
 
 /**

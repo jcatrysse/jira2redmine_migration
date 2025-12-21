@@ -9,8 +9,8 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
-use League\HTMLToMarkdown\HtmlConverter;
-const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.17';
+use Karvaka\AdfToGfm\Converter as AdfConverter;
+const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.19';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira comments and changelog entries into staging tables.',
     'transform' => 'Populate and classify journal mappings based on issue availability.',
@@ -20,6 +20,8 @@ const AVAILABLE_PHASES = [
 if (PHP_SAPI !== 'cli') {
     throw new RuntimeException('This script is intended to be run from the command line.');
 }
+
+require_once __DIR__ . '/lib/description_conversion.php';
 
 $cliArguments = $_SERVER['argv'] ?? ($GLOBALS['argv'] ?? null);
 if (!is_array($cliArguments)) {
@@ -548,18 +550,19 @@ function runJournalPushPhase(
     $userLookup = buildRedmineUserLookup($pdo);
     $defaultAuthorId = extractDefaultJournalAuthorId($config);
     $attachmentMetadata = buildAttachmentMetadataIndex($pdo);
+    $adfConverter = new AdfConverter();
 
     foreach ($candidateComments as $comment) {
         processCommentPush(
             $redmineClient,
             $pdo,
             $comment,
-            $config,
             $attachmentMetadata,
             $userLookup,
             $defaultAuthorId,
             $useExtendedApi,
-            $extendedApiPrefix
+            $extendedApiPrefix,
+            $adfConverter
         );
     }
 
@@ -656,12 +659,12 @@ function processCommentPush(
     Client $client,
     PDO $pdo,
     array $comment,
-    array $config,
     array $attachmentMetadata,
     array $userLookup,
     ?int $defaultAuthorId,
     bool $useExtendedApi,
-    string $extendedApiPrefix
+    string $extendedApiPrefix,
+    AdfConverter $adfConverter
 ): void
 {
     $mappingId = (int)$comment['mapping_id'];
@@ -688,46 +691,40 @@ function processCommentPush(
     $noteParts[] = '';
 
     $issueAttachments = $attachmentMetadata[$jiraIssueId] ?? [];
-    $bodyText = $bodyHtml !== null ? convertJiraHtmlToMarkdown($bodyHtml, $issueAttachments) : null;
-    if ($bodyText === null && $bodyAdf !== null) {
-        $bodyText = convertJiraAdfToPlaintext($bodyAdf);
-    }
-    $bodyText = $bodyText ?? '';
+    $bodyText = convertJournalBodyToMarkdown($bodyHtml, $bodyAdf, $issueAttachments, $adfConverter);
 
-    $attachments = fetchPreparedJournalAttachments($pdo, $jiraIssueId, $createdAt);
-    foreach ($attachments as $att) {
-        $sp = (string)($att['sharepoint_url'] ?? '');
-        if ($att['redmine_upload_token'] !== '' && $sp !== '') {
-            printf(
-                "  [warn] Attachment %s has both Redmine token and SharePoint URL, using SharePoint link.%s",
-                $att['jira_attachment_id'],
-                PHP_EOL
-            );
-        }
-    }
-
-    $redmineUploads = array_values(array_filter(
-        $attachments,
-        static fn($attachment) => $attachment['redmine_upload_token'] !== ''
-            && ($attachment['sharepoint_url'] ?? '') === ''
-    ));
-    $sharePointLinks = array_values(array_filter(
-        $attachments,
-        static fn($attachment) => ($attachment['sharepoint_url'] ?? '') !== ''
-    ));
-
-    $uploadPayload = buildAttachmentUploadPayload($redmineUploads);
-
+    // build base note
     $note = implode(' ', array_filter($noteParts, static fn($part) => $part !== '')) . PHP_EOL . $bodyText;
-    $note = appendSharePointLinksToNotes($note, $sharePointLinks);
-    $journalOverrides = buildJournalOverrides($authorId, $createdAt, $updatedAt, $userLookup, $defaultAuthorId);
-    $payload = [
-        'issue' => array_filter([
-            'notes' => $note,
-            'uploads' => $uploadPayload,
-            'journal' => $journalOverrides !== [] ? $journalOverrides : null,
-        ], static fn($value) => $value !== null && $value !== []),
-    ];
+
+    // fetch only attachments that are relevant and already uploaded / have sharepoint links
+    $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt);
+
+    // append journal attachment references (read-only, no DB modifications here)
+    $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
+    if ($attachmentBlock !== null) {
+        $note = rtrim($note) . PHP_EOL . PHP_EOL . $attachmentBlock;
+    }
+
+    // add token only when we don't use the extended API (fallback matching)
+    if (!$useExtendedApi) {
+        $token = sprintf('<!-- MIGRATE:%d -->', $mappingId);
+        $note = rtrim($note) . PHP_EOL . PHP_EOL . $token;
+    } else {
+        $token = null;
+    }
+
+    // only include journal overrides (user/created_on/updated_on) when using the extended API
+    $journalOverrides = $useExtendedApi
+        ? buildJournalOverrides($authorId, $createdAt, $updatedAt, $userLookup, $defaultAuthorId, true)
+        : [];
+
+    if ($useExtendedApi && $journalOverrides !== []) {
+        $issuePayload = ['notes' => $note, 'journal' => $journalOverrides];
+    } else {
+        $issuePayload = ['notes' => $note];
+    }
+
+    $payload = ['issue' => array_filter($issuePayload, static fn($v) => $v !== null && $v !== [])];
 
     $endpoint = $useExtendedApi
         ? buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
@@ -738,11 +735,12 @@ function processCommentPush(
         $options['query'] = ['notify' => 'false', 'send_notification' => 0];
     }
 
+    // execute the request and capture the response
     try {
-        $client->request($useExtendedApi ? 'patch' : 'put', $endpoint, $options);
+        $response = $client->request($useExtendedApi ? 'patch' : 'put', $endpoint, $options);
     } catch (BadResponseException $exception) {
         $response = $exception->getResponse();
-        $message = sprintf('Failed to create journal for Jira comment %s on issue %s', $jiraCommentId, $jiraIssueKey);
+        $message = sprintf('Failed to create journal for Jira %s on issue %s', 'comment ' . $jiraCommentId, $jiraIssueKey);
         if ($response instanceof ResponseInterface) {
             $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
             $message .= ': ' . extractErrorBody($response);
@@ -750,36 +748,58 @@ function processCommentPush(
             $message .= ': ' . $exception->getMessage();
         }
         markJournalPushFailure($pdo, $mappingId, $message);
-        markAttachmentAssociationFailure($pdo, $attachments, $message);
         printf("  [error] %s%s", $message, PHP_EOL);
         return;
     } catch (GuzzleException $exception) {
-        $message = sprintf('Failed to create journal for Jira comment %s on issue %s: %s', $jiraCommentId, $jiraIssueKey, $exception->getMessage());
+        $message = sprintf('Failed to create journal for Jira %s on issue %s: %s', 'comment ' . $jiraCommentId, $jiraIssueKey, $exception->getMessage());
         markJournalPushFailure($pdo, $mappingId, $message);
-        markAttachmentAssociationFailure($pdo, $attachments, $message);
         printf("  [error] %s%s", $message, PHP_EOL);
         return;
     }
 
-    $journalId = fetchLatestJournalId($client, $redmineIssueId, $note);
+    // If we're using the extended API, prefer the returned journal id
+    if ($useExtendedApi) {
+        $respBody = decodeJsonResponse($response);
+
+        // Best-effort locations: top-level 'journal' or nested under 'extended_api'
+        $journalId = null;
+        if (isset($respBody['journal']['id'])) {
+            $journalId = (int)$respBody['journal']['id'];
+        } elseif (isset($respBody['extended_api']['journal']['id'])) {
+            $journalId = (int)$respBody['extended_api']['journal']['id'];
+        }
+
+        if ($journalId !== null) {
+            // success, mark and continue
+            markJournalPushSuccess($pdo, $mappingId, $journalId);
+            printf("  [journal] (extended api) Jira %s %s → Redmine issue #%d, journal #%d%s",
+                'comment',
+                $jiraCommentId,
+                $redmineIssueId,
+                $journalId,
+                PHP_EOL
+            );
+            return;
+        }
+
+        // Extended API did not return a journal id — treat as failure so it gets investigated
+        $msg = sprintf('Extended API did not return journal id for Jira %s on Redmine issue %s', 'comment ' . $jiraCommentId, $jiraIssueKey);
+        markJournalPushFailure($pdo, $mappingId, $msg);
+        printf("  [error] %s%s", $msg, PHP_EOL);
+        return;
+    }
+
+    // If we reach here, not using extended API — do the token/time-based search
+    $journalId = fetchLatestJournalId($client, $redmineIssueId, $token, $createdAt);
+
+    if ($journalId === null) {
+        $msg = sprintf('Unable to confirm Redmine journal for Jira %s on issue %s', 'comment ' . $jiraCommentId, $jiraIssueKey);
+        markJournalPushFailure($pdo, $mappingId, $msg);
+        printf("  [error] %s%s", $msg, PHP_EOL);
+        return;
+    }
 
     markJournalPushSuccess($pdo, $mappingId, $journalId);
-
-    if ($redmineUploads !== []) {
-        finalizeAttachmentAssociations($client, $pdo, $jiraIssueId, $redmineIssueId, $redmineUploads);
-    }
-
-    if ($sharePointLinks !== []) {
-        markSharePointJournalAttachmentsAsLinked($pdo, $sharePointLinks, $redmineIssueId);
-    }
-
-    printf(
-        "  [journal] Jira comment %s on %s → Redmine issue #%d%s",
-        $jiraCommentId,
-        $jiraIssueKey,
-        $redmineIssueId,
-        PHP_EOL
-    );
 }
 
 /**
@@ -828,13 +848,38 @@ function processChangelogPush(
         }
     }
 
-    $journalOverrides = buildJournalOverrides($history['author_account_id'] ?? null, $createdAt, $createdAt, $userLookup, $defaultAuthorId);
-    $payload = [
-        'issue' => array_filter([
-            'notes' => implode(PHP_EOL, $noteLines),
-            'journal' => $journalOverrides !== [] ? $journalOverrides : null,
-        ], static fn($value) => $value !== null && $value !== []),
-    ];
+    $baseNote = implode(PHP_EOL, $noteLines);
+
+    // fetch attachments for this issue/journal (read-only)
+    $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt);
+
+    // append attachment block if any
+    $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
+    if ($attachmentBlock !== null) {
+        $baseNote = rtrim($baseNote) . PHP_EOL . PHP_EOL . $attachmentBlock;
+    }
+
+    // Add invisible migration token
+    // add token only when we don't use the extended API (fallback matching)
+    if (!$useExtendedApi) {
+        $token = sprintf('<!-- MIGRATE:%d -->', $mappingId);
+        $baseNote = rtrim($baseNote) . PHP_EOL . PHP_EOL . $token;
+    } else {
+        $token = null;
+    }
+
+    // only include journal overrides (timestamps & user) when extended API is used
+    $journalOverrides = $useExtendedApi
+        ? buildJournalOverrides($history['author_account_id'] ?? null, $createdAt, $createdAt, $userLookup, $defaultAuthorId, true)
+        : [];
+
+    if ($useExtendedApi && $journalOverrides !== []) {
+        $issuePayload = ['notes' => $baseNote, 'journal' => $journalOverrides];
+    } else {
+        $issuePayload = ['notes' => $baseNote];
+    }
+
+    $payload = ['issue' => array_filter($issuePayload, static fn($v) => $v !== null && $v !== [])];
 
     $endpoint = $useExtendedApi
         ? buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
@@ -845,11 +890,12 @@ function processChangelogPush(
         $options['query'] = ['notify' => 'false', 'send_notification' => 0];
     }
 
+    // execute the request and capture the response
     try {
-        $client->request($useExtendedApi ? 'patch' : 'put', $endpoint, $options);
+        $response = $client->request($useExtendedApi ? 'patch' : 'put', $endpoint, $options);
     } catch (BadResponseException $exception) {
         $response = $exception->getResponse();
-        $message = sprintf('Failed to create journal for Jira changelog %s on issue %s', $historyId, $jiraIssueKey);
+        $message = sprintf('Failed to create journal for Jira %s on issue %s', 'history ' . $historyId, $jiraIssueKey);
         if ($response instanceof ResponseInterface) {
             $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
             $message .= ': ' . extractErrorBody($response);
@@ -860,25 +906,68 @@ function processChangelogPush(
         printf("  [error] %s%s", $message, PHP_EOL);
         return;
     } catch (GuzzleException $exception) {
-        $message = sprintf('Failed to create journal for Jira changelog %s on issue %s: %s', $historyId, $jiraIssueKey, $exception->getMessage());
+        $message = sprintf('Failed to create journal for Jira %s on issue %s: %s', 'history ' . $historyId, $jiraIssueKey, $exception->getMessage());
         markJournalPushFailure($pdo, $mappingId, $message);
         printf("  [error] %s%s", $message, PHP_EOL);
         return;
     }
 
-    $journalId = fetchLatestJournalId($client, $redmineIssueId, $payload['issue']['notes']);
-    markJournalPushSuccess($pdo, $mappingId, $journalId);
+    // If we're using the extended API, prefer the returned journal id
+    if ($useExtendedApi) {
+        $respBody = decodeJsonResponse($response);
 
-    printf(
-        "  [journal] Jira changelog %s on %s → Redmine issue #%d%s",
-        $historyId,
-        $jiraIssueKey,
-        $redmineIssueId,
-        PHP_EOL
-    );
+        // Best-effort locations: top-level 'journal' or nested under 'extended_api'
+        $journalId = null;
+        if (isset($respBody['journal']['id'])) {
+            $journalId = (int)$respBody['journal']['id'];
+        } elseif (isset($respBody['extended_api']['journal']['id'])) {
+            $journalId = (int)$respBody['extended_api']['journal']['id'];
+        }
+
+        if ($journalId !== null) {
+            // success, mark and continue
+            markJournalPushSuccess($pdo, $mappingId, $journalId);
+            printf("  [journal] (extended api) Jira %s %s → Redmine issue #%d, journal #%d%s",
+                isset($jiraCommentId) ? 'comment' : 'changelog',
+                ($jiraCommentId ?? $historyId),
+                $redmineIssueId,
+                $journalId,
+                PHP_EOL
+            );
+            return;
+        }
+
+        // Extended API did not return a journal id — treat as failure so it gets investigated
+        $msg = sprintf('Extended API did not return journal id for Jira %s on Redmine issue %s', 'history ' . $historyId, $jiraIssueKey);
+        markJournalPushFailure($pdo, $mappingId, $msg);
+        printf("  [error] %s%s", $msg, PHP_EOL);
+        return;
+    }
+
+    // If we reach here, not using extended API — do the token/time-based search
+    $journalId = fetchLatestJournalId($client, $redmineIssueId, $token, $createdAt);
+
+    if ($journalId === null) {
+        $msg = sprintf('Unable to confirm Redmine journal for Jira %s on issue %s', 'history ' . $historyId, $jiraIssueKey);
+        markJournalPushFailure($pdo, $mappingId, $msg);
+        printf("  [error] %s%s", $msg, PHP_EOL);
+        return;
+    }
+
+    markJournalPushSuccess($pdo, $mappingId, $journalId);
 }
 
-function fetchLatestJournalId(Client $client, int $redmineIssueId, string $expectedNote): ?int
+/**
+ * Find the journal id by migration token, then by time-based fallback, else latest.
+ *
+ * @param Client $client
+ * @param int $redmineIssueId
+ * @param string|null $token The migration token text, e.g. "<!-- MIGRATE:1234 -->"
+ * @param string|null $expectedCreatedAt Jira created timestamp (used for time-based fallback)
+ * @param int $toleranceSeconds tolerance window for time-based match
+ * @return int|null
+ */
+function fetchLatestJournalId(Client $client, int $redmineIssueId, ?string $token, ?string $expectedCreatedAt = null, int $toleranceSeconds = 30): ?int
 {
     try {
         $response = $client->get(sprintf('/issues/%d.json', $redmineIssueId), ['query' => ['include' => 'journals']]);
@@ -889,23 +978,39 @@ function fetchLatestJournalId(Client $client, int $redmineIssueId, string $expec
     $payload = decodeJsonResponse($response);
     $journals = isset($payload['issue']['journals']) && is_array($payload['issue']['journals']) ? $payload['issue']['journals'] : [];
 
-    $expected = trim($expectedNote);
-    $candidateId = null;
+    $latestId = null;
+    $timeCandidates = [];
 
     foreach ($journals as $journal) {
-        if (!is_array($journal) || !isset($journal['id'])) {
-            continue;
+        if (!is_array($journal) || !isset($journal['id'])) continue;
+
+        $jid = (int)$journal['id'];
+        $latestId = $latestId === null || $jid > $latestId ? $jid : $latestId;
+
+        $note = isset($journal['notes']) ? (string)$journal['notes'] : '';
+
+        // 1) token search (exact substring) - most reliable
+        if ($token !== null && $token !== '' && mb_strpos($note, $token) !== false) {
+            return $jid;
         }
-        $note = isset($journal['notes']) ? trim((string)$journal['notes']) : '';
-        if ($expected !== '' && $note !== '' && $note === $expected) {
-            return (int)$journal['id'];
-        }
-        if ($candidateId === null || (int)$journal['id'] > $candidateId) {
-            $candidateId = (int)$journal['id'];
+
+        // 2) time-based collection
+        if ($expectedCreatedAt !== null && isset($journal['created_on'])) {
+            $journalTs = strtotime($journal['created_on']);
+            $expectedTs = strtotime($expectedCreatedAt);
+            if ($journalTs !== false && $expectedTs !== false && abs($journalTs - $expectedTs) <= $toleranceSeconds) {
+                $timeCandidates[] = $jid;
+            }
         }
     }
 
-    return $candidateId;
+    // if exactly one time candidate, return it
+    if (count($timeCandidates) === 1) {
+        return $timeCandidates[0];
+    }
+
+    // fallback: return latest journal id as best-effort
+    return $latestId;
 }
 
 function markJournalPushSuccess(PDO $pdo, int $mappingId, ?int $journalId): void
@@ -953,255 +1058,6 @@ function markJournalPushFailure(PDO $pdo, int $mappingId, string $message): void
         'mapping_id' => $mappingId,
     ]);
     $statement->closeCursor();
-}
-
-/**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string, created_at: ?string}> $attachments
- */
-function markAttachmentAssociationFailure(PDO $pdo, array $attachments, string $message): void
-{
-    foreach ($attachments as $attachment) {
-        updateAttachmentMappingAfterPush($pdo, (int)$attachment['mapping_id'], null, 'PENDING_ASSOCIATION', $message);
-    }
-}
-
-/**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string, created_at: ?string}> $attachments
- * @return array<int, array<string, mixed>>
- */
-function buildAttachmentUploadPayload(array $attachments): array
-{
-    $uploads = [];
-    foreach ($attachments as $attachment) {
-        if ($attachment['redmine_upload_token'] === '') {
-            continue;
-        }
-
-        $filename = buildRedmineAttachmentFilename($attachment['jira_attachment_id'], $attachment['filename']);
-        $description = $attachment['filename'] !== ''
-            ? $attachment['filename']
-            : sprintf('Jira attachment %s', $attachment['jira_attachment_id']);
-
-        $uploads[] = array_filter([
-            'token' => $attachment['redmine_upload_token'],
-            'filename' => $filename,
-            'description' => $description,
-            'content_type' => $attachment['mime_type'] ?? null,
-        ], static fn($value) => $value !== null);
-    }
-
-    return $uploads;
-}
-
-/**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string, created_at: ?string}> $sharePointLinks
- */
-function appendSharePointLinksToNotes(string $note, array $sharePointLinks): string
-{
-    if ($sharePointLinks === []) {
-        return $note;
-    }
-
-    $lines = [
-        '---',
-        'SharePoint attachments:',
-    ];
-
-    foreach ($sharePointLinks as $attachment) {
-        $url = (string)($attachment['sharepoint_url'] ?? '');
-        if ($url === '') {
-            continue;
-        }
-
-        $label = $attachment['filename'] !== '' ? $attachment['filename'] : $attachment['jira_attachment_id'];
-        $lines[] = sprintf('- %s: %s', $label, $url);
-    }
-
-    $block = implode(PHP_EOL, $lines);
-
-    if (trim($note) === '') {
-        return $block;
-    }
-
-    return rtrim($note) . PHP_EOL . PHP_EOL . $block;
-}
-
-/**
- * @return array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string, created_at: ?string}>
- */
-function fetchPreparedJournalAttachments(PDO $pdo, string $jiraIssueId, ?string $journalCreatedAt): array
-{
-    $sql = <<<SQL
-        SELECT
-            map.mapping_id,
-            map.jira_attachment_id,
-            map.redmine_upload_token,
-            map.sharepoint_url,
-            att.filename,
-            att.mime_type,
-            att.size_bytes,
-            att.created_at
-        FROM migration_mapping_attachments map
-        JOIN staging_jira_attachments att ON att.id = map.jira_attachment_id
-        WHERE map.jira_issue_id = :issue_id
-          AND map.association_hint = 'JOURNAL'
-          AND map.migration_status = 'PENDING_ASSOCIATION'
-        ORDER BY att.created_at, map.mapping_id
-    SQL;
-
-    $statement = $pdo->prepare($sql);
-    if ($statement === false) {
-        throw new RuntimeException('Failed to prepare journal attachment query.');
-    }
-
-    $statement->execute(['issue_id' => $jiraIssueId]);
-    $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    $statement->closeCursor();
-
-    if ($journalCreatedAt !== null) {
-        $journalTimestamp = strtotime($journalCreatedAt);
-        if ($journalTimestamp !== false) {
-            $rows = array_values(array_filter($rows, static function (array $row) use ($journalTimestamp) {
-                $createdAt = isset($row['created_at']) ? (string)$row['created_at'] : null;
-                if ($createdAt === null) {
-                    return true;
-                }
-
-                $createdTimestamp = strtotime($createdAt);
-                if ($createdTimestamp === false) {
-                    return true;
-                }
-
-                return abs($createdTimestamp - $journalTimestamp) <= 300; // 5 minute tolerance
-            }));
-        }
-    }
-
-    $result = [];
-    foreach ($rows as $row) {
-        $token = isset($row['redmine_upload_token']) ? (string)$row['redmine_upload_token'] : '';
-        $sharePointUrl = isset($row['sharepoint_url']) ? trim((string)$row['sharepoint_url']) : '';
-
-        if ($token === '' && $sharePointUrl === '') {
-            continue;
-        }
-
-        $result[] = [
-            'mapping_id' => isset($row['mapping_id']) ? (int)$row['mapping_id'] : 0,
-            'jira_attachment_id' => isset($row['jira_attachment_id']) ? (string)$row['jira_attachment_id'] : '',
-            'filename' => isset($row['filename']) ? (string)$row['filename'] : '',
-            'mime_type' => isset($row['mime_type']) && $row['mime_type'] !== '' ? (string)$row['mime_type'] : null,
-            'size_bytes' => isset($row['size_bytes']) ? (int)$row['size_bytes'] : null,
-            'redmine_upload_token' => $token,
-            'sharepoint_url' => $sharePointUrl !== '' ? $sharePointUrl : null,
-            'created_at' => isset($row['created_at']) ? (string)$row['created_at'] : null,
-        ];
-    }
-
-    return $result;
-}
-
-/**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string, created_at: ?string}> $attachments
- */
-function finalizeAttachmentAssociations(Client $client, PDO $pdo, string $jiraIssueId, int $redmineIssueId, array $attachments): void
-{
-    if ($attachments === []) {
-        return;
-    }
-
-    try {
-        $response = $client->get(sprintf('/issues/%d.json', $redmineIssueId), ['query' => ['include' => 'attachments']]);
-    } catch (Throwable $exception) {
-        markAttachmentAssociationFailure($pdo, $attachments, 'Unable to confirm attachment association: ' . $exception->getMessage());
-        return;
-    }
-
-    $body = decodeJsonResponse($response);
-    $redmineAttachments = isset($body['issue']['attachments']) && is_array($body['issue']['attachments'])
-        ? $body['issue']['attachments']
-        : [];
-
-    $matches = matchAttachmentsByMetadata($attachments, $redmineAttachments);
-
-    foreach ($attachments as $attachment) {
-        $mappingId = (int)$attachment['mapping_id'];
-        $match = $matches[$attachment['jira_attachment_id']] ?? null;
-
-        if ($match === null) {
-            updateAttachmentMappingAfterPush($pdo, $mappingId, null, 'PENDING_ASSOCIATION', 'Unable to locate uploaded attachment on Redmine issue.');
-            continue;
-        }
-
-        updateAttachmentMappingAfterPush($pdo, $mappingId, $match['id'], 'SUCCESS', null, $redmineIssueId);
-    }
-}
-
-/**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string, created_at: ?string}> $attachments
- */
-function markSharePointJournalAttachmentsAsLinked(PDO $pdo, array $attachments, int $redmineIssueId): void
-{
-    foreach ($attachments as $attachment) {
-        $note = isset($attachment['sharepoint_url']) && $attachment['sharepoint_url'] !== null
-            ? sprintf('Attachment stored on SharePoint: %s', $attachment['sharepoint_url'])
-            : 'Attachment stored on SharePoint.';
-
-        updateAttachmentMappingAfterPush($pdo, (int)$attachment['mapping_id'], null, 'SUCCESS', $note, $redmineIssueId);
-    }
-}
-
-/**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string, created_at: ?string}> $attachments
- * @param array<int, mixed> $redmineAttachments
- * @return array<string, array{id: int}>
- */
-function matchAttachmentsByMetadata(array $attachments, array $redmineAttachments): array
-{
-    $lookup = [];
-    foreach ($redmineAttachments as $redmineAttachment) {
-        if (!is_array($redmineAttachment)) {
-            continue;
-        }
-
-        $id = isset($redmineAttachment['id']) ? (int)$redmineAttachment['id'] : null;
-        $filename = isset($redmineAttachment['filename']) ? (string)$redmineAttachment['filename'] : '';
-        $filesize = isset($redmineAttachment['filesize']) ? (int)$redmineAttachment['filesize'] : null;
-
-        if ($id === null) {
-            continue;
-        }
-
-        $lookup[] = [
-            'id' => $id,
-            'filename' => $filename,
-            'filesize' => $filesize,
-        ];
-    }
-
-    $matches = [];
-    foreach ($attachments as $attachment) {
-        $targetFilename = buildRedmineAttachmentFilename($attachment['jira_attachment_id'], $attachment['filename']);
-        $targetSize = $attachment['size_bytes'];
-
-        $matchId = null;
-        foreach ($lookup as $candidate) {
-            if ($targetFilename !== '' && $candidate['filename'] !== '' && $candidate['filename'] !== $targetFilename) {
-                continue;
-            }
-            if ($targetSize !== null && $candidate['filesize'] !== null && $candidate['filesize'] !== $targetSize) {
-                continue;
-            }
-            $matchId = $candidate['id'];
-            break;
-        }
-
-        if ($matchId !== null) {
-            $matches[$attachment['jira_attachment_id']] = ['id' => $matchId];
-        }
-    }
-
-    return $matches;
 }
 
 function updateAttachmentMappingAfterPush(PDO $pdo, int $mappingId, ?int $redmineAttachmentId, string $status, ?string $notes, ?int $redmineIssueId = null): void
@@ -1306,92 +1162,23 @@ function buildRedmineAttachmentFilename(string $jiraAttachmentId, string $origin
     return $filename;
 }
 
-function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
+function convertJournalBodyToMarkdown(?string $bodyHtml, ?string $bodyAdf, array $issueAttachments, AdfConverter $adfConverter): string
 {
-    if ($html === null) {
-        return null;
+    $bodyText = null;
+
+    if ($bodyHtml !== null && !str_contains($bodyHtml, "<!-- ADF macro (type = 'table') -->")) {
+        $bodyText = convertJiraHtmlToMarkdown($bodyHtml, $issueAttachments);
     }
 
-    $trimmed = trim($html);
-    if ($trimmed === '') {
-        return null;
+    if ($bodyText === null && $bodyAdf !== null) {
+        $bodyText = convertDescriptionToMarkdown($bodyAdf, $adfConverter);
     }
 
-    $rewrittenHtml = rewriteJiraAttachmentLinks($trimmed, $attachments);
-
-    static $converter = null;
-    if ($converter === null) {
-        $converter = new HtmlConverter([
-            'strip_tags' => false,
-            'hard_break' => true,
-        ]);
+    if ($bodyText === null && $bodyAdf !== null) {
+        $bodyText = convertJiraAdfToPlaintext($bodyAdf);
     }
 
-    try {
-        $markdown = trim($converter->convert($rewrittenHtml));
-    } catch (Throwable) {
-        $markdown = trim(strip_tags($rewrittenHtml));
-    }
-
-    return $markdown !== '' ? $markdown : null;
-}
-
-function rewriteJiraAttachmentLinks(string $html, array $attachments): string
-{
-    if ($attachments === []) {
-        return $html;
-    }
-
-    $document = new DOMDocument();
-    $previous = libxml_use_internal_errors(true);
-    $options = 0;
-    if (defined('LIBXML_HTML_NOIMPLIED')) {
-        $options |= LIBXML_HTML_NOIMPLIED;
-    }
-    if (defined('LIBXML_HTML_NODEFDTD')) {
-        $options |= LIBXML_HTML_NODEFDTD;
-    }
-
-    $htmlPayload = '<?xml encoding="utf-8"?>' . $html;
-    $loaded = $document->loadHTML($htmlPayload, $options);
-    libxml_clear_errors();
-    libxml_use_internal_errors($previous);
-
-    if (!$loaded) {
-        return $html;
-    }
-
-    foreach ($document->getElementsByTagName('a') as $link) {
-        if (!$link instanceof DOMElement) {
-            continue;
-        }
-
-        $href = $link->getAttribute('href');
-        $attachmentId = null;
-        if ($href !== '' && preg_match('#attachment/(\d+)#', $href, $matches)) {
-            $attachmentId = $matches[1];
-        } elseif ($link->hasAttribute('data-linked-resource-id')) {
-            $attachmentId = (string)$link->getAttribute('data-linked-resource-id');
-        }
-
-        if ($attachmentId === null || !isset($attachments[$attachmentId])) {
-            continue;
-        }
-
-        $filename = $attachments[$attachmentId] !== ''
-            ? $attachments[$attachmentId]
-            : sprintf('attachment-%s', $attachmentId);
-
-        while ($link->firstChild !== null) {
-            $link->removeChild($link->firstChild);
-        }
-        $link->appendChild($document->createTextNode($filename));
-        $link->setAttribute('href', sprintf('attachment:%s', $filename));
-    }
-
-    $converted = $document->saveHTML();
-
-    return $converted !== false ? $converted : $html;
+    return $bodyText ?? '';
 }
 
 function encodeJson(mixed $value): ?string
@@ -1478,24 +1265,28 @@ function buildJournalOverrides(
     ?string $createdAt,
     ?string $updatedAt,
     array $userLookup,
-    ?int $defaultAuthorId
+    ?int $defaultAuthorId,
+    bool $includeTimestamps = false
 ): array {
     $overrides = [];
 
     $redmineUserId = resolveRedmineUserId($userLookup, $authorAccountId, $defaultAuthorId);
-    if ($redmineUserId !== null) {
+    // only include user/updated_by when we explicitly want to include timestamps (i.e. using extended API)
+    if ($includeTimestamps && $redmineUserId !== null) {
         $overrides['user_id'] = $redmineUserId;
         $overrides['updated_by_id'] = $redmineUserId;
     }
 
-    $created = normalizeJiraTimestamp($createdAt);
-    if ($created !== null) {
-        $overrides['created_on'] = $created;
-    }
+    if ($includeTimestamps) {
+        $created = normalizeJiraTimestamp($createdAt);
+        if ($created !== null) {
+            $overrides['created_on'] = $created;
+        }
 
-    $updated = normalizeJiraTimestamp($updatedAt ?? $createdAt);
-    if ($updated !== null) {
-        $overrides['updated_on'] = $updated;
+        $updated = normalizeJiraTimestamp($updatedAt ?? $createdAt);
+        if ($updated !== null) {
+            $overrides['updated_on'] = $updated;
+        }
     }
 
     return $overrides;
@@ -1539,65 +1330,6 @@ function normalizeJiraTimestamp(mixed $value): ?string
     }
 
     return $dateTime->setTimezone(new DateTimeZone('UTC'))->format(DateTimeInterface::ATOM);
-}
-
-function convertJiraAdfToPlaintext(string $adfJson): string
-{
-    try {
-        $decoded = json_decode($adfJson, true, 512, JSON_THROW_ON_ERROR);
-    } catch (JsonException $exception) {
-        return '[Unable to decode Jira content: ' . $exception->getMessage() . ']';
-    }
-
-    if (!is_array($decoded)) {
-        return '[Unsupported Jira content format]';
-    }
-
-    return trim(renderAdfNode($decoded));
-}
-
-function renderAdfNode(mixed $node): string
-{
-    if (!is_array($node)) {
-        return '';
-    }
-
-    $type = isset($node['type']) ? (string)$node['type'] : '';
-    $text = '';
-
-    switch ($type) {
-        case 'doc':
-        case 'paragraph':
-        case 'bulletList':
-        case 'orderedList':
-        case 'listItem':
-        case 'heading':
-            if (isset($node['content']) && is_array($node['content'])) {
-                foreach ($node['content'] as $child) {
-                    $text .= renderAdfNode($child);
-                }
-            }
-            if (in_array($type, ['paragraph', 'heading', 'listItem'], true)) {
-                $text .= PHP_EOL;
-            }
-            break;
-        case 'text':
-            $textContent = isset($node['text']) ? (string)$node['text'] : '';
-            $text .= $textContent;
-            break;
-        case 'hardBreak':
-            $text .= PHP_EOL;
-            break;
-        default:
-            if (isset($node['content']) && is_array($node['content'])) {
-                foreach ($node['content'] as $child) {
-                    $text .= renderAdfNode($child);
-                }
-            }
-            break;
-    }
-
-    return $text;
 }
 
 /**
@@ -1848,4 +1580,112 @@ function parseCommandLineOptions(array $argv): array
 function formatCurrentTimestamp(): string
 {
     return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+}
+
+/**
+ * Read-only fetch of attachments that should be referenced for a given journal note.
+ * Only returns attachments that are already uploaded (migration_status = 'SUCCESS') or have a sharepoint_url.
+ *
+ * @return array<int,array{mapping_id:int,jira_attachment_id:string,filename:string,sharepoint_url:string|null,redmine_attachment_id:int|null,created_at:string|null}>
+ */
+function fetchJournalAttachmentsForNote(PDO $pdo, string $jiraIssueId, ?string $journalCreatedAt): array
+{
+    $sql = <<<SQL
+SELECT
+    map.mapping_id,
+    map.jira_attachment_id,
+    map.redmine_attachment_id,
+    map.sharepoint_url,
+    att.filename,
+    att.created_at
+FROM migration_mapping_attachments map
+JOIN staging_jira_attachments att ON att.id = map.jira_attachment_id
+WHERE map.jira_issue_id = :issue_id
+  AND map.association_hint = 'JOURNAL'
+  AND (
+      map.migration_status = 'SUCCESS'
+      OR (map.sharepoint_url IS NOT NULL AND map.sharepoint_url <> '')
+  )
+ORDER BY att.created_at, map.mapping_id
+SQL;
+
+    $stmt = $pdo->prepare($sql);
+    if ($stmt === false) {
+        throw new RuntimeException('Failed to prepare journal attachments query.');
+    }
+    $stmt->execute(['issue_id' => $jiraIssueId]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $stmt->closeCursor();
+
+    if ($journalCreatedAt !== null) {
+        $journalTimestamp = strtotime($journalCreatedAt);
+        if ($journalTimestamp !== false) {
+            $rows = array_values(array_filter($rows, static function (array $row) use ($journalTimestamp) {
+                $createdAt = isset($row['created_at']) ? (string)$row['created_at'] : null;
+                if ($createdAt === null) return true;
+                $createdTimestamp = strtotime($createdAt);
+                if ($createdTimestamp === false) return true;
+                return abs($createdTimestamp - $journalTimestamp) <= 300; // 5 minute tolerance
+            }));
+        }
+    }
+
+    $result = [];
+    foreach ($rows as $r) {
+        $result[] = [
+            'mapping_id' => isset($r['mapping_id']) ? (int)$r['mapping_id'] : 0,
+            'jira_attachment_id' => isset($r['jira_attachment_id']) ? (string)$r['jira_attachment_id'] : '',
+            'filename' => isset($r['filename']) ? (string)$r['filename'] : '',
+            'sharepoint_url' => isset($r['sharepoint_url']) && trim((string)$r['sharepoint_url']) !== '' ? trim((string)$r['sharepoint_url']) : null,
+            'redmine_attachment_id' => isset($r['redmine_attachment_id']) && $r['redmine_attachment_id'] !== null ? (int)$r['redmine_attachment_id'] : null,
+            'created_at' => isset($r['created_at']) ? (string)$r['created_at'] : null,
+        ];
+    }
+
+    return $result;
+}
+
+/**
+ * Build the journal attachment reference block (read-only). Exact format:
+ *
+ * ---
+ *
+ * > SharePoint attachment: [naam.pdf](https://...)
+ * > attachment: 1234__naam.pdf
+ *
+ * @param array<int,array{mapping_id:int,jira_attachment_id:string,filename:string,sharepoint_url:string|null,redmine_attachment_id:int|null,created_at:string|null}> $attachments
+ * @return string|null
+ */
+function buildJournalAttachmentBlock(array $attachments): ?string
+{
+    if ($attachments === []) return null;
+
+    $lines = [];
+    $lines[] = '---';
+    $lines[] = '';
+
+    foreach ($attachments as $att) {
+        $filename = $att['filename'] ?? ($att['jira_attachment_id'] ?? '');
+        $sp = $att['sharepoint_url'] ?? null;
+
+        if ($sp !== null && trim($sp) !== '') {
+            $lines[] = '> SharePoint attachment: ' . sprintf('[%s](%s)', $filename, $sp);
+            continue;
+        }
+
+        // create the upload-unique token (same format as used during issue uploads)
+        if (function_exists('buildUploadUniqueName')) {
+            $unique = buildUploadUniqueName((string)$att['jira_attachment_id'], $filename);
+        } else {
+            // fallback sanitization (should not be needed if your lib exports buildUploadUniqueName)
+            $san = preg_replace('/[^A-Za-z0-9._-]/u', '_', $filename);
+            $san = trim($san, '_');
+            if ($san === '') $san = 'attachment';
+            $unique = $att['jira_attachment_id'] . '__' . $san;
+        }
+
+        $lines[] = '> attachment: ' . $unique;
+    }
+
+    return implode(PHP_EOL, $lines);
 }
