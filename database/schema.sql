@@ -699,7 +699,7 @@ CREATE TABLE `migration_mapping_journals` (
                                               `jira_issue_id` VARCHAR(255) NOT NULL,
                                               `entity_type` ENUM('COMMENT', 'CHANGELOG') NOT NULL,
                                               `redmine_journal_id` INT NULL,
-                                              `migration_status` ENUM('PENDING', 'SUCCESS', 'FAILED', 'IGNORED') NOT NULL DEFAULT 'PENDING',
+                                              `migration_status` ENUM('PENDING', 'READY_FOR_PUSH', 'SUCCESS', 'FAILED', 'SKIPPED', 'IGNORED') NOT NULL DEFAULT 'PENDING',
                                               `notes` TEXT,
                                               `proposed_notes` LONGTEXT NULL,
                                               `automation_hash` VARCHAR(64) NULL,

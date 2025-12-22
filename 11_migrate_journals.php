@@ -10,7 +10,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
-const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.20';
+const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.21';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira comments and changelog entries into staging tables.',
     'transform' => 'Populate and classify journal mappings based on issue availability.',
@@ -617,50 +617,65 @@ function populateProposedJournalNotes(PDO $pdo): array
 
             $note = implode(' ', array_filter($noteParts, static fn($part) => $part !== '')) . PHP_EOL . $bodyText;
 
+            $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt);
+            $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
+            if ($attachmentBlock !== null) {
+                $note = rtrim($note) . PHP_EOL . PHP_EOL . $attachmentBlock;
+            }
         } else {
             $createdAt = isset($row['history_created_at']) ? (string)$row['history_created_at'] : null;
             $itemsJson = isset($row['history_items_json']) ? (string)$row['history_items_json'] : null;
 
-            $noteLines = [];
-            $noteLines[] = sprintf(
-                'Jira history %s%s',
-                $row['jira_entity_id'],
-                $createdAt !== null ? ' at ' . $createdAt : ''
-            );
-
+            $items = [];
             if ($itemsJson !== null) {
                 try {
-                    $items = json_decode($itemsJson, true, 512, JSON_THROW_ON_ERROR);
+                    $items = json_decode($itemsJson, true, 512, JSON_THROW_ON_ERROR) ?: [];
                 } catch (JsonException) {
                     $items = [];
                 }
+            }
 
-                if (is_array($items)) {
-                    foreach ($items as $item) {
-                        if (!is_array($item) || !isset($item['field'])) {
-                            continue;
-                        }
-                        $field = (string)$item['field'];
-                        $from = isset($item['fromString']) ? (string)$item['fromString'] : '';
-                        $to = isset($item['toString']) ? (string)$item['toString'] : '';
-                        $noteLines[] = sprintf(
-                            '- %s: %s -> %s',
-                            $field,
-                            $from !== '' ? $from : '[empty]',
-                            $to !== '' ? $to : '[empty]'
-                        );
+            $mentionsAttachment = false;
+            if (is_array($items)) {
+                foreach ($items as $item) {
+                    if (!is_array($item) || !isset($item['field'])) {
+                        continue;
+                    }
+                    $field = strtolower((string)$item['field']);
+                    if (str_contains($field, 'attachment')) {
+                        $mentionsAttachment = true;
+                        break;
                     }
                 }
             }
 
-            $note = implode(PHP_EOL, $noteLines);
-            $note = transform_text_in_transform_phase($note, $userMap);
+            $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt);
+            $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
 
+            if ($attachmentBlock === null && !$mentionsAttachment) {
+                $note = '';
+            } else {
+                $noteLines = [];
+                $noteLines[] = sprintf(
+                    'Jira attachments %s%s',
+                    $row['jira_entity_id'],
+                    $createdAt !== null ? ' at ' . $createdAt : ''
+                );
+
+                if ($attachmentBlock !== null) {
+                    $noteLines[] = '';
+                    $noteLines[] = $attachmentBlock;
+                } elseif ($mentionsAttachment) {
+                    $noteLines[] = '';
+                    $noteLines[] = '> Attachments were added in Jira (not available / not mapped).';
+                }
+
+                $note = implode(PHP_EOL, $noteLines);
+            }
         }
-        $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt);
-        $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
-        if ($attachmentBlock !== null) {
-            $note = rtrim($note) . PHP_EOL . PHP_EOL . $attachmentBlock;
+
+        if ($note !== '') {
+            $note = transform_text_in_transform_phase($note, $userMap);
         }
 
         $note = trim($note);

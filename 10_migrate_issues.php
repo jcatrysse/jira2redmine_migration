@@ -11,7 +11,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
 
-const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.37';
+const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.39';
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira issues into staging_jira_issues (and related staging tables).',
     'transform' => 'Reconcile Jira issues with Redmine dependencies to populate migration mappings.',
@@ -274,6 +274,12 @@ function main(array $config, array $cliOptions): void
 
         $defaultExtendedIssueAuthorId = extractDefaultIssueAuthorId($config);
 
+        $issueConfig = $config['migration']['issues'] ?? [];
+        $subtaskBehavior = normalizeSubtaskStatusBehavior($issueConfig['subtask_status_behavior'] ?? null);
+        $subtaskOpenParentStatusId = isset($issueConfig['subtask_open_parent_status_id'])
+            ? normalizeInteger($issueConfig['subtask_open_parent_status_id'], 1)
+            : null;
+
         runIssuePushPhase(
             $pdo,
             $confirmPush,
@@ -281,7 +287,9 @@ function main(array $config, array $cliOptions): void
             $redmineConfig,
             $useExtendedApi,
             $extendedApiPrefix,
-            $defaultExtendedIssueAuthorId
+            $defaultExtendedIssueAuthorId,
+            $subtaskBehavior,
+            $subtaskOpenParentStatusId
         );
     } else {
         printf(
@@ -1467,7 +1475,9 @@ function runIssuePushPhase(
     array $redmineConfig,
     bool $useExtendedApi,
     string $extendedApiPrefix,
-    ?int $defaultIssueUserId
+    ?int $defaultIssueUserId,
+    ?string $subtaskBehavior,
+    ?int $subtaskOpenParentStatusId
 ): void
 {
     $creationCandidates = fetchIssueCreationCandidates($pdo);
@@ -1992,6 +2002,41 @@ function runIssuePushPhase(
                 $message .= ': ' . $exception->getMessage();
             }
 
+            if (shouldRetryWithOpenedParent($message, $subtaskBehavior, $subtaskOpenParentStatusId, $parentRedmineId)) {
+                $reopened = updateParentIssueStatus(
+                    $client,
+                    $parentRedmineId,
+                    $subtaskOpenParentStatusId,
+                    $useExtendedApi,
+                    $extendedApiPrefix
+                );
+
+                if ($reopened) {
+                    try {
+                        $client->request($method, $endpoint, $options);
+                        $updateStatement->execute([
+                            'mapping_id' => $mappingId,
+                            'redmine_parent_issue_id' => $parentRedmineId,
+                            'proposed_parent_issue_id' => $parentRedmineId,
+                            'migration_status' => 'CREATION_SUCCESS',
+                            'notes' => null,
+                        ]);
+
+                        printf("  [updated] Jira issue %s → Redmine issue #%d%s", $jiraIssueKey, $redmineIssueId, PHP_EOL);
+                        continue;
+                    } catch (Throwable $retryException) {
+                        $retryMessage = sprintf(
+                            'Failed to update issue details for Jira issue %s after reopening parent: %s',
+                            $jiraIssueKey,
+                            $retryException->getMessage()
+                        );
+                        $message = $retryMessage;
+                    }
+                } else {
+                    $message .= ' (parent reopen attempt failed)';
+                }
+            }
+
             $updateStatement->execute([
                 'mapping_id' => $mappingId,
                 'redmine_parent_issue_id' => $parentRedmineId,
@@ -2025,6 +2070,53 @@ function runIssuePushPhase(
 
         printf("  [updated] Jira issue %s → Redmine issue #%d%s", $jiraIssueKey, $redmineIssueId, PHP_EOL);
     }
+}
+
+function shouldRetryWithOpenedParent(
+    string $message,
+    ?string $subtaskBehavior,
+    ?int $subtaskOpenParentStatusId,
+    ?int $parentRedmineId
+): bool {
+    if ($subtaskBehavior !== 'open_parent') {
+        return false;
+    }
+    if ($subtaskOpenParentStatusId === null || $parentRedmineId === null) {
+        return false;
+    }
+
+    return str_contains(
+        $message,
+        'An open issue cannot be attached to a closed parent task'
+    );
+}
+
+function updateParentIssueStatus(
+    Client $client,
+    int $parentRedmineId,
+    int $statusId,
+    bool $useExtendedApi,
+    string $extendedApiPrefix
+): bool {
+    $payload = ['issue' => ['status_id' => $statusId]];
+    $endpoint = $useExtendedApi
+        ? buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', $parentRedmineId))
+        : sprintf('issues/%d.json', $parentRedmineId);
+
+    $endpoint = ltrim($endpoint, '/');
+    $method = $useExtendedApi ? 'patch' : 'put';
+    $options = ['json' => $payload];
+    if ($useExtendedApi) {
+        $options['query'] = ['notify' => 'false', 'send_notification' => 0];
+    }
+
+    try {
+        $client->request($method, $endpoint, $options);
+    } catch (Throwable) {
+        return false;
+    }
+
+    return true;
 }
 
 /**
@@ -3534,29 +3626,41 @@ function normalizeCustomFieldSingleValue(string $fieldFormat, array $enumeration
 
             $timestamp = strtotime($stringValue);
             return $timestamp !== false ? date('Y-m-d', $timestamp) : null;
-        case 'string':
-        case 'text':
         case 'enumeration':
         case 'list':
-            // list / enumeration / string / text
             $stringValue = extractJiraCustomFieldString($rawValue);
             if ($stringValue === null) {
                 return null;
             }
 
-            // First try the full normalisation that we use for enumeration lookup keys
             $normKey = normalizeLabelKey($stringValue);
             if ($normKey !== '' && isset($enumerationLookup[$normKey])) {
                 return $enumerationLookup[$normKey];
             }
 
-            // Fall back to simple lower-case trim (backwards compatibility)
             $normalized = strtolower(trim($stringValue));
             if ($normalized !== '' && isset($enumerationLookup[$normalized])) {
                 return $enumerationLookup[$normalized];
             }
 
-            // Not found in the enumeration lookup — return original string value
+            return null;
+        case 'string':
+        case 'text':
+            $stringValue = extractJiraCustomFieldString($rawValue);
+            if ($stringValue === null) {
+                return null;
+            }
+
+            $normKey = normalizeLabelKey($stringValue);
+            if ($normKey !== '' && isset($enumerationLookup[$normKey])) {
+                return $enumerationLookup[$normKey];
+            }
+
+            $normalized = strtolower(trim($stringValue));
+            if ($normalized !== '' && isset($enumerationLookup[$normalized])) {
+                return $enumerationLookup[$normalized];
+            }
+
             return $stringValue;
         default:
             $stringValue = extractJiraCustomFieldString($rawValue);
