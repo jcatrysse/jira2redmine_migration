@@ -438,6 +438,7 @@ CREATE TABLE `migration_mapping_custom_fields` (
                                                    `redmine_custom_field_enumerations` JSON NULL,
                                                    `proposed_redmine_name` VARCHAR(255) NULL,
                                                    `proposed_field_format` VARCHAR(255) NULL,
+                                                   `proposed_text_formatting` BOOLEAN NULL,
                                                    `proposed_is_required` BOOLEAN NULL,
                                                    `proposed_is_filter` BOOLEAN NULL,
                                                    `proposed_is_for_all` BOOLEAN NULL,

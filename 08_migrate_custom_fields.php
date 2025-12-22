@@ -6218,6 +6218,7 @@ function fetchCustomFieldsReadyForCreation(PDO $pdo): array
             jira_field_name,
             proposed_redmine_name,
             proposed_field_format,
+            proposed_text_formatting,
             proposed_is_required,
             proposed_is_filter,
             proposed_is_for_all,
@@ -6261,6 +6262,7 @@ function fetchCustomFieldMappingById(PDO $pdo, int $mappingId): ?array
             jira_field_name,
             proposed_redmine_name,
             proposed_field_format,
+            proposed_text_formatting,
             proposed_is_required,
             proposed_is_filter,
             proposed_is_for_all,
@@ -6343,6 +6345,7 @@ function createStandardCustomField(
     $jiraName = $field['jira_field_name'] ?? null;
     $proposedName = $field['proposed_redmine_name'] ?? null;
     $proposedFormat = normalizeRedmineFieldFormat($field['proposed_field_format'] ?? null);
+    $proposedTextFormatting = normalizeBooleanFlag($field['proposed_text_formatting'] ?? null);
     $proposedIsRequired = normalizeBooleanFlag($field['proposed_is_required'] ?? null) ?? false;
     $proposedIsFilter = normalizeBooleanFlag($field['proposed_is_filter'] ?? null) ?? true;
     $proposedIsForAll = normalizeBooleanFlag($field['proposed_is_for_all'] ?? null) ?? true;
@@ -6388,8 +6391,11 @@ function createStandardCustomField(
         }
     }
     if ($proposedDefaultValue !== null) {
-        $payload['custom_field']['default_value'] = $proposedDefaultValue;
-    }
+            $payload['custom_field']['default_value'] = $proposedDefaultValue;
+        }
+        if ($proposedTextFormatting === true && in_array($effectiveFormat, ['text', 'string'], true)) {
+            $payload['custom_field']['text_formatting'] = true;
+        }
     if ($proposedTrackerIds !== null) {
         $payload['custom_field']['tracker_ids'] = $proposedTrackerIds;
     }

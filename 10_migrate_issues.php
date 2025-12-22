@@ -1300,7 +1300,13 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
                     $proposedIsPrivate = true;
                 }
                 $customFieldWarnings = [];
-                $proposedCustomFields = buildMappedCustomFieldPayload($decodedIssue, $customFieldMappingIndex, $customFieldWarnings);
+                $proposedCustomFields = buildMappedCustomFieldPayload(
+                    $decodedIssue,
+                    $customFieldMappingIndex,
+                    $issueAttachments,
+                    $adfConverter,
+                    $customFieldWarnings
+                );
                 $proposedCustomFields = appendResolutionCustomFieldPayload(
                     $decodedIssue,
                     $customFieldMappingIndex,
@@ -3047,6 +3053,7 @@ function buildCascadingFieldIndex(PDO $pdo): array {
  *     jira_field_name: string,
  *     redmine_custom_field_id: int,
  *     field_format: string,
+ *     text_formatting: bool,
  *     is_multiple: bool,
  *     enumeration_lookup: array<string, string>
  * }> | array{}
@@ -3058,6 +3065,7 @@ function buildCustomFieldMappingIndex(PDO $pdo): array
             jira_field_id,
             jira_field_name,
             proposed_field_format,
+            proposed_text_formatting,
             proposed_is_multiple,
             redmine_custom_field_id,
             redmine_custom_field_enumerations
@@ -3100,6 +3108,7 @@ function buildCustomFieldMappingIndex(PDO $pdo): array
             'jira_field_name' => isset($row['jira_field_name']) ? (string)$row['jira_field_name'] : $jiraFieldId,
             'redmine_custom_field_id' => $redmineCustomFieldId,
             'field_format' => $fieldFormat,
+            'text_formatting' => normalizeBooleanFlag($row['proposed_text_formatting'] ?? null) ?? false,
             'is_multiple' => normalizeBooleanFlag($row['proposed_is_multiple'] ?? null) ?? false,
             'enumeration_lookup' => buildEnumerationLookup(is_array($enumerations) ? $enumerations : []),
         ];
@@ -3226,11 +3235,17 @@ function buildCascadingCustomFieldPayload(array $issuePayload, array $cascadingI
 
 /**
  * @param array<string, mixed> $issuePayload
- * @param array<string, array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, is_multiple: bool, enumeration_lookup: array<string, string>}> $mappingIndex
+ * @param array<string, array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, text_formatting: bool, is_multiple: bool, enumeration_lookup: array<string, string>}> $mappingIndex
  * @param array<int, string> $warnings
  * @return array<int, array{id: int, value: string|array<int, string>}>|array{}
  */
-function buildMappedCustomFieldPayload(array $issuePayload, array $mappingIndex, array &$warnings = []): array
+function buildMappedCustomFieldPayload(
+    array $issuePayload,
+    array $mappingIndex,
+    array $issueAttachments,
+    AdfConverter $adfConverter,
+    array &$warnings = []
+): array
 {
     if ($mappingIndex === []) {
         return [];
@@ -3250,13 +3265,22 @@ function buildMappedCustomFieldPayload(array $issuePayload, array $mappingIndex,
 
         $raw = $fields[$jiraFieldId] ?? null;
 
-        // jouw normalisatie
-        $normalizedValue = normalizeCustomFieldValue(
-            $meta['field_format'],
-            $meta['is_multiple'],
-            $meta['enumeration_lookup'],
-            $raw
-        );
+        $normalizedValue = null;
+        if ($meta['text_formatting'] && in_array($meta['field_format'], ['text', 'string'], true)) {
+            $formattedValue = buildFormattedCustomFieldValue($issuePayload, $jiraFieldId, $issueAttachments, $adfConverter);
+            if ($formattedValue !== null) {
+                $normalizedValue = $meta['is_multiple'] ? [$formattedValue] : $formattedValue;
+            }
+        }
+
+        if ($normalizedValue === null) {
+            $normalizedValue = normalizeCustomFieldValue(
+                $meta['field_format'],
+                $meta['is_multiple'],
+                $meta['enumeration_lookup'],
+                $raw
+            );
+        }
 
         // alleen warnen als raw niet leeg was, maar normalisatie toch null gaf
         if ($normalizedValue === null && normalizeJiraEmptyValue($raw) !== null) {
@@ -3275,9 +3299,54 @@ function buildMappedCustomFieldPayload(array $issuePayload, array $mappingIndex,
     return $result;
 }
 
+function buildFormattedCustomFieldValue(
+    array $issuePayload,
+    string $jiraFieldId,
+    array $issueAttachments,
+    AdfConverter $adfConverter
+): ?string {
+    $renderedFields = $issuePayload['renderedFields'] ?? null;
+    if (is_array($renderedFields) && isset($renderedFields[$jiraFieldId]) && is_string($renderedFields[$jiraFieldId])) {
+        $renderedHtml = trim($renderedFields[$jiraFieldId]);
+        if ($renderedHtml !== '') {
+            $markdown = convertJiraHtmlToMarkdown($renderedHtml, $issueAttachments);
+            if ($markdown !== null && trim($markdown) !== '') {
+                return $markdown;
+            }
+        }
+    }
+
+    $fields = $issuePayload['fields'] ?? null;
+    if (!is_array($fields) || !array_key_exists($jiraFieldId, $fields)) {
+        return null;
+    }
+
+    $raw = $fields[$jiraFieldId];
+    if (is_array($raw) && ($raw['type'] ?? null) === 'doc') {
+        $adfJson = json_encode($raw, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (is_string($adfJson)) {
+            $markdown = convertDescriptionToMarkdown($adfJson, $adfConverter);
+            if (trim($markdown) !== '') {
+                return $markdown;
+            }
+        }
+        $plaintext = convertJiraAdfToPlaintext($raw);
+        if ($plaintext !== null && trim($plaintext) !== '') {
+            return $plaintext;
+        }
+    }
+
+    if (is_string($raw)) {
+        $raw = trim($raw);
+        return $raw !== '' ? $raw : null;
+    }
+
+    return null;
+}
+
 /**
  * @param array<string, mixed> $issuePayload
- * @param array<string, array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, is_multiple: bool, enumeration_lookup: array<string, string>}> $mappingIndex
+ * @param array<string, array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, text_formatting: bool, is_multiple: bool, enumeration_lookup: array<string, string>}> $mappingIndex
  * @param array<int, array{id: int, value: string|array<int, string>}> $currentPayload
  * @param array<int, string> $warnings
  * @return array<int, array{id: int, value: string|array<int, string>}>
@@ -3337,8 +3406,8 @@ function appendResolutionCustomFieldPayload(
 }
 
 /**
- * @param array<string, array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, is_multiple: bool, enumeration_lookup: array<string, string>}> $mappingIndex
- * @return array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, is_multiple: bool, enumeration_lookup: array<string, string>}|null
+ * @param array<string, array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, text_formatting: bool, is_multiple: bool, enumeration_lookup: array<string, string>}> $mappingIndex
+ * @return array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, text_formatting: bool, is_multiple: bool, enumeration_lookup: array<string, string>}|null
  */
 function resolveCustomFieldMappingByName(array $mappingIndex, string $fieldName): ?array
 {
