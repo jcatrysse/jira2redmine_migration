@@ -82,7 +82,7 @@ function main(array $config, array $cliOptions): void
 function printUsage(): void
 {
     printf('Jira to Redmine Relation Migration (step 14) — version %s%s', MIGRATE_RELATIONS_SCRIPT_VERSION, PHP_EOL);
-    printf("Usage: php 13_migrate_issue_relations.php [options]\n\n");
+    printf("Usage: php 12_migrate_issue_relations.php [options]\n\n");
     printf("Options:\n");
     printf("  --phases=LIST     Comma separated list of phases to run (default: transform,push).\n");
     printf("  --skip=LIST       Comma separated list of phases to skip.\n");

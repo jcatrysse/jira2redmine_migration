@@ -4,15 +4,41 @@ All notable changes to this project will be documented in this file.
 
 ## [TODO]
 
-- General: verify if all automation hashes align with the latest database schemas.
-- Fine-tune the issues, and journals scripts.
-- Migrate issues script:
-    - on a rerun, newer issues should be fetched.
-    - investigate if we need to map the Jira system fields: resolution and resolutiondate to Redmine as a Custom Fields.
-        - I manually added in the database, after the transform phase but before the push phase: INSERT INTO `migration_mapping_custom_fields` (`mapping_id`, `jira_field_id`, `jira_field_name`, `jira_schema_type`, `jira_schema_custom`, `jira_project_ids`, `jira_issue_type_ids`, `jira_allowed_values`, `redmine_custom_field_id`, `mapping_parent_custom_field_id`, `redmine_custom_field_enumerations`, `proposed_redmine_name`, `proposed_field_format`, `proposed_is_required`, `proposed_is_filter`, `proposed_is_for_all`, `proposed_is_multiple`, `proposed_possible_values`, `proposed_value_dependencies`, `proposed_default_value`, `proposed_tracker_ids`, `proposed_role_ids`, `proposed_project_ids`, `migration_status`, `notes`, `automation_hash`, `created_at`, `last_updated_at`) VALUES (NULL, 'resolution', 'resolution', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'Resolution', 'text', NULL, NULL, '1', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'READY_FOR_CREATION', NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), (NULL, 'resolutiondate', 'resolutiondate', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'Resolution date', 'date', NULL, '1', '1', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'READY_FOR_CREATION', NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        - Ensure this logic fits the issue migration logic.
+- Fine-tune the journals scripts.
 - Create the missing scripts: labels/tags, watchers, checklists, relations, workflows, custom workflows...
-- re-enable: RAILS_ENV=development bundle exec rake --silent redmine:attachments:prune
+
+## [AFTER MIGRATION]
+- Re-enable: RAILS_ENV=development bundle exec rake --silent redmine:attachments:prune
+- Lock all flagged users again (I have temporarily put all locked users to a flagged status and activated them for the migration)
+- Re-enable the ldap sync if any
+- Check group memberships
+- Reset the workflows to accept only valid statuses.
+- Re-enable stealth mode
+
+## [Firefox console command to enable all checkboxes]
+```javascipt
+// Pak de specifieke tabel vast
+const table = document.querySelector('table.transitions-always');
+
+if (table) {
+// 1. Alle dropdowns in deze tabel op '1' zetten
+table.querySelectorAll('select').forEach(select => {
+select.value = '1';
+select.dispatchEvent(new Event('change', { bubbles: true }));
+});
+
+// 2. Alle checkboxes in deze tabel die NIET disabled zijn aanvinken
+table.querySelectorAll('input[type="checkbox"]:not(:disabled)').forEach(checkbox => {
+checkbox.checked = true;
+checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+});
+
+console.log("Klaar! Alle dropdowns op 'Yes' en checkboxes aangevinkt binnen de workflow tabel.");
+} else {
+console.error("Tabel 'table.transitions-always' niet gevonden op deze pagina.");
+}
+```
+Apache config: `SetEnv RACK_QUERY_PARSER_PARAMS_LIMIT 12000`
 
 ## [0.0.77]
 
@@ -502,10 +528,7 @@ All notable changes to this project will be documented in this file.
   relation directionality, and relax `staging_jira_attachments.created_at` to
   accept `NULL` values so the association hint fallback works when Jira omits a
   timestamp. The CLI now reports version `0.0.23`.
-- Introduce `12_migrate_subtasks.php` to analyse Jira parent/child pairs and
-  update the corresponding Redmine `parent_issue_id` assignments with optional
-  dry-run previews and automation-hash preservation.
-- Add `13_migrate_issue_relations.php` plus the
+- Add `12_migrate_issue_relations.php` plus the
   `migration_mapping_issue_relations` table to map Jira links to Redmine relation
   types, queue rows for review, and create the final relations via the Redmine
   REST API.

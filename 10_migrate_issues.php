@@ -112,7 +112,8 @@ function buildIssueCreationPayloadForPreview(
 function buildIssueUpdatePayloadForPreview(
     array $candidate,
     bool $useExtendedApi,
-    string $extendedApiPrefix
+    string $extendedApiPrefix,
+    ?int $defaultIssueUserId
 ): ?array {
     $jiraIssueKey = (string)$candidate['jira_issue_key'];
 
@@ -126,7 +127,7 @@ function buildIssueUpdatePayloadForPreview(
     }
 
     if ($useExtendedApi) {
-        $issuePayload = array_merge($issuePayload, buildExtendedIssueUpdateOverrides($candidate));
+        $issuePayload = array_merge($issuePayload, buildExtendedIssueUpdateOverrides($candidate, $defaultIssueUserId));
     }
 
     $payload = ['issue' => $issuePayload];
@@ -1070,14 +1071,39 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
     $defaultTrackerId = isset($issueConfig['default_redmine_tracker_id']) ? normalizeInteger($issueConfig['default_redmine_tracker_id'], 1) : null;
     $defaultStatusId = isset($issueConfig['default_redmine_status_id']) ? normalizeInteger($issueConfig['default_redmine_status_id'], 1) : null;
     $defaultPriorityId = isset($issueConfig['default_redmine_priority_id']) ? normalizeInteger($issueConfig['default_redmine_priority_id'], 1) : null;
-    $defaultAuthorId = isset($issueConfig['default_redmine_author_id']) ? normalizeInteger($issueConfig['default_redmine_author_id'], 1) : null;
+    $defaultAuthorId = extractDefaultIssueAuthorId($config);
     $defaultAssigneeId = isset($issueConfig['default_redmine_assignee_id']) ? normalizeInteger($issueConfig['default_redmine_assignee_id'], 1) : null;
     $defaultIsPrivate = array_key_exists('default_is_private', $issueConfig) ? normalizeBooleanFlag($issueConfig['default_is_private']) : null;
+    $subtaskBehavior = normalizeSubtaskStatusBehavior($issueConfig['subtask_status_behavior'] ?? null);
+    $subtaskCloseStatusId = isset($issueConfig['subtask_close_status_id'])
+        ? normalizeInteger($issueConfig['subtask_close_status_id'], 1)
+        : null;
+    $subtaskOpenParentStatusId = isset($issueConfig['subtask_open_parent_status_id'])
+        ? normalizeInteger($issueConfig['subtask_open_parent_status_id'], 1)
+        : null;
+    if ($subtaskBehavior === 'close_subtasks' && $subtaskCloseStatusId === null) {
+        throw new RuntimeException('subtask_close_status_id must be configured when subtask_status_behavior=close_subtasks.');
+    }
+    if ($subtaskBehavior === 'open_parent' && $subtaskOpenParentStatusId === null) {
+        throw new RuntimeException('subtask_open_parent_status_id must be configured when subtask_status_behavior=open_parent.');
+    }
+    $statusClosedIndex = $subtaskBehavior !== null ? fetchRedmineStatusClosedIndex($pdo) : [];
     $attachmentMetadata = buildAttachmentMetadataIndex($pdo);
     $sharePointAttachmentIndex = buildSharePointAttachmentIndex($pdo);
     $jiraIssueBaseUrl = resolveJiraIssueBaseUrl($config);
 
     $mappings = fetchIssueMappingsForTransform($pdo);
+    $subtaskStatusOverrides = $subtaskBehavior !== null
+        ? buildSubtaskStatusOverrides(
+            $mappings,
+            $statusLookup,
+            $defaultStatusId,
+            $subtaskBehavior,
+            $subtaskCloseStatusId,
+            $subtaskOpenParentStatusId,
+            $statusClosedIndex
+        )
+        : [];
 
     $updateStatement = $pdo->prepare(<<<SQL
         UPDATE migration_mapping_issues
@@ -1200,8 +1226,15 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
         $proposedStatusId = $redmineStatusId ?? $defaultStatusId;
         $proposedPriorityId = $redminePriorityId ?? $defaultPriorityId;
         $proposedAuthorId = $redmineAuthorId ?? $defaultAuthorId;
-        $proposedAssigneeId = $redmineAssigneeId ?? $defaultAssigneeId;
+        $proposedAssigneeId = $redmineAssigneeId;
+        if ($jiraAssigneeId !== null && $redmineAssigneeId === null) {
+            $proposedAssigneeId = $defaultAssigneeId;
+        }
         $proposedParentIssueId = $redmineParentIssueId;
+        $statusOverride = $subtaskStatusOverrides[$row['jira_issue_id']] ?? null;
+        if ($statusOverride !== null) {
+            $proposedStatusId = $statusOverride;
+        }
 
         $issueAttachments = $attachmentMetadata[$row['jira_issue_id']] ?? [];
         $proposedSubject = truncateString($issueSummary, 255);
@@ -1257,6 +1290,7 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
         $proposedIsPrivate = $defaultIsPrivate;
         $proposedCustomFieldPayload = null;
         $notes = [];
+        $blockingNotes = [];
 
         if ($issueRawPayload !== null) {
             $decodedIssue = json_decode($issueRawPayload, true);
@@ -1287,12 +1321,16 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
                     : null;
 
                 if ($customFieldWarnings !== []) {
-                    $notes[] = sprintf('Custom field values could not be normalised for fields: %s.', implode(', ', array_unique($customFieldWarnings)));
-                }
-                if ($cascadingWarnings !== []) {
-                    $notes[] = sprintf('Cascading selection could not be mapped for fields: %s.', implode(', ', array_unique($cascadingWarnings)));
-                }
+                $message = sprintf('Custom field values could not be normalised for fields: %s.', implode(', ', array_unique($customFieldWarnings)));
+                $notes[] = $message;
+                $blockingNotes[] = $message;
             }
+            if ($cascadingWarnings !== []) {
+                $message = sprintf('Cascading selection could not be mapped for fields: %s.', implode(', ', array_unique($cascadingWarnings)));
+                $notes[] = $message;
+                $blockingNotes[] = $message;
+            }
+        }
         }
 
         if ($row['redmine_issue_id'] !== null) {
@@ -1300,24 +1338,39 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
         } else {
             if ($proposedProjectId === null) {
                 $notes[] = 'Project not mapped to a Redmine identifier.';
+                $blockingNotes[] = 'Project not mapped to a Redmine identifier.';
             }
             if ($proposedTrackerId === null) {
                 $notes[] = 'Tracker not mapped to a Redmine identifier.';
+                $blockingNotes[] = 'Tracker not mapped to a Redmine identifier.';
             }
             if ($proposedStatusId === null) {
                 $notes[] = 'Status not mapped to a Redmine identifier.';
+                $blockingNotes[] = 'Status not mapped to a Redmine identifier.';
             }
             if ($jiraPriorityId !== null && $proposedPriorityId === null) {
                 $notes[] = 'Priority not mapped to a Redmine identifier.';
+                $blockingNotes[] = 'Priority not mapped to a Redmine identifier.';
             }
             if ($jiraReporterId !== null && $proposedAuthorId === null) {
                 $notes[] = 'Reporter not mapped to a Redmine user (and no default configured).';
+                $blockingNotes[] = 'Reporter not mapped to a Redmine user (and no default configured).';
             }
-            if ($jiraAssigneeId !== null && $proposedAssigneeId === null) {
-                $notes[] = 'Assignee not mapped to a Redmine user (and no default configured).';
+            if ($jiraAssigneeId !== null && $redmineAssigneeId === null) {
+                $notes[] = 'Assignee not mapped to a Redmine user; default assignment applied if configured.';
+                if ($defaultAssigneeId === null) {
+                    $blockingNotes[] = 'Assignee not mapped to a Redmine user; default assignment applied if configured.';
+                }
+            }
+            if ($statusOverride !== null) {
+                if ($subtaskBehavior === 'close_subtasks') {
+                    $notes[] = 'Subtask status adjusted to closed status per configuration.';
+                } elseif ($subtaskBehavior === 'open_parent') {
+                    $notes[] = 'Parent status adjusted to open status per configuration.';
+                }
             }
 
-            if ($notes === []) {
+            if ($blockingNotes === []) {
                 $nextStatus = 'READY_FOR_CREATION';
             } else {
                 $nextStatus = 'MANUAL_INTERVENTION_REQUIRED';
@@ -1412,9 +1465,11 @@ function runIssuePushPhase(
 ): void
 {
     $creationCandidates = fetchIssueCreationCandidates($pdo);
+    $rewriteCandidates = fetchIssueRewriteCandidates($pdo);
     $updateCandidates = fetchIssueUpdateCandidates($pdo);
+    $issueLinkMap = [];
 
-    if ($creationCandidates === [] && $updateCandidates === []) {
+    if ($creationCandidates === [] && $rewriteCandidates === [] && $updateCandidates === []) {
         printf("  No issues queued for creation or update.%s", PHP_EOL);
         $danglingAttachments = countAttachmentsAwaitingAssociation($pdo);
         if ($danglingAttachments > 0) {
@@ -1426,8 +1481,11 @@ function runIssuePushPhase(
     if ($creationCandidates !== []) {
         printf("  %d issue(s) queued for creation.%s", count($creationCandidates), PHP_EOL);
     }
-    if ($updateCandidates !== []) {
-        printf("  %d issue(s) queued for update (description/parent).%s", count($updateCandidates), PHP_EOL);
+    if ($rewriteCandidates !== []) {
+        printf("  %d issue(s) queued for link rewrite.%s", count($rewriteCandidates), PHP_EOL);
+    }
+    if ($rewriteCandidates !== [] && $isDryRun) {
+        $issueLinkMap = fetchIssueLinkReplacementMap($pdo);
     }
 
     $attachmentsByIssue = [];
@@ -1508,7 +1566,8 @@ function runIssuePushPhase(
             $dryRunPayload = buildIssueUpdatePayloadForPreview(
                 $candidate,
                 $useExtendedApi,
-                $extendedApiPrefix
+                $extendedApiPrefix,
+                $defaultIssueUserId
             );
 
             if ($dryRunPayload === null) {
@@ -1519,6 +1578,62 @@ function runIssuePushPhase(
             printf("      - endpoint: %s%s", $dryRunPayload['endpoint'], PHP_EOL);
             printf("      - payload: %s%s", $dryRunPayload['body'], PHP_EOL);
         }
+    }
+
+    foreach ($rewriteCandidates as $candidate) {
+        $subject = isset($candidate['proposed_subject']) ? (string)$candidate['proposed_subject'] : '[missing subject]';
+        $redmineIssueId = $candidate['redmine_issue_id'] !== null ? (int)$candidate['redmine_issue_id'] : null;
+        $parentRedmineId = $candidate['parent_redmine_issue_id'] !== null ? (int)$candidate['parent_redmine_issue_id'] : null;
+        $jiraParentIssueId = $candidate['jira_parent_issue_id'] !== null ? (string)$candidate['jira_parent_issue_id'] : null;
+        $requiresParent = $jiraParentIssueId !== null;
+        $description = isset($candidate['proposed_description']) ? trim((string)$candidate['proposed_description']) : '';
+        $hasDescription = $description !== '';
+
+        printf(
+            "  - %s → rewrite links for Redmine #%s%s",
+            $subject,
+            $redmineIssueId !== null ? (string)$redmineIssueId : '[missing id]',
+            PHP_EOL
+        );
+
+        if (!$isDryRun) {
+            continue;
+        }
+
+        if ($redmineIssueId === null) {
+            printf("      - [skip] Missing Redmine issue id for link rewrite.%s", PHP_EOL);
+            continue;
+        }
+
+        if ($requiresParent && $parentRedmineId === null) {
+            printf("      - [blocked] Parent issue not created yet; rewrite will wait.%s", PHP_EOL);
+            continue;
+        }
+
+        if (!$hasDescription && !$requiresParent) {
+            printf("      - [skip] No description or parent update required after rewrite.%s", PHP_EOL);
+            continue;
+        }
+
+        $previewCandidate = $candidate;
+        if ($hasDescription) {
+            $previewCandidate['proposed_description'] = replaceIssueLinksInText($description, $issueLinkMap);
+        }
+
+        $dryRunPayload = buildIssueUpdatePayloadForPreview(
+            $previewCandidate,
+            $useExtendedApi,
+            $extendedApiPrefix,
+            $defaultIssueUserId
+        );
+
+        if ($dryRunPayload === null) {
+            printf("      - [skip] No description or parent update required.%s", PHP_EOL);
+            continue;
+        }
+
+        printf("      - endpoint: %s%s", $dryRunPayload['endpoint'], PHP_EOL);
+        printf("      - payload: %s%s", $dryRunPayload['body'], PHP_EOL);
     }
 
     if ($isDryRun) {
@@ -1745,7 +1860,7 @@ function runIssuePushPhase(
             continue;
         }
 
-        $finalStatus = 'READY_FOR_UPDATE';
+        $finalStatus = 'READY_FOR_REWRITE';
         $finalNotes = null;
 
         printf("  [created] Jira issue %s → Redmine issue #%d%s", $jiraIssueKey, $redmineIssueId, PHP_EOL);
@@ -1766,9 +1881,16 @@ function runIssuePushPhase(
         ]);
     }
 
+    if ($rewriteCandidates !== []) {
+        runIssueLinkRewritePhase($pdo);
+    }
+
+    $updateCandidates = fetchIssueUpdateCandidates($pdo);
     if ($updateCandidates === []) {
         return;
     }
+
+    printf("  %d issue(s) queued for final update (description/parent).%s", count($updateCandidates), PHP_EOL);
 
     $updateStatement = $pdo->prepare(<<<SQL
         UPDATE migration_mapping_issues
@@ -1836,7 +1958,7 @@ function runIssuePushPhase(
         }
 
         if ($useExtendedApi) {
-            $issuePayload = array_merge($issuePayload, buildExtendedIssueUpdateOverrides($candidate));
+            $issuePayload = array_merge($issuePayload, buildExtendedIssueUpdateOverrides($candidate, $defaultIssueUserId));
         }
 
         $payload = ['issue' => $issuePayload];
@@ -1887,19 +2009,6 @@ function runIssuePushPhase(
             continue;
         }
 
-        // --- Post-push: vervang canonical Jira browse/links door #redmine_id (DB en optioneel Redmine)
-        // Alleen uitvoeren wanneer geen dry-run en push bevestigd is (we zitten al in push dus dat geldt)
-        try {
-            // $client bestaat eerder in deze functie (createRedmineClient)
-            // useExtendedApi/extendedApiPrefix zijn parameters van de functie
-            // updateRedmine = true => we proberen ook Redmine te PATCHen zodat description op Redmine verandert
-            replaceIssueLinksWithRedmineIds($pdo, $client, $useExtendedApi, $extendedApiPrefix, true);
-            printf("  [info] Post-push: Jira browse-links vervangen door #redmine_id in DB (en gepushed naar Redmine).%s", PHP_EOL);
-        } catch (Throwable $e) {
-            // niet fatale fout: log en ga verder
-            printf("  [warn] Post-push replacement of browse-links failed: %s%s", $e->getMessage(), PHP_EOL);
-        }
-
         $updateStatement->execute([
             'mapping_id' => $mappingId,
             'redmine_parent_issue_id' => $parentRedmineId,
@@ -1948,12 +2057,13 @@ function fetchIssueUpdateCandidates(PDO $pdo): array
     $candidateStatement = $pdo->prepare(<<<SQL
         SELECT
             map.*,
+            issue.created_at AS jira_created_at,
             issue.updated_at AS jira_updated_at,
             parent.redmine_issue_id AS parent_redmine_issue_id
         FROM migration_mapping_issues map
         JOIN staging_jira_issues issue ON issue.id = map.jira_issue_id
         LEFT JOIN migration_mapping_issues parent ON parent.jira_issue_id = map.jira_parent_issue_id
-        WHERE map.migration_status IN ('READY_FOR_UPDATE', 'UPDATE_FAILED')
+        WHERE map.migration_status IN ('READY_FOR_FINAL_UPDATE', 'UPDATE_FAILED')
           AND map.redmine_issue_id IS NOT NULL
         ORDER BY map.mapping_id
     SQL);
@@ -1967,6 +2077,127 @@ function fetchIssueUpdateCandidates(PDO $pdo): array
     $candidateStatement->closeCursor();
 
     return $candidates;
+}
+
+/**
+ * @return array<int, array<string, mixed>>
+ */
+function fetchIssueRewriteCandidates(PDO $pdo): array
+{
+    $candidateStatement = $pdo->prepare(<<<SQL
+        SELECT
+            map.*,
+            issue.created_at AS jira_created_at,
+            issue.updated_at AS jira_updated_at,
+            parent.redmine_issue_id AS parent_redmine_issue_id
+        FROM migration_mapping_issues map
+        JOIN staging_jira_issues issue ON issue.id = map.jira_issue_id
+        LEFT JOIN migration_mapping_issues parent ON parent.jira_issue_id = map.jira_parent_issue_id
+        WHERE map.migration_status = 'READY_FOR_REWRITE'
+        ORDER BY map.mapping_id
+    SQL);
+
+    if ($candidateStatement === false) {
+        throw new RuntimeException('Failed to prepare issue selection statement for link rewrite.');
+    }
+
+    $candidateStatement->execute();
+    $candidates = $candidateStatement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $candidateStatement->closeCursor();
+
+    return $candidates;
+}
+
+/**
+ * @return array<string, int>
+ */
+function fetchIssueLinkReplacementMap(PDO $pdo): array
+{
+    $statement = $pdo->query("SELECT jira_issue_key, redmine_issue_id FROM migration_mapping_issues WHERE redmine_issue_id IS NOT NULL");
+    if ($statement === false) {
+        throw new RuntimeException('Failed to prepare issue link replacement map.');
+    }
+
+    $issueMap = [];
+    while ($row = $statement->fetch(PDO::FETCH_ASSOC)) {
+        if (!isset($row['jira_issue_key'], $row['redmine_issue_id'])) {
+            continue;
+        }
+        $issueMap[strtoupper((string)$row['jira_issue_key'])] = (int)$row['redmine_issue_id'];
+    }
+    $statement->closeCursor();
+
+    return $issueMap;
+}
+
+/**
+ * @throws Throwable
+ */
+function runIssueLinkRewritePhase(PDO $pdo): void
+{
+    $candidates = fetchIssueRewriteCandidates($pdo);
+    if ($candidates === []) {
+        return;
+    }
+
+    try {
+        replaceIssueLinksWithRedmineIds($pdo, null, false, '', false);
+        printf("  [info] Link rewrite: Jira browse-links vervangen door #redmine_id in de database.%s", PHP_EOL);
+    } catch (Throwable $e) {
+        printf("  [warn] Link rewrite failed: %s%s", $e->getMessage(), PHP_EOL);
+    }
+
+    $updateStatement = $pdo->prepare(<<<SQL
+        UPDATE migration_mapping_issues
+        SET
+            proposed_parent_issue_id = :proposed_parent_issue_id,
+            migration_status = :migration_status,
+            notes = :notes,
+            last_updated_at = CURRENT_TIMESTAMP
+        WHERE mapping_id = :mapping_id
+    SQL);
+    if ($updateStatement === false) {
+        throw new RuntimeException('Failed to prepare mapping update statement during link rewrite phase.');
+    }
+
+    foreach ($candidates as $candidate) {
+        $mappingId = (int)$candidate['mapping_id'];
+        $jiraIssueKey = (string)$candidate['jira_issue_key'];
+        $parentRedmineId = $candidate['parent_redmine_issue_id'] !== null ? (int)$candidate['parent_redmine_issue_id'] : null;
+        $jiraParentIssueId = $candidate['jira_parent_issue_id'] !== null ? (string)$candidate['jira_parent_issue_id'] : null;
+        $description = isset($candidate['proposed_description']) ? trim((string)$candidate['proposed_description']) : '';
+        $hasDescription = $description !== '';
+        $requiresParent = $jiraParentIssueId !== null;
+
+        if ($requiresParent && $parentRedmineId === null) {
+            $updateStatement->execute([
+                'mapping_id' => $mappingId,
+                'proposed_parent_issue_id' => null,
+                'migration_status' => 'READY_FOR_REWRITE',
+                'notes' => 'Parent issue not created yet; waiting to resolve before final update.',
+            ]);
+            continue;
+        }
+
+        if (!$hasDescription && !$requiresParent) {
+            $updateStatement->execute([
+                'mapping_id' => $mappingId,
+                'proposed_parent_issue_id' => $parentRedmineId,
+                'migration_status' => 'CREATION_SUCCESS',
+                'notes' => null,
+            ]);
+            continue;
+        }
+
+        $updateStatement->execute([
+            'mapping_id' => $mappingId,
+            'proposed_parent_issue_id' => $parentRedmineId,
+            'migration_status' => 'READY_FOR_FINAL_UPDATE',
+            'notes' => null,
+        ]);
+
+        printf("  [ready] Jira issue %s queued for final update.%s", $jiraIssueKey, PHP_EOL);
+    }
 }
 
 function countAttachmentsAwaitingAssociation(PDO $pdo): int
@@ -3965,6 +4196,121 @@ function normalizeStoredAutomationHash(mixed $value): ?string
     return $trimmed !== '' ? $trimmed : null;
 }
 
+function normalizeSubtaskStatusBehavior(mixed $value): ?string
+{
+    if ($value === null) {
+        return null;
+    }
+
+    if (!is_string($value)) {
+        return null;
+    }
+
+    $trimmed = strtolower(trim($value));
+    if ($trimmed === '') {
+        return null;
+    }
+
+    $allowed = ['close_subtasks', 'open_parent'];
+    if (!in_array($trimmed, $allowed, true)) {
+        throw new RuntimeException(sprintf(
+            'Unknown subtask_status_behavior "%s". Supported values: %s.',
+            $trimmed,
+            implode(', ', $allowed)
+        ));
+    }
+
+    return $trimmed;
+}
+
+/**
+ * @return array<int, bool>
+ */
+function fetchRedmineStatusClosedIndex(PDO $pdo): array
+{
+    $sql = 'SELECT id, is_closed FROM staging_redmine_issue_statuses';
+
+    try {
+        $statement = $pdo->query($sql);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to fetch Redmine status snapshot: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if ($statement === false) {
+        throw new RuntimeException('Failed to fetch Redmine status snapshot.');
+    }
+
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $statement->closeCursor();
+
+    $index = [];
+    foreach ($rows as $row) {
+        if (!isset($row['id'])) {
+            continue;
+        }
+        $index[(int)$row['id']] = !empty($row['is_closed']);
+    }
+
+    return $index;
+}
+
+/**
+ * @param array<int, array<string, mixed>> $mappings
+ * @param array<string, array<string, mixed>> $statusLookup
+ * @param array<int, bool> $statusClosedIndex
+ * @return array<string, int>
+ */
+function buildSubtaskStatusOverrides(
+    array $mappings,
+    array $statusLookup,
+    ?int $defaultStatusId,
+    string $behavior,
+    ?int $closeSubtaskStatusId,
+    ?int $openParentStatusId,
+    array $statusClosedIndex
+): array {
+    $baseStatusByIssue = [];
+    $parentByIssue = [];
+
+    foreach ($mappings as $row) {
+        $jiraIssueId = isset($row['jira_issue_id']) ? (string)$row['jira_issue_id'] : '';
+        if ($jiraIssueId === '') {
+            continue;
+        }
+        $jiraStatusId = isset($row['jira_status_id']) ? (string)$row['jira_status_id'] : '';
+        $resolvedStatusId = $jiraStatusId !== '' ? resolveRedmineStatusId($statusLookup, $jiraStatusId) : null;
+        $baseStatusByIssue[$jiraIssueId] = $resolvedStatusId ?? $defaultStatusId;
+
+        $jiraParentIssueId = isset($row['jira_parent_issue_id']) ? (string)$row['jira_parent_issue_id'] : '';
+        if ($jiraParentIssueId !== '') {
+            $parentByIssue[$jiraIssueId] = $jiraParentIssueId;
+        }
+    }
+
+    $overrides = [];
+    foreach ($parentByIssue as $childId => $parentId) {
+        $childStatusId = $baseStatusByIssue[$childId] ?? null;
+        $parentStatusId = $baseStatusByIssue[$parentId] ?? null;
+        if ($childStatusId === null || $parentStatusId === null) {
+            continue;
+        }
+
+        $childClosed = $statusClosedIndex[$childStatusId] ?? false;
+        $parentClosed = $statusClosedIndex[$parentStatusId] ?? false;
+        if (!$parentClosed || $childClosed) {
+            continue;
+        }
+
+        if ($behavior === 'close_subtasks' && $closeSubtaskStatusId !== null) {
+            $overrides[$childId] = $closeSubtaskStatusId;
+        } elseif ($behavior === 'open_parent' && $openParentStatusId !== null) {
+            $overrides[$parentId] = $openParentStatusId;
+        }
+    }
+
+    return $overrides;
+}
+
 /**
  * @param array<string, mixed> $candidate
  * @return array<string, mixed>
@@ -4000,13 +4346,31 @@ function buildExtendedIssueOverrides(array $candidate, ?int $defaultAuthorId = n
  * @param array<string, mixed> $candidate
  * @return array<string, mixed>
  */
-function buildExtendedIssueUpdateOverrides(array $candidate): array
+function buildExtendedIssueUpdateOverrides(array $candidate, ?int $defaultAuthorId = null): array
 {
     $overrides = [];
 
     $updated = normalizeJiraTimestamp($candidate['jira_updated_at'] ?? null);
     if ($updated !== null) {
         $overrides['updated_on'] = $updated;
+    }
+
+    $authorId = $candidate['proposed_author_id'] ?? $candidate['redmine_author_id'] ?? $defaultAuthorId;
+    $created = normalizeJiraTimestamp($candidate['jira_created_at'] ?? null);
+    if ($created === null) {
+        $created = $updated;
+    }
+
+    $journal = [];
+    if ($authorId !== null) {
+        $journal['user_id'] = (int)$authorId;
+        $journal['updated_by_id'] = (int)$authorId;
+    }
+    if ($created !== null) {
+        $journal['created_on'] = $created;
+    }
+    if ($journal !== []) {
+        $overrides['journal'] = $journal;
     }
 
     return $overrides;

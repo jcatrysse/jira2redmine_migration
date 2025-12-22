@@ -945,10 +945,18 @@ function processCommentPush(
         ? buildJournalOverrides($authorId, $createdAt, $updatedAt, $userLookup, $defaultAuthorId, true)
         : [];
 
+    $issueUpdatedOn = $useExtendedApi ? buildIssueUpdatedOnOverride($updatedAt ?? $createdAt) : null;
+
     if ($useExtendedApi && $journalOverrides !== []) {
         $issuePayload = ['notes' => $note, 'journal' => $journalOverrides];
+        if ($issueUpdatedOn !== null) {
+            $issuePayload['updated_on'] = $issueUpdatedOn;
+        }
     } else {
         $issuePayload = ['notes' => $note];
+        if ($issueUpdatedOn !== null) {
+            $issuePayload['updated_on'] = $issueUpdatedOn;
+        }
     }
 
     $payload = ['issue' => array_filter($issuePayload, static fn($v) => $v !== null && $v !== [])];
@@ -1141,10 +1149,18 @@ function processChangelogPush(
         ? buildJournalOverrides($history['author_account_id'] ?? null, $createdAt, $createdAt, $userLookup, $defaultAuthorId, true)
         : [];
 
+    $issueUpdatedOn = $useExtendedApi ? buildIssueUpdatedOnOverride($createdAt) : null;
+
     if ($useExtendedApi && $journalOverrides !== []) {
         $issuePayload = ['notes' => $baseNote, 'journal' => $journalOverrides];
+        if ($issueUpdatedOn !== null) {
+            $issuePayload['updated_on'] = $issueUpdatedOn;
+        }
     } else {
         $issuePayload = ['notes' => $baseNote];
+        if ($issueUpdatedOn !== null) {
+            $issuePayload['updated_on'] = $issueUpdatedOn;
+        }
     }
 
     $payload = ['issue' => array_filter($issuePayload, static fn($v) => $v !== null && $v !== [])];
@@ -1565,6 +1581,11 @@ function buildJournalOverrides(
     }
 
     return $overrides;
+}
+
+function buildIssueUpdatedOnOverride(?string $updatedAt): ?string
+{
+    return normalizeJiraTimestamp($updatedAt);
 }
 
 function extractDefaultJournalAuthorId(array $config): ?int

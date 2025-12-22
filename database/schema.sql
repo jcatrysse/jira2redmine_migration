@@ -617,7 +617,7 @@ CREATE TABLE `migration_mapping_issues` (
                                             `proposed_estimated_hours` DECIMAL(10,2) NULL,
                                             `proposed_is_private` BOOLEAN NULL,
                                             `proposed_custom_field_payload` JSON NULL,
-                                            `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'READY_FOR_UPDATE', 'UPDATE_FAILED', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
+                                            `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'READY_FOR_REWRITE', 'READY_FOR_FINAL_UPDATE', 'UPDATE_FAILED', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
                                             `notes` TEXT,
                                             `automation_hash` CHAR(64) NULL,
                                             `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

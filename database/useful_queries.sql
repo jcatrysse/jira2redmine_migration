@@ -1,0 +1,2 @@
+# Missing sers who are author or assignee
+SELECT DISTINCT u.mapping_id, u.jira_account_id, u.jira_display_name, u.jira_email_address, u.redmine_user_id, u.match_type, u.migration_status FROM migration_mapping_users u WHERE u.migration_status = 'MANUAL_INTERVENTION_REQUIRED' AND ( EXISTS ( SELECT 1 FROM staging_jira_issues i WHERE i.reporter_account_id = u.jira_account_id OR i.assignee_account_id = u.jira_account_id ) );

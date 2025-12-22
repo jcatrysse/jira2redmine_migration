@@ -514,6 +514,76 @@ function transform_text_in_transform_phase(string $text, array $userMap): string
 }
 
 /**
+ * Replace Jira issue links in a text blob with #redmine_id references.
+ *
+ * @param array<string, int> $issueMap
+ */
+function replaceIssueLinksInText(string $text, array $issueMap): string
+{
+    if ($issueMap === []) {
+        return $text;
+    }
+
+    $replaceUrlToHash = function(string $urlOrLink) use ($issueMap): string {
+        if (preg_match('~/browse/([A-Z][A-Z0-9]+-[0-9]+)~i', $urlOrLink, $m)) {
+            $key = strtoupper($m[1]);
+            if (isset($issueMap[$key])) {
+                return '#' . $issueMap[$key];
+            }
+        }
+        if (preg_match('/[?&]selectedIssue=([A-Z][A-Z0-9]+-[0-9]+)/i', $urlOrLink, $m2)) {
+            $key = strtoupper($m2[1]);
+            if (isset($issueMap[$key])) {
+                return '#' . $issueMap[$key];
+            }
+        }
+        return $urlOrLink;
+    };
+
+    $preserve = [];
+    $i = 0;
+    $protected = preg_replace_callback(
+        '/(?m)^[[:space:]>]*Original Jira issue:[^\r\n]*(?:\r?\n)?/',
+        function($m) use (&$preserve, &$i) {
+            $key = "__ORIGJIRA_{$i}__";
+            $preserve[$key] = $m[0];
+            $i++;
+            return $key . PHP_EOL;
+        },
+        $text
+    );
+
+    $replaced = preg_replace_callback(
+        '/\[(.*?)]\(\s*(https?:\/\/[^\s)]+)\s*\)/i',
+        function($m) use ($replaceUrlToHash) {
+            $url = $m[2];
+            $repl = $replaceUrlToHash($url);
+            if ($repl === $url) {
+                return $m[0];
+            }
+            return $repl;
+        },
+        $protected
+    );
+
+    $replaced = preg_replace_callback(
+        '/https?:\/\/[^\s)\]>]+/i',
+        function($m) use ($replaceUrlToHash) {
+            return $replaceUrlToHash($m[0]);
+        },
+        $replaced
+    );
+
+    if (!empty($preserve)) {
+        foreach ($preserve as $key => $value) {
+            $replaced = str_replace($key . PHP_EOL, $value, $replaced);
+        }
+    }
+
+    return $replaced;
+}
+
+/**
  * Vervang Jira issue links door #redmine_id in DB (issues + comments).
  * Optioneel ook PATCH naar Redmine zodat de issue description op Redmine zelf verandert.
  *
