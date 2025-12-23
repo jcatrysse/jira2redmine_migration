@@ -722,7 +722,11 @@ CREATE TABLE `staging_jira_journal_extract_state` (
                                                       `issue_id` VARCHAR(255) NOT NULL PRIMARY KEY,
                                                       `issue_key` VARCHAR(255) NOT NULL,
                                                       `comments_extracted_at` TIMESTAMP NULL DEFAULT NULL,
+                                                      `comments_migration_status` ENUM('PENDING', 'SUCCESS', 'WARNING', 'FAILED', 'SKIPPED', 'IGNORED') NOT NULL DEFAULT 'PENDING',
+                                                      `comments_notes` TEXT NULL,
                                                       `changelog_extracted_at` TIMESTAMP NULL DEFAULT NULL,
+                                                      `changelog_migration_status` ENUM('PENDING', 'SUCCESS', 'WARNING', 'FAILED', 'SKIPPED', 'IGNORED') NOT NULL DEFAULT 'PENDING',
+                                                      `changelog_notes` TEXT NULL,
                                                       `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) COMMENT='Resume checkpoint for Jira journal extraction.';
 
@@ -735,6 +739,9 @@ CREATE TABLE `migration_mapping_journals` (
                                               `migration_status` ENUM('PENDING', 'READY_FOR_PUSH', 'SUCCESS', 'FAILED', 'SKIPPED', 'IGNORED') NOT NULL DEFAULT 'PENDING',
                                               `notes` TEXT,
                                               `proposed_notes` LONGTEXT NULL,
+                                              `proposed_author_id` INT NULL,
+                                              `proposed_created_on` DATETIME NULL,
+                                              `proposed_updated_on` DATETIME NULL,
                                               `automation_hash` VARCHAR(64) NULL,
                                               `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                               `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

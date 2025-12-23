@@ -1005,7 +1005,7 @@ php 11_migrate_journals.php --help
 | Option            | Description                                                                 |
 |-------------------|-----------------------------------------------------------------------------|
 | `-h`, `--help`    | Print usage information and exit.                                           |
-| `-V`, `--version` | Display the script version (`0.0.19`).                                      |
+| `-V`, `--version` | Display the script version (`0.0.23`).                                      |
 | `--phases=<list>` | Comma-separated list of phases to run (default: `jira,transform,push`).     |
 | `--skip=<list>`   | Comma-separated list of phases to skip.                                     |
 | `--confirm-push`  | Required toggle to create journals in Redmine.                              |
@@ -1021,7 +1021,11 @@ php 11_migrate_journals.php --help
    comment and changelog endpoints. Payloads are persisted in
    `staging_jira_comments` and `staging_jira_changelogs`, preserving both the
    Atlassian Document Format bodies and Jira-rendered HTML so later phases can
-   recreate Markdown that mirrors the original formatting.
+   recreate Markdown that mirrors the original formatting. Extraction progress
+   lives in `staging_jira_journal_extract_state`, where
+   `comments_migration_status` and `changelog_migration_status` determine
+   whether an issue will be re-fetched; warning notes are stored alongside the
+   statuses for later review.
 2. **Transform (`transform`)** – inserts missing rows into
    `migration_mapping_journals`, joins them with the issue mapping table, and
    marks entries as `READY_FOR_PUSH` once the target Redmine issue identifier is

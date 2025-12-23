@@ -117,6 +117,72 @@ function rewriteJiraAttachmentLinks(string $html, array $attachments): string
         }
     }
 
+    // 1b) Handle embedded media objects (video/audio) that reference attachment URLs.
+    $replaceMediaNode = function(DOMElement $element, ?string $sourceUrl) use ($doc, $attachmentsMeta): void {
+        if ($sourceUrl === null || $sourceUrl === '') {
+            return;
+        }
+
+        $resolved = mapAttachmentUrlToTarget($sourceUrl, $attachmentsMeta);
+        if (preg_match('/^(\d+)__(.+)$/', $resolved, $mResolved)) {
+            $aid = $mResolved[1];
+            $isImage = $attachmentsMeta[$aid]['is_image'] ?? false;
+
+            if ($isImage) {
+                $img = $doc->createElement('img');
+                $img->setAttribute('src', $resolved);
+                $element->parentNode?->replaceChild($img, $element);
+            } else {
+                $textNode = $doc->createTextNode('attachment:' . $resolved);
+                $element->parentNode?->replaceChild($textNode, $element);
+            }
+            return;
+        }
+
+        if ($resolved !== $sourceUrl) {
+            $parts = parse_url($resolved);
+            $basename = isset($parts['path']) ? basename($parts['path']) : '';
+            $label = $basename !== '' ? $basename : $resolved;
+
+            $link = $doc->createElement('a', $label);
+            $link->setAttribute('href', $resolved);
+            $element->parentNode?->replaceChild($link, $element);
+        }
+    };
+
+    foreach (iterator_to_array($doc->getElementsByTagName('object')) as $object) {
+        if (!$object instanceof DOMElement) continue;
+        $source = null;
+        if ($object->hasAttribute('data')) {
+            $source = (string)$object->getAttribute('data');
+        }
+        if ($source === '' || $source === null) {
+            foreach (iterator_to_array($object->getElementsByTagName('param')) as $param) {
+                if (!$param instanceof DOMElement) continue;
+                if (strtolower((string)$param->getAttribute('name')) === 'data') {
+                    $source = (string)$param->getAttribute('value');
+                    break;
+                }
+                if ($source === '' && strtolower((string)$param->getAttribute('name')) === 'src') {
+                    $source = (string)$param->getAttribute('value');
+                }
+            }
+        }
+        if (($source === '' || $source === null) && $object->getElementsByTagName('embed')->length > 0) {
+            $embed = $object->getElementsByTagName('embed')->item(0);
+            if ($embed instanceof DOMElement) {
+                $source = (string)$embed->getAttribute('src');
+            }
+        }
+        $replaceMediaNode($object, $source);
+    }
+
+    foreach (iterator_to_array($doc->getElementsByTagName('embed')) as $embed) {
+        if (!$embed instanceof DOMElement) continue;
+        $source = (string)$embed->getAttribute('src');
+        $replaceMediaNode($embed, $source);
+    }
+
     // 2) Process anchors
     $links = iterator_to_array($doc->getElementsByTagName('a'));
     foreach ($links as $a) {
@@ -388,6 +454,9 @@ function transformDescriptionsForUsersAndCanonicalizeIssues(PDO $pdo): void
 function transform_text_in_transform_phase(string $text, array $userMap): string
 {
     if (trim($text) === '') return $text;
+
+    // quick cleanup: malformed markdown links pointing to user#<id> -> user#<id>
+    $text = preg_replace('/\[[^]]*]\(\s*user#(\d+)[^)]*\)/i', 'user#$1', $text) ?? $text;
 
     // 1) Preserve Original Jira issue lines by placeholders
     $orig = [];
@@ -787,8 +856,16 @@ function replaceJiraUserLinksWithRedmineIds(string $text, array $userLookup): st
 {
     if (trim($text) === '') return $text;
 
+    $text = preg_replace('/user#(\d+)\s+class=/i', 'user#$1', $text) ?? $text;
+    $text = preg_replace('/\[[^]]*]\(\s*<?user#(\d+)[^)]*>\s*\)/i', 'user#$1', $text) ?? $text;
+
     $replaceAccountId = function (?string $maybeUrl) use ($userLookup): ?string {
         if ($maybeUrl === null || $maybeUrl === '') return null;
+
+        $decoded = urldecode($maybeUrl);
+        if (preg_match('/user#(\d+)/i', $decoded, $m)) {
+            return 'user#' . $m[1];
+        }
 
         // zoek accountId param (urlencoded mogelijk)
         if (preg_match('/[?&]accountId=([^&)\s]+)/i', $maybeUrl, $m)) {
@@ -815,11 +892,17 @@ function replaceJiraUserLinksWithRedmineIds(string $text, array $userLookup): st
     }, $text);
 
     // 2) HTML anchors: <a href="...">Label</a>
-    $text = preg_replace_callback('/<a\b[^>]*href=(["\'])(.*?)\1[^>]*>(.*?)<\/a>/mi', function ($m) use ($replaceAccountId) {
+    $text = preg_replace_callback('/<a\b[^>]*href=(["\'])(.*?)\1[^>]*>(.*?)<\/a>/mi', function ($m) use ($replaceAccountId, $userLookup) {
         $url = $m[2];
         $repl = $replaceAccountId($url);
         if ($repl !== null) {
             return $repl;
+        }
+        if (preg_match('/data-account-id=(["\'])(.*?)\1/i', $m[0], $accMatch)) {
+            $acc = urldecode($accMatch[2]);
+            if ($acc !== '' && isset($userLookup[$acc]['redmine_user_id'])) {
+                return 'user#' . (int)$userLookup[$acc]['redmine_user_id'];
+            }
         }
         return $m[0];
     }, $text);
