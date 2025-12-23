@@ -10,7 +10,9 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
-const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.21';
+const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.22';
+const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
+const JIRA_RATE_LIMIT_BASE_DELAY_MS = 1000;
 const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira comments and changelog entries into staging tables.',
     'transform' => 'Populate and classify journal mappings based on issue availability.',
@@ -243,6 +245,66 @@ function fetchJiraJournals(Client $client, PDO $pdo, array $config): array
         throw new RuntimeException('Failed to prepare Jira changelog insert.');
     }
 
+    $stateStatement = $pdo->query('SELECT issue_id, comments_extracted_at, changelog_extracted_at FROM staging_jira_journal_extract_state');
+    if ($stateStatement === false) {
+        throw new RuntimeException('Failed to load Jira journal extraction state.');
+    }
+
+    $stateRows = $stateStatement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $stateStatement->closeCursor();
+
+    $stateByIssue = [];
+    foreach ($stateRows as $row) {
+        $issueId = isset($row['issue_id']) ? (string)$row['issue_id'] : '';
+        if ($issueId === '') {
+            continue;
+        }
+        $stateByIssue[$issueId] = [
+            'comments_extracted_at' => $row['comments_extracted_at'] ?? null,
+            'changelog_extracted_at' => $row['changelog_extracted_at'] ?? null,
+        ];
+    }
+
+    $stateUpsertComments = $pdo->prepare(<<<SQL
+        INSERT INTO staging_jira_journal_extract_state (
+            issue_id,
+            issue_key,
+            comments_extracted_at
+        ) VALUES (
+            :issue_id,
+            :issue_key,
+            :comments_extracted_at
+        )
+        ON DUPLICATE KEY UPDATE
+            issue_key = VALUES(issue_key),
+            comments_extracted_at = VALUES(comments_extracted_at),
+            last_updated_at = CURRENT_TIMESTAMP
+    SQL);
+
+    if ($stateUpsertComments === false) {
+        throw new RuntimeException('Failed to prepare journal extraction state update (comments).');
+    }
+
+    $stateUpsertChangelog = $pdo->prepare(<<<SQL
+        INSERT INTO staging_jira_journal_extract_state (
+            issue_id,
+            issue_key,
+            changelog_extracted_at
+        ) VALUES (
+            :issue_id,
+            :issue_key,
+            :changelog_extracted_at
+        )
+        ON DUPLICATE KEY UPDATE
+            issue_key = VALUES(issue_key),
+            changelog_extracted_at = VALUES(changelog_extracted_at),
+            last_updated_at = CURRENT_TIMESTAMP
+    SQL);
+
+    if ($stateUpsertChangelog === false) {
+        throw new RuntimeException('Failed to prepare journal extraction state update (changelog).');
+    }
+
     $commentsProcessed = 0;
     $commentsUpdated = 0;
     $changelogProcessed = 0;
@@ -252,13 +314,33 @@ function fetchJiraJournals(Client $client, PDO $pdo, array $config): array
         $issueId = (string)$issue['id'];
         $issueKey = isset($issue['issue_key']) ? (string)$issue['issue_key'] : $issueId;
 
-        [$newComments, $updatedComments] = fetchJiraCommentsForIssue($client, $commentInsert, $issueId, $issueKey);
-        $commentsProcessed += $newComments;
-        $commentsUpdated += $updatedComments;
+        $state = $stateByIssue[$issueId] ?? ['comments_extracted_at' => null, 'changelog_extracted_at' => null];
+        $commentsDone = !empty($state['comments_extracted_at']);
+        $changelogDone = !empty($state['changelog_extracted_at']);
 
-        [$newChangelog, $updatedChangelog] = fetchJiraChangelogForIssue($client, $changelogInsert, $issueId, $issueKey);
-        $changelogProcessed += $newChangelog;
-        $changelogUpdated += $updatedChangelog;
+        if (!$commentsDone) {
+            [$newComments, $updatedComments] = fetchJiraCommentsForIssue($client, $commentInsert, $issueId, $issueKey);
+            $commentsProcessed += $newComments;
+            $commentsUpdated += $updatedComments;
+
+            $stateUpsertComments->execute([
+                'issue_id' => $issueId,
+                'issue_key' => $issueKey,
+                'comments_extracted_at' => formatCurrentTimestamp(),
+            ]);
+        }
+
+        if (!$changelogDone) {
+            [$newChangelog, $updatedChangelog] = fetchJiraChangelogForIssue($client, $changelogInsert, $issueId, $issueKey);
+            $changelogProcessed += $newChangelog;
+            $changelogUpdated += $updatedChangelog;
+
+            $stateUpsertChangelog->execute([
+                'issue_id' => $issueId,
+                'issue_key' => $issueKey,
+                'changelog_extracted_at' => formatCurrentTimestamp(),
+            ]);
+        }
     }
 
     return [
@@ -286,13 +368,19 @@ function fetchJiraCommentsForIssue(Client $client, PDOStatement $statement, stri
 
     do {
         try {
-            $response = $client->get(sprintf('/rest/api/3/issue/%s/comment', $issueId), [
-                'query' => [
-                    'startAt' => $startAt,
-                    'maxResults' => $maxResults,
-                    'expand' => 'renderedBody',
+            $response = jiraGetWithRetry(
+                $client,
+                sprintf('/rest/api/3/issue/%s/comment', $issueId),
+                [
+                    'query' => [
+                        'startAt' => $startAt,
+                        'maxResults' => $maxResults,
+                        'expand' => 'renderedBody',
+                    ],
                 ],
-            ]);
+                $issueKey,
+                'comments'
+            );
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
             $message = sprintf('Failed to fetch comments for Jira issue %s', $issueKey);
@@ -368,12 +456,18 @@ function fetchJiraChangelogForIssue(Client $client, PDOStatement $statement, str
 
     do {
         try {
-            $response = $client->get(sprintf('/rest/api/3/issue/%s/changelog', $issueId), [
-                'query' => [
-                    'startAt' => $startAt,
-                    'maxResults' => $maxResults,
+            $response = jiraGetWithRetry(
+                $client,
+                sprintf('/rest/api/3/issue/%s/changelog', $issueId),
+                [
+                    'query' => [
+                        'startAt' => $startAt,
+                        'maxResults' => $maxResults,
+                    ],
                 ],
-            ]);
+                $issueKey,
+                'changelog'
+            );
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
             $message = sprintf('Failed to fetch changelog for Jira issue %s', $issueKey);
@@ -1778,6 +1872,74 @@ function extractErrorBody(ResponseInterface $response): string
     }
 
     return $body;
+}
+
+/**
+ * @throws BadResponseException
+ * @throws GuzzleException
+ */
+function jiraGetWithRetry(
+    Client $client,
+    string $path,
+    array $options,
+    string $issueKey,
+    string $context
+): ResponseInterface {
+    $attempt = 0;
+
+    do {
+        try {
+            return $client->get($path, $options);
+        } catch (BadResponseException $exception) {
+            $response = $exception->getResponse();
+            $status = $response instanceof ResponseInterface ? $response->getStatusCode() : null;
+
+            if ($status !== 429) {
+                throw $exception;
+            }
+
+            $attempt++;
+            if ($attempt > JIRA_RATE_LIMIT_MAX_RETRIES) {
+                throw $exception;
+            }
+
+            $retryAfter = null;
+            if ($response instanceof ResponseInterface) {
+                $headers = $response->getHeader('Retry-After');
+                if ($headers !== []) {
+                    $headerValue = trim((string)($headers[0] ?? ''));
+                    if ($headerValue !== '' && ctype_digit($headerValue)) {
+                        $retryAfter = (int)$headerValue;
+                    }
+                }
+            }
+
+            $delayMs = calculateRateLimitDelayMs($attempt, $retryAfter);
+            printf(
+                "  [warn] Jira rate limit (429) for issue %s (%s). Retrying in %.1fs (attempt %d/%d).%s",
+                $issueKey,
+                $context,
+                $delayMs / 1000,
+                $attempt,
+                JIRA_RATE_LIMIT_MAX_RETRIES,
+                PHP_EOL
+            );
+            usleep($delayMs * 1000);
+        }
+    } while (true);
+}
+
+function calculateRateLimitDelayMs(int $attempt, ?int $retryAfterSeconds): int
+{
+    if ($retryAfterSeconds !== null && $retryAfterSeconds > 0) {
+        return $retryAfterSeconds * 1000;
+    }
+
+    $base = JIRA_RATE_LIMIT_BASE_DELAY_MS;
+    $delay = (int)($base * (2 ** max(0, $attempt - 1)));
+    $jitter = random_int(0, (int)($base / 2));
+
+    return $delay + $jitter;
 }
 
 /**

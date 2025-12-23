@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_RELATIONS_SCRIPT_VERSION = '0.0.1';
+const MIGRATE_RELATIONS_SCRIPT_VERSION = '0.0.3';
 const AVAILABLE_PHASES = [
     'transform' => 'Reconcile Jira issue links with Redmine targets and propose relation types.',
     'push' => 'Create the pending Redmine issue relations.',
@@ -81,7 +81,7 @@ function main(array $config, array $cliOptions): void
 
 function printUsage(): void
 {
-    printf('Jira to Redmine Relation Migration (step 14) — version %s%s', MIGRATE_RELATIONS_SCRIPT_VERSION, PHP_EOL);
+    printf('Jira to Redmine Relation Migration (step 12) — version %s%s', MIGRATE_RELATIONS_SCRIPT_VERSION, PHP_EOL);
     printf("Usage: php 12_migrate_issue_relations.php [options]\n\n");
     printf("Options:\n");
     printf("  --phases=LIST     Comma separated list of phases to run (default: transform,push).\n");
@@ -166,11 +166,7 @@ function runRelationTransformPhase(PDO $pdo): void
             ? (int)$row['target_redmine_issue_id']
             : null;
 
-        $proposedRelationType = guessRedmineRelationType(
-            $row['jira_link_type_name'] ?? null,
-            $row['jira_link_type_outward'] ?? null,
-            $row['jira_link_type_inward'] ?? null
-        );
+        $proposedRelationType = 'relates';
 
         $nextStatus = 'READY_FOR_CREATION';
         $notes = null;
@@ -181,10 +177,6 @@ function runRelationTransformPhase(PDO $pdo): void
         } elseif ($sourceRedmineId === null || $targetRedmineId === null) {
             $nextStatus = 'MANUAL_INTERVENTION_REQUIRED';
             $notes = 'Missing Redmine issue mapping for source or target; rerun 10_migrate_issues.php.';
-            $summary['manual']++;
-        } elseif ($proposedRelationType === null) {
-            $nextStatus = 'MANUAL_INTERVENTION_REQUIRED';
-            $notes = 'Unable to map Jira link type to a Redmine relation; populate proposed_relation_type manually.';
             $summary['manual']++;
         } else {
             $summary['ready']++;
@@ -249,10 +241,26 @@ function runRelationPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $
 
     printf('[%s] %d issue relation(s) queued for creation.%s', formatCurrentTimestamp(), count($rows), PHP_EOL);
 
+    $redmineConfig = extractArrayConfig($config, 'redmine');
+    $useExtendedApi = shouldUseExtendedApi($redmineConfig, false);
+    $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
+
     if ($isDryRun) {
         foreach ($rows as $row) {
+            $endpoint = buildRelationEndpoint(
+                $useExtendedApi,
+                $extendedApiPrefix,
+                (int)$row['redmine_issue_from_id']
+            );
+            $payload = buildRelationPayload(
+                (int)$row['redmine_issue_to_id'],
+                (string)$row['proposed_relation_type'],
+                $useExtendedApi
+            );
             printf(
-                "  [dry-run] Jira link %s → Redmine #%d %s #%d%s",
+                "  [dry-run] POST %s payload=%s (Jira link %s → Redmine #%d %s #%d)%s",
+                $endpoint,
+                json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 (string)$row['jira_link_id'],
                 (int)$row['redmine_issue_from_id'],
                 (string)$row['proposed_relation_type'],
@@ -269,7 +277,6 @@ function runRelationPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $
         return;
     }
 
-    $redmineConfig = extractArrayConfig($config, 'redmine');
     $client = createRedmineClient($redmineConfig);
 
     $successStatement = $pdo->prepare(<<<SQL
@@ -297,16 +304,15 @@ function runRelationPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $
 
     foreach ($rows as $row) {
         $mappingId = (int)$row['mapping_id'];
-        $payload = [
-            'relation' => [
-                'issue_id' => (int)$row['redmine_issue_from_id'],
-                'issue_to_id' => (int)$row['redmine_issue_to_id'],
-                'relation_type' => (string)$row['proposed_relation_type'],
-            ],
-        ];
+        $fromId = (int)$row['redmine_issue_from_id'];
+        $toId = (int)$row['redmine_issue_to_id'];
+        $relationType = (string)$row['proposed_relation_type'];
+        $payload = buildRelationPayload($toId, $relationType, $useExtendedApi);
+        $endpoint = buildRelationEndpoint($useExtendedApi, $extendedApiPrefix, $fromId);
+        $options = ['json' => $payload];
 
         try {
-            $response = $client->post('/relations.json', ['json' => $payload]);
+            $response = $client->post($endpoint, $options);
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
             $message = 'Failed to create Redmine relation';
@@ -648,6 +654,72 @@ function extractErrorBody(ResponseInterface $response): string
     }
 
     return trim($body);
+}
+
+function buildRelationPayload(int $issueToId, string $relationType, bool $includeNotify): array
+{
+    $payload = [
+        'relation' => [
+            'issue_to_id' => $issueToId,
+            'relation_type' => $relationType,
+        ],
+    ];
+
+    if ($includeNotify) {
+        $payload['notify'] = false;
+    }
+
+    return $payload;
+}
+
+function buildRelationEndpoint(bool $useExtendedApi, string $extendedApiPrefix, int $issueId): string
+{
+    $resource = sprintf('issues/%d/relations.json', $issueId);
+    if ($useExtendedApi) {
+        return buildExtendedApiPath($extendedApiPrefix, $resource);
+    }
+
+    return $resource;
+}
+
+function shouldUseExtendedApi(array $redmineConfig, bool $force): bool
+{
+    if ($force) {
+        return true;
+    }
+
+    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
+        ? $redmineConfig['extended_api']
+        : [];
+
+    return (bool)($extendedConfig['enabled'] ?? false);
+}
+
+function resolveExtendedApiPrefix(array $redmineConfig): string
+{
+    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
+        ? $redmineConfig['extended_api']
+        : [];
+
+    $prefix = isset($extendedConfig['prefix']) ? trim((string)$extendedConfig['prefix']) : '/extended_api';
+
+    if ($prefix === '') {
+        $prefix = '/extended_api';
+    }
+
+    return trim($prefix, '/');
+}
+
+function buildExtendedApiPath(string $prefix, string $resource): string
+{
+    $normalizedPrefix = trim($prefix, '/');
+    $normalizedResource = ltrim($resource, '/');
+
+    if ($normalizedPrefix === '') {
+        return $normalizedResource;
+    }
+
+    return $normalizedPrefix . '/' . $normalizedResource;
 }
 
 function normalizeStoredAutomationHash(mixed $value): ?string

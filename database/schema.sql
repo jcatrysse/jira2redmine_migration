@@ -162,6 +162,17 @@ CREATE TABLE `staging_jira_project_role_actors` (
                                                     KEY `idx_jira_role_actor_actor` (`actor_id`)
 ) COMMENT='Raw extraction of Jira project role actors (users and groups).';
 
+CREATE TABLE `staging_jira_project_role_links` (
+                                                   `project_id` VARCHAR(255) NOT NULL,
+                                                   `project_key` VARCHAR(255) NULL,
+                                                   `project_name` VARCHAR(255) NULL,
+                                                   `role_id` VARCHAR(255) NOT NULL,
+                                                   `role_name` VARCHAR(255) NULL,
+                                                   `raw_payload` JSON NOT NULL,
+                                                   `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                   PRIMARY KEY (`project_id`, `role_id`)
+) COMMENT='Raw Jira project role links.';
+
 CREATE TABLE `staging_redmine_roles` (
                                          `id` INT NOT NULL PRIMARY KEY,
                                          `name` VARCHAR(255) NOT NULL,
@@ -546,6 +557,20 @@ CREATE TABLE `migration_mapping_tags` (
                                           UNIQUE KEY `uk_jira_label_name` (`jira_label_name`)
 ) COMMENT='Mapping and status for Tag migration.';
 
+CREATE TABLE `migration_mapping_issue_tags` (
+                                                `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
+                                                `jira_issue_id` VARCHAR(255) NOT NULL,
+                                                `jira_issue_key` VARCHAR(255) NOT NULL,
+                                                `redmine_issue_id` INT NULL,
+                                                `proposed_tags` JSON NULL,
+                                                `migration_status` ENUM('PENDING_ANALYSIS', 'READY_FOR_PUSH', 'SUCCESS', 'FAILED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
+                                                `notes` TEXT,
+                                                `automation_hash` CHAR(64) NULL,
+                                                `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                UNIQUE KEY `uk_issue_tags` (`jira_issue_id`)
+) COMMENT='Mapping and status for issue tag assignments.';
+
 -- ================================================================
 -- Table Set 10: Issues
 -- This is the central data entity.
@@ -693,6 +718,14 @@ CREATE TABLE `staging_jira_comments` (
                                          PRIMARY KEY (`id`, `issue_id`)
 ) COMMENT='Raw extraction of Jira Issue Comments.';
 
+CREATE TABLE `staging_jira_journal_extract_state` (
+                                                      `issue_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                                      `issue_key` VARCHAR(255) NOT NULL,
+                                                      `comments_extracted_at` TIMESTAMP NULL DEFAULT NULL,
+                                                      `changelog_extracted_at` TIMESTAMP NULL DEFAULT NULL,
+                                                      `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) COMMENT='Resume checkpoint for Jira journal extraction.';
+
 CREATE TABLE `migration_mapping_journals` (
                                               `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
                                               `jira_entity_id` VARCHAR(255) NOT NULL COMMENT 'Can be changelog ID or comment ID',
@@ -743,3 +776,185 @@ CREATE TABLE `migration_mapping_attachments` (
                                                  `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                                                  UNIQUE KEY `uk_jira_attachment_id` (`jira_attachment_id`)
 ) COMMENT='Mapping and status for Attachment migration.';
+
+-- ================================================================
+-- Table Set 13: Issue watchers
+-- ================================================================
+CREATE TABLE `staging_jira_watchers` (
+                                         `issue_id` VARCHAR(255) NOT NULL,
+                                         `account_id` VARCHAR(255) NOT NULL,
+                                         `raw_payload` JSON NOT NULL,
+                                         `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                         PRIMARY KEY (`issue_id`, `account_id`)
+) COMMENT='Raw extraction of Jira issue watchers.';
+
+CREATE TABLE `migration_mapping_watchers` (
+                                              `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
+                                              `jira_issue_id` VARCHAR(255) NOT NULL,
+                                              `jira_issue_key` VARCHAR(255) NOT NULL,
+                                              `jira_account_id` VARCHAR(255) NOT NULL,
+                                              `redmine_issue_id` INT NULL,
+                                              `redmine_user_id` INT NULL,
+                                              `migration_status` ENUM('PENDING_ANALYSIS', 'READY_FOR_PUSH', 'SUCCESS', 'FAILED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
+                                              `notes` TEXT,
+                                              `automation_hash` CHAR(64) NULL,
+                                              `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                              `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                              UNIQUE KEY `uk_issue_watcher` (`jira_issue_id`, `jira_account_id`)
+) COMMENT='Mapping and status for Jira issue watchers.';
+
+-- ================================================================
+-- Table Set 14: Issue checklists (RedmineUP)
+-- ================================================================
+CREATE TABLE `staging_jira_checklists` (
+                                           `issue_id` VARCHAR(255) NOT NULL,
+                                           `ordinal` INT NOT NULL,
+                                           `item_status` ENUM('open', 'done') NOT NULL,
+                                           `item_text` TEXT NOT NULL,
+                                           `raw_payload` JSON NULL,
+                                           `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                           PRIMARY KEY (`issue_id`, `ordinal`)
+) COMMENT='Parsed Jira checklist items.';
+
+CREATE TABLE `migration_mapping_checklists` (
+                                                `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
+                                                `jira_issue_id` VARCHAR(255) NOT NULL,
+                                                `jira_issue_key` VARCHAR(255) NOT NULL,
+                                                `redmine_issue_id` INT NULL,
+                                                `proposed_payload` JSON NULL,
+                                                `migration_status` ENUM('PENDING_ANALYSIS', 'READY_FOR_PUSH', 'SUCCESS', 'FAILED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
+                                                `notes` TEXT,
+                                                `automation_hash` CHAR(64) NULL,
+                                                `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                UNIQUE KEY `uk_issue_checklist` (`jira_issue_id`)
+) COMMENT='Mapping and status for issue checklists.';
+
+-- ================================================================
+-- Table Set 15: Jira workflow/config exports
+-- ================================================================
+CREATE TABLE `staging_jira_workflows` (
+                                          `workflow_name` VARCHAR(255) NOT NULL,
+                                          `source` VARCHAR(50) NOT NULL,
+                                          `raw_payload` JSON NOT NULL,
+                                          `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                          PRIMARY KEY (`workflow_name`, `source`)
+) COMMENT='Raw Jira workflow definitions.';
+
+CREATE TABLE `staging_jira_workflow_schemes` (
+                                                 `scheme_id` VARCHAR(255) NOT NULL,
+                                                 `scheme_name` VARCHAR(255) NULL,
+                                                 `source` VARCHAR(50) NOT NULL,
+                                                 `raw_payload` JSON NOT NULL,
+                                                 `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                 PRIMARY KEY (`scheme_id`, `source`)
+) COMMENT='Raw Jira workflow scheme definitions.';
+
+CREATE TABLE `staging_jira_projects_export` (
+                                                `project_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                                `project_key` VARCHAR(255) NOT NULL,
+                                                `project_name` VARCHAR(255) NULL,
+                                                `raw_payload` JSON NOT NULL,
+                                                `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                UNIQUE KEY `uk_jira_project_key_export` (`project_key`)
+) COMMENT='Raw Jira projects captured for workflow export.';
+
+CREATE TABLE `staging_jira_issue_types_export` (
+                                                   `issue_type_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                                   `name` VARCHAR(255) NULL,
+                                                   `raw_payload` JSON NOT NULL,
+                                                   `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) COMMENT='Raw Jira issue types captured for workflow export.';
+
+CREATE TABLE `staging_jira_issue_type_schemes` (
+                                                   `scheme_id` VARCHAR(255) NOT NULL,
+                                                   `scheme_name` VARCHAR(255) NULL,
+                                                   `source` VARCHAR(50) NOT NULL,
+                                                   `raw_payload` JSON NOT NULL,
+                                                   `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                   PRIMARY KEY (`scheme_id`, `source`)
+) COMMENT='Raw Jira issue type schemes.';
+
+CREATE TABLE `staging_jira_issue_type_scheme_projects` (
+                                                           `project_id` VARCHAR(255) NOT NULL,
+                                                           `scheme_id` VARCHAR(255) NOT NULL,
+                                                           `raw_payload` JSON NOT NULL,
+                                                           `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                           PRIMARY KEY (`project_id`, `scheme_id`)
+) COMMENT='Raw Jira issue type scheme assignments per project.';
+
+
+CREATE TABLE `staging_jira_roles` (
+                                      `role_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                      `role_name` VARCHAR(255) NULL,
+                                      `raw_payload` JSON NOT NULL,
+                                      `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) COMMENT='Raw Jira role definitions (including actors).';
+
+CREATE TABLE `staging_jira_fields_export` (
+                                              `field_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                              `name` VARCHAR(255) NULL,
+                                              `raw_payload` JSON NOT NULL,
+                                              `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) COMMENT='Raw Jira field catalog captured for workflow export.';
+
+CREATE TABLE `staging_jira_screens` (
+                                        `screen_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                        `name` VARCHAR(255) NULL,
+                                        `raw_payload` JSON NOT NULL,
+                                        `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) COMMENT='Raw Jira screens.';
+
+CREATE TABLE `staging_jira_screen_tabs` (
+                                            `screen_id` VARCHAR(255) NOT NULL,
+                                            `tab_id` VARCHAR(255) NOT NULL,
+                                            `tab_name` VARCHAR(255) NULL,
+                                            `raw_payload` JSON NOT NULL,
+                                            `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                            PRIMARY KEY (`screen_id`, `tab_id`)
+) COMMENT='Raw Jira screen tabs.';
+
+CREATE TABLE `staging_jira_screen_tab_fields` (
+                                                  `screen_id` VARCHAR(255) NOT NULL,
+                                                  `tab_id` VARCHAR(255) NOT NULL,
+                                                  `field_id` VARCHAR(255) NOT NULL,
+                                                  `raw_payload` JSON NOT NULL,
+                                                  `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                  PRIMARY KEY (`screen_id`, `tab_id`, `field_id`)
+) COMMENT='Raw Jira fields per screen tab.';
+
+CREATE TABLE `staging_jira_screen_schemes` (
+                                               `scheme_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                               `scheme_name` VARCHAR(255) NULL,
+                                               `raw_payload` JSON NOT NULL,
+                                               `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) COMMENT='Raw Jira screen schemes.';
+
+CREATE TABLE `staging_jira_issue_type_screen_schemes` (
+                                                          `scheme_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                                          `scheme_name` VARCHAR(255) NULL,
+                                                          `raw_payload` JSON NOT NULL,
+                                                          `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) COMMENT='Raw Jira issue type screen schemes.';
+
+CREATE TABLE `staging_jira_field_configurations` (
+                                                      `configuration_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                                      `name` VARCHAR(255) NULL,
+                                                      `raw_payload` JSON NOT NULL,
+                                                      `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) COMMENT='Raw Jira field configurations.';
+
+CREATE TABLE `staging_jira_field_configuration_schemes` (
+                                                             `scheme_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                                             `name` VARCHAR(255) NULL,
+                                                             `raw_payload` JSON NOT NULL,
+                                                             `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) COMMENT='Raw Jira field configuration schemes.';
+
+CREATE TABLE `staging_jira_automation_rules` (
+                                                 `rule_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                                 `name` VARCHAR(255) NULL,
+                                                 `project_id` VARCHAR(255) NULL,
+                                                 `raw_payload` JSON NOT NULL,
+                                                 `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) COMMENT='Raw Jira automation rules.';

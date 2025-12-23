@@ -89,6 +89,12 @@ return [
             // Set to null to skip author overrides when using the extended API.
             'default_redmine_author_id' => null,
         ],
+        'checklists' => [
+            // Primary rendered field storing checklist lines (e.g. "* [open] item").
+            'primary_rendered_field' => 'customfield_10083',
+            // Fallback field containing checklist ADF payload.
+            'fallback_field' => 'customfield_10160',
+        ],
     ],
     'attachments' => [
         // Number of concurrent download workers for Jira attachments; increase to speed up pulls if network allows.

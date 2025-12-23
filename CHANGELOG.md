@@ -5,7 +5,21 @@ All notable changes to this project will be documented in this file.
 ## [TODO]
 
 - Fine-tune the journals scripts.
-- Create the missing scripts: labels/tags, watchers, checklists, relations, workflows, custom workflows...
+- Create the missing scripts: custom workflows...
+
+## [0.0.4]
+
+- Add export-only workflow/configuration script (`16_export_workflows.php`) that stores Jira workflow metadata in dedicated export staging tables.
+- Add workflow-related export tables (workflows, schemes, screens, fields, automation rules, etc.) for offline analysis.
+
+## [0.0.3]
+
+- Add issue tag migration (`13_migrate_tags.php`) to apply Jira labels through the redmine_tags plugin.
+- Add watcher migration (`14_migrate_watchers.php`) with Jira extraction, rate-limit retry handling, and Redmine watcher updates.
+- Add checklist migration (`15_migrate_checklists.php`) with configurable Jira custom field parsing and RedmineUP checklist replacement.
+- Introduce new staging/mapping tables for issue tags, watchers, and checklists in the schema.
+- Simplify issue relation mapping to a consistent `relates` type and update the relation script version.
+- Extend README documentation with new script usage, configuration, and plugin endpoints.
 
 ## [AFTER MIGRATION]
 - Re-enable: RAILS_ENV=development bundle exec rake --silent redmine:attachments:prune

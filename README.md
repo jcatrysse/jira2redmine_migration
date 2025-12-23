@@ -223,7 +223,7 @@ The migration must be executed in the following order to respect data dependenci
 | 13    | `13_migrate_tags.php`            | Tags (Labels)      | Extracts all unique labels from Jira issues and creates them as tags in Redmine. **Depends on Issues (Extract phase).**                                                                                                                                                                                                                                                                                               |
 | 14    | `14_migrate_watchers.php`        | Issue watchers     | Maps Jira watchers and creates them as issue watchers in Redmine. **Depends on Issues (Extract phase).**                                                                                                                                                                                                                                                                                                              |
 | 15    | `15_migrate_checklists.php`      | Issues             | Recreate checklists on issues                                                                                                                                                                                                                                                                                                                                                                                         |
-| 16    | `16_extract workflows`           | Workflows          | Export a list of workflows from Jira, representing Redmine Workflows and Redmine Custom Workflows.                                                                                                                                                                                                                                                                                                                    |
+| 16    | `16_export_workflows.php`        | Workflows          | Export Jira workflow/screen/field/automation metadata into the staging database for manual analysis.                                                                                                                                                                                                                                                                                                                   |
 ---
 
 ## 4. How Each Script Works: The ETL Pattern
@@ -1067,9 +1067,8 @@ php 12_migrate_issue_relations.php --help
 
 1. **Synchronise & transform (`transform`)** – inserts missing rows into
    `migration_mapping_issue_relations`, joins them with the issue mapping table,
-   and derives `proposed_relation_type` heuristically (blocks, relates,
-   duplicates, precedes/follows, or copied). Rows missing Redmine issue IDs or a
-   confident relation type are flagged as
+   and assigns `proposed_relation_type = "relates"` for every Jira link. Rows
+   missing Redmine issue IDs are flagged as
    `MANUAL_INTERVENTION_REQUIRED` with helpful notes.
 2. **Push (`push`)** – iterates over rows in `READY_FOR_CREATION`, posting each
    relation to Redmine. Success updates record the Redmine relation ID and clear
@@ -1080,3 +1079,144 @@ php 12_migrate_issue_relations.php --help
 > until every linked Jira issue has a Redmine counterpart. The relation script
 > only acts on canonical link rows, so you can re-run the transform/push cycle
 > as often as needed without creating duplicate relations.
+
+## 17. Running `13_migrate_tags.php`
+
+Jira labels are applied to Redmine issues as tags using the `redmine_tags`
+plugin. The script reads label sets staged in `staging_jira_issues.labels`,
+builds per-issue tag payloads, and posts them to
+`POST /issues/:id/tags.json`.
+
+```bash
+php 13_migrate_tags.php --help
+```
+
+### Available options
+
+| Option            | Description                                                     |
+|-------------------|-----------------------------------------------------------------|
+| `-h`, `--help`    | Print usage information and exit.                               |
+| `-V`, `--version` | Display the script version (`0.0.1`).                           |
+| `--phases=<list>` | Comma-separated list of phases to run (default: transform,push).|
+| `--skip=<list>`   | Comma-separated list of phases to skip.                         |
+| `--confirm-push`  | Required toggle to push tags to Redmine.                        |
+| `--dry-run`       | Preview the tag payloads without contacting Redmine.            |
+
+### Workflow highlights
+
+1. **Transform (`transform`)** – reads `staging_jira_issues.labels`, joins
+   `migration_mapping_issues` to resolve Redmine identifiers, and stores the
+   per-issue tag payload in `migration_mapping_issue_tags`.
+2. **Push (`push`)** – posts each tag set to the Redmine tags endpoint and
+   updates the mapping state.
+
+> **Prerequisites:** run `10_migrate_issues.php --phases=push --confirm-push`
+> first so issue IDs exist in Redmine.
+
+## 18. Running `14_migrate_watchers.php`
+
+Watchers are fetched from Jira using the watchers API and applied to Redmine
+issues via the core watcher endpoint. The extraction phase is rate-limit aware
+and retries on HTTP 429 using exponential backoff.
+
+```bash
+php 14_migrate_watchers.php --help
+```
+
+### Available options
+
+| Option            | Description                                                     |
+|-------------------|-----------------------------------------------------------------|
+| `-h`, `--help`    | Print usage information and exit.                               |
+| `-V`, `--version` | Display the script version (`0.0.1`).                           |
+| `--phases=<list>` | Comma-separated list of phases to run (default: jira,transform,push). |
+| `--skip=<list>`   | Comma-separated list of phases to skip.                         |
+| `--confirm-push`  | Required toggle to push watchers to Redmine.                    |
+| `--dry-run`       | Preview the watcher payloads without contacting Redmine.        |
+
+### Workflow highlights
+
+1. **Jira extraction (`jira`)** – calls `/rest/api/3/issue/:id/watchers` for
+   each staged issue and stores watchers in `staging_jira_watchers`.
+2. **Transform (`transform`)** – joins user/issue mappings and queues rows in
+   `migration_mapping_watchers` for push.
+3. **Push (`push`)** – posts each watcher to `POST /issues/:id/watchers.json`.
+
+> **Prerequisites:** run `02_migrate_users.php` and
+> `10_migrate_issues.php --phases=push --confirm-push` first so user and issue
+> mappings exist.
+
+## 19. Running `15_migrate_checklists.php`
+
+Checklist items are parsed from Jira custom fields and replaced on the Redmine
+side via the `redmine_checklists` plugin.
+
+```bash
+php 15_migrate_checklists.php --help
+```
+
+### Available options
+
+| Option            | Description                                                     |
+|-------------------|-----------------------------------------------------------------|
+| `-h`, `--help`    | Print usage information and exit.                               |
+| `-V`, `--version` | Display the script version (`0.0.1`).                           |
+| `--phases=<list>` | Comma-separated list of phases to run (default: transform,push).|
+| `--skip=<list>`   | Comma-separated list of phases to skip.                         |
+| `--confirm-push`  | Required toggle to push checklists to Redmine.                  |
+| `--dry-run`       | Preview the checklist payloads without contacting Redmine.      |
+
+### Workflow highlights
+
+1. **Transform (`transform`)** – parses checklist items from Jira issue
+   payloads. The primary source is
+   `renderedFields.customfield_10083` (configurable) with fallback to
+   `fields.customfield_10160`. Parsed items are staged in
+   `staging_jira_checklists` and summarised in `migration_mapping_checklists`.
+2. **Push (`push`)** – replaces checklists by clearing existing items and
+   re-posting new ones via the RedmineUP API.
+
+### Configuration
+
+Add the following to `config/config.local.php` when your Jira custom fields
+use different identifiers:
+
+```php
+'migration' => [
+    'checklists' => [
+        'primary_rendered_field' => 'customfield_10083',
+        'fallback_field' => 'customfield_10160',
+    ],
+],
+```
+
+## 20. Running `16_export_workflows.php`
+
+This export-only script captures Jira workflow, screen, field configuration,
+role, and automation metadata into staging tables for manual analysis. It does
+not attempt to map anything to Redmine; it simply stores the raw Jira JSON with
+helpful context columns.
+
+```bash
+php 16_export_workflows.php --help
+```
+
+### Available options
+
+| Option            | Description                                         |
+|-------------------|-----------------------------------------------------|
+| `-h`, `--help`    | Print usage information and exit.                   |
+| `-V`, `--version` | Display the script version (`0.0.1`).               |
+| `--phases=<list>` | Comma-separated list of phases to run (default: jira). |
+| `--skip=<list>`   | Comma-separated list of phases to skip.             |
+
+### Workflow highlights
+
+1. **Jira extraction (`jira`)** – fetches workflow definitions, workflow
+   schemes, project/issue type mappings, roles, fields, screens, field
+   configurations, and automation rules. Each entity is stored in the matching
+   `staging_jira_*_export` or `staging_jira_*` table with raw JSON for offline review,
+   without overwriting the core staging tables used by the migration scripts.
+
+> **Note:** user accounts are not exported; only role definitions and their
+> mappings are stored.
