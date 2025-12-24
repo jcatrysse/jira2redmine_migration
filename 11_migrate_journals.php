@@ -108,7 +108,7 @@ function main(array $config, array $cliOptions): void
         );
         try {
             transformDescriptionsForUsersAndCanonicalizeIssues($pdo);
-            printf("  [transform] Issue/comment descriptions: avatars removed and user links canonicalized.%s", PHP_EOL);
+            printf("  [transform] Issue descriptions: avatars removed and user links canonicalized.%s", PHP_EOL);
         } catch (Throwable $e) {
             printf("  [warn] transformDescriptionsForUsersAndCanonicalizeIssues failed: %s%s", $e->getMessage(), PHP_EOL);
         }
@@ -437,6 +437,8 @@ function classifyJournalExtractionFailure(RuntimeException $exception): string
  * @param string $issueId
  * @param string $issueKey
  * @return array{0: int, 1: int}
+ * @throws \Random\RandomException
+ * @throws \Random\RandomException
  */
 function fetchJiraCommentsForIssue(Client $client, PDOStatement $statement, string $issueId, string $issueKey): array
 {
@@ -526,6 +528,8 @@ function fetchJiraCommentsForIssue(Client $client, PDOStatement $statement, stri
  * @param string $issueId
  * @param string $issueKey
  * @return array{0: int, 1: int}
+ * @throws \Random\RandomException
+ * @throws \Random\RandomException
  */
 function fetchJiraChangelogForIssue(Client $client, PDOStatement $statement, string $issueId, string $issueKey): array
 {
@@ -699,12 +703,6 @@ function summariseJournalStatuses(PDO $pdo): array
 function populateProposedJournalNotes(PDO $pdo): array
 {
     $userLookup = buildRedmineUserLookup($pdo);
-    $userMap = [];
-    foreach ($userLookup as $jiraAccountId => $meta) {
-        if (isset($meta['redmine_user_id'])) {
-            $userMap[$jiraAccountId] = (int)$meta['redmine_user_id'];
-        }
-    }
 
     $attachmentMetadata = buildAttachmentMetadataIndex($pdo);
     $adfConverter = new AdfConverter();
@@ -787,7 +785,7 @@ function populateProposedJournalNotes(PDO $pdo): array
 
             $issueAttachments = $attachmentMetadata[$jiraIssueId] ?? [];
             $bodyText = convertJournalBodyToMarkdown($bodyHtml, $bodyAdf, $issueAttachments, $adfConverter);
-            $bodyText = transform_text_in_transform_phase($bodyText, $userMap);
+            $bodyText = replaceJiraUserLinksWithRedmineIds($bodyText, $userLookup);
 
             $note = $bodyText;
 
@@ -858,7 +856,7 @@ function populateProposedJournalNotes(PDO $pdo): array
         }
 
         if ($note !== '') {
-            $note = transform_text_in_transform_phase($note, $userMap);
+            $note = replaceJiraUserLinksWithRedmineIds($note, $userLookup);
         }
 
         $note = trim($note);
@@ -963,13 +961,6 @@ function runJournalPushPhase(
     $defaultAuthorId = extractDefaultJournalAuthorId($config);
     $attachmentMetadata = buildAttachmentMetadataIndex($pdo);
     $adfConverter = new AdfConverter();
-
-    try {
-        replaceIssueLinksWithRedmineIds($pdo, null, false, '', false);
-        printf("  [pre-push] Replaced Jira browse/selectedIssue links by #redmine_id in staging.%s", PHP_EOL);
-    } catch (Throwable $e) {
-        printf("  [warn] replaceIssueLinksWithRedmineIds(pre-push) failed: %s%s", $e->getMessage(), PHP_EOL);
-    }
 
     foreach ($candidateComments as $comment) {
         processCommentPush(
@@ -1805,7 +1796,7 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
     );
 
     // patterns like "/attachment/1234" or "/secure/attachment/1234"
-    return preg_replace_callback(
+    $text = preg_replace_callback(
         '#(?:/secure/attachment/|/attachment/|/attachment/content/)(\d+)#i',
         function ($m) use ($attachmentsMap) {
             $id = $m[1] ?? null;
@@ -1815,6 +1806,8 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
         },
         $text
     );
+
+    return normalizeRedmineReferenceSpacing($text);
 }
 
 function encodeJson(mixed $value): ?string
@@ -2163,6 +2156,7 @@ function extractErrorBody(ResponseInterface $response): string
 /**
  * @throws BadResponseException
  * @throws GuzzleException
+ * @throws \Random\RandomException
  */
 function jiraGetWithRetry(
     Client $client,
@@ -2510,15 +2504,6 @@ function updateMigrationJournalProposedNotesWithRedmineIds(PDO $pdo): void
         return;
     }
 
-    // build userMap (for transform_text_in_transform_phase) and userLookup (for replaceJiraUserLinksWithRedmineIds)
-    $userLookup = buildRedmineUserLookup($pdo); // jiraAccountId => ['redmine_user_id' => int]
-    $userMap = [];
-    foreach ($userLookup as $jiraAcc => $meta) {
-        if (!empty($meta['redmine_user_id'])) {
-            $userMap[(string)$jiraAcc] = (int)$meta['redmine_user_id'];
-        }
-    }
-
     // select proposed_notes for journals whose issue is already mapped (we can canonicalize then)
     $selSql = <<<SQL
 SELECT map.mapping_id, map.proposed_notes
@@ -2542,12 +2527,8 @@ SQL;
         $mid = (int)$row['mapping_id'];
         $notes = (string)$row['proposed_notes'];
 
-        // 1) transform (avatars/profile links → placeholders and profile links → user#N)
-        $transformed = transform_text_in_transform_phase($notes, $userMap);
-        $transformed = replaceJiraUserLinksWithRedmineIds($transformed, $userLookup);
-
-        // 2) canonicalise jira issue links → #redmine_id
-        $canonical = inlineReplaceJiraIssueKeysWithHashes($transformed, $jiraToRedmine);
+        // canonicalise jira issue links → #redmine_id
+        $canonical = inlineReplaceJiraIssueKeysWithHashes($notes, $jiraToRedmine);
 
         if ($canonical !== $notes) {
             $newHash = hash('sha256', $canonical);

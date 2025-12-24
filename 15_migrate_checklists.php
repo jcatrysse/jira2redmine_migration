@@ -305,6 +305,9 @@ function transformChecklists(PDO $pdo, array $config): array
     ];
 }
 
+/**
+ * @throws DateMalformedStringException
+ */
 function runChecklistPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $isDryRun): void
 {
     $statement = $pdo->query(<<<SQL
@@ -434,6 +437,8 @@ function runChecklistPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool
 
 /**
  * @return array<int>
+ * @throws GuzzleException
+ * @throws GuzzleException
  */
 function fetchExistingChecklists(Client $client, int $redmineIssueId): array
 {

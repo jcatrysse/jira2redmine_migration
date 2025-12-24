@@ -118,6 +118,9 @@ function rewriteJiraAttachmentLinks(string $html, array $attachments): string
     }
 
     // 1b) Handle embedded media objects (video/audio) that reference attachment URLs.
+    /**
+     * @throws DOMException
+     */
     $replaceMediaNode = function(DOMElement $element, ?string $sourceUrl) use ($doc, $attachmentsMeta): void {
         if ($sourceUrl === null || $sourceUrl === '') {
             return;
@@ -281,6 +284,58 @@ function rewriteJiraAttachmentLinks(string $html, array $attachments): string
                 }
             }
         }
+
+        // --- BEGIN: collapse split digits inside Jira-issue anchors (safe)
+        // If the anchor was replaced earlier (parentNode === null), skip.
+        if ($a->parentNode === null) {
+            continue;
+        }
+
+        $linkText = trim((string)$a->textContent);
+
+        // Detect if this anchor is a Jira issue link / macro
+        $hrefLower = strtolower($href);
+        $newLower = strtolower((string)$new);
+        $cls = strtolower((string)$a->getAttribute('class'));
+
+        $isJiraIssueLink = false;
+        if (preg_match('#/browse/[A-Z][A-Z0-9]+-[0-9]+#i', $href) || preg_match('#/browse/[A-Z][A-Z0-9]+-[0-9]+#i', (string)$new)) {
+            $isJiraIssueLink = true;
+        } elseif (strpos($hrefLower, 'selectedissue=') !== false || strpos($newLower, 'selectedissue=') !== false) {
+            $isJiraIssueLink = true;
+        } elseif ($a->hasAttribute('data-jira-key') || str_contains($cls, 'jira-issue-macro') || str_contains($cls, 'issue-link')) {
+            $isJiraIssueLink = true;
+        }
+
+        if ($isJiraIssueLink && $linkText !== '') {
+            $iter = 0;
+            do {
+                $iter++;
+                $prev = $linkText;
+
+                // 1) Collapse '#digits digits...' -> '#digitsdigits...'
+                $linkText = preg_replace_callback(
+                    '/#((?:\s*\d)+)/u',
+                    function ($m) {
+                        return '#' . preg_replace('/\s+/u', '', $m[1]);
+                    },
+                    $linkText
+                );
+
+                // 2) Collapse any adjacent digit groups separated by whitespace '3 78' -> '378'
+                $linkText = preg_replace('/(\d)\s+(\d)/u', '$1$2', $linkText);
+
+                // 3) Collapse splits for issue-key style tokens, e.g. 'SURV-3 78' -> 'SURV-378'
+                $linkText = preg_replace('/([A-Za-z0-9]+-[0-9]+)\s+([0-9]+)/u', '$1$2', $linkText);
+
+                if ($linkText === $prev) break;
+            } while ($iter < 6);
+
+            // assign cleaned text back to anchor
+            $a->textContent = $linkText;
+        }
+        // --- END
+
     } // end foreach anchors
 
     $converted = $doc->saveHTML();
@@ -399,6 +454,7 @@ function mapAttachmentUrlToTarget(string $url, array $attachmentsMap): string
 /**
  * Transformfase: vervang profile links naar user#ID, verwijder avatars,
  * en canonicaliseer issue links naar https://host/browse/KEY (maar vervang niet naar #id).
+ * (Alleen issue descriptions, geen comment body_html.)
  *
  * Roept DB alleen per rij update aan (batch-friendly).
  */
@@ -430,18 +486,7 @@ function transformDescriptionsForUsersAndCanonicalizeIssues(PDO $pdo): void
         }
     }
 
-    // optionally do the same for staged comments
-    $selComments = $pdo->query("SELECT id, body_html FROM staging_jira_comments");
-    $updComment = $pdo->prepare("UPDATE staging_jira_comments SET body_html = :b WHERE id = :id");
-    while ($r = $selComments->fetch(PDO::FETCH_ASSOC)) {
-        $id = $r['id'];
-        $html = (string)$r['body_html'];
-        $new = transform_text_in_transform_phase($html, $userMap);
-        if ($new !== $html) {
-            $updComment->execute([':b' => $new, ':id' => $id]);
-            printf("Transform: updated comment id %s\n", $id);
-        }
-    }
+    // Note: do not mutate staging_jira_comments.body_html; keep raw Jira source intact.
 }
 
 /**
@@ -456,7 +501,20 @@ function transform_text_in_transform_phase(string $text, array $userMap): string
     if (trim($text) === '') return $text;
 
     // quick cleanup: malformed markdown links pointing to user#<id> -> user#<id>
-    $text = preg_replace('/\[[^]]*]\(\s*user#(\d+)[^)]*\)/i', 'user#$1', $text) ?? $text;
+    // also handle url-encoded spaces (%20) and url-encoded hash (%23)
+    $text = preg_replace(
+        '/\[[^]]*]\(\s*user(?:%20|\s)*(?:%23|#)?(?:%20|\s)*([0-9]+)[^)]*\)/i',
+        'user#$1',
+        $text
+    ) ?? $text;
+
+   // safety: remove accidental space or missing hash between "user" and "123" anywhere
+   // matches "user 123", "user #123", "user   #  123", etc. -> "user#123"
+    $text = preg_replace(
+        '/\buser[[:space:]]+#?[[:space:]]*([0-9]+)/i',
+        'user#$1',
+        $text
+    ) ?? $text;
 
     // 1) Preserve Original Jira issue lines by placeholders
     $orig = [];
@@ -579,7 +637,7 @@ function transform_text_in_transform_phase(string $text, array $userMap): string
         }
     }
 
-    return $text;
+    return normalizeRedmineReferenceSpacing($text);
 }
 
 /**
@@ -649,11 +707,63 @@ function replaceIssueLinksInText(string $text, array $issueMap): string
         }
     }
 
-    return $replaced;
+    return normalizeRedmineReferenceSpacing($replaced);
 }
 
 /**
- * Vervang Jira issue links door #redmine_id in DB (issues + comments).
+ * Ensure Redmine reference tokens (attachment:, user#, #123) are separated from surrounding text,
+ * but do NOT introduce spaces inside numeric tokens. Final conservative cleanup collapses
+ * any accidental spaces inside numeric sequences after '#' or after 'user#'.
+ */
+function normalizeRedmineReferenceSpacing(string $text): string
+{
+    if (trim($text) === '') {
+        return $text;
+    }
+
+    // Normalize obvious user tokens and strip stray '< ' artifacts
+    $text = preg_replace('/user(?:%20|\s)*#(?:%20|\s)*(\d+)/iu', 'user#$1', $text) ?? $text;
+    $text = preg_replace('/<\s*(user#\d+)/iu', '$1', $text) ?? $text;
+    $text = preg_replace('/<\s*(#\d+)/u', '$1', $text) ?? $text;
+
+    // Ensure a separating space before inline attachment tokens when glued to previous non-space
+    // Only insert if there is a preceding character (use lookbehind for a non-space)
+    $text = preg_replace('/(?<=\S)(attachment:\d+__)/u', ' $1', $text) ?? $text;
+
+    // Insert a space before "user#123" when it's glued to a preceding word token (e.g. "worduser#123" -> "word user#123")
+    $text = preg_replace('/(?<=\w)(user#\d+\b)/u', ' $1', $text) ?? $text;
+
+    // Insert a space before "#123" when preceded by a word char, but do NOT split "user#123"
+    $text = preg_replace('/(?<=\w)(?<!user)(?=#\d+\b)/iu', ' ', $text) ?? $text;
+
+    // Ensure a space after tokens when immediately followed by letters/underscore
+    $text = preg_replace('/(user#\d+)(?=[\p{L}_])/u', '$1 ', $text) ?? $text;
+    $text = preg_replace('/(#\d+)(?=[\p{L}_])/u', '$1 ', $text) ?? $text;
+
+    // Ensure punctuation after tokens is separated by a space for readability
+    $text = preg_replace('/(user#\d+)(?=[.,;:!?])/u', '$1 ', $text) ?? $text;
+    $text = preg_replace('/(#\d+)(?=[.,;:!?])/u', '$1 ', $text) ?? $text;
+
+    // Final conservative cleanup: remove any accidental whitespace inside numeric tokens
+    // e.g. "user#3 7 7" -> "user#377", "#3 7 7" -> "#377"
+    $text = preg_replace_callback('/user#((?:\s*\d)+)/u', function ($m) {
+        $digits = preg_replace('/\s+/u', '', $m[1]);
+        return 'user#' . $digits;
+    }, $text) ?? $text;
+
+    $text = preg_replace_callback('/#((?:\s*\d)+)/u', function ($m) {
+        $digits = preg_replace('/\s+/u', '', $m[1]);
+        return '#' . $digits;
+    }, $text) ?? $text;
+
+    // Final normalization of user token encodings (defensive)
+    $text = preg_replace('/\buser(?:%20|\s)*(?:%23|#)?(?:%20|\s)*([0-9]+)\b/iu', 'user#$1', $text) ?? $text;
+
+    return $text;
+}
+
+/**
+ * Vervang Jira issue links door #redmine_id in DB (issues only).
  * Optioneel ook PATCH naar Redmine zodat de issue description op Redmine zelf verandert.
  *
  * @param PDO $pdo
@@ -757,92 +867,8 @@ function replaceIssueLinksWithRedmineIds(
         }
     }
 
-    // 2) Update staging_jira_comments.body_html (journals)
-    $sel = $pdo->query("SELECT id, body_html FROM staging_jira_comments");
-    $upd = $pdo->prepare("UPDATE staging_jira_comments SET body_html = :b WHERE id = :id");
-    while ($r = $sel->fetch(PDO::FETCH_ASSOC)) {
-        $id = $r['id'];
-        $html = (string)$r['body_html'];
-
-        // protect Original Jira issue lines (if your comment had them)
-        $preserve = [];
-        $i = 0;
-        $htmlProt = preg_replace_callback(
-            '/(?m)^[[:space:]>]*Original Jira issue:[^\r\n]*(?:\r?\n)?/',
-            function($m) use (&$preserve, &$i) {
-                $key = "__ORIGJIRA_{$i}__";
-                $preserve[$key] = $m[0];
-                $i++;
-                return $key . PHP_EOL;
-            },
-            $html
-        );
-
-        // replace markdown links and raw URLs as above
-        $newHtml = preg_replace_callback('/\[(.*?)]\(\s*(https?:\/\/[^\s)]+)\s*\)/i', function($m) use ($replaceUrlToHash) {
-            $url = $m[2];
-            $repl = $replaceUrlToHash($url);
-            if ($repl === $url) return $m[0];
-            return $repl;
-        }, $htmlProt);
-
-        $newHtml = preg_replace_callback('/https?:\/\/[^\s)\]>]+/i', function($m) use ($replaceUrlToHash) {
-            return $replaceUrlToHash($m[0]);
-        }, $newHtml);
-
-        if (!empty($preserve)) {
-            foreach ($preserve as $k => $v) $newHtml = str_replace($k . PHP_EOL, $v, $newHtml);
-        }
-
-    if ($newHtml !== $html) {
-            $upd->execute([':b' => $newHtml, ':id' => $id]);
-        }
-    }
-
-    // 3) Update migration_mapping_journals.proposed_notes
-    $sel = $pdo->query("SELECT mapping_id, proposed_notes FROM migration_mapping_journals WHERE proposed_notes IS NOT NULL");
-    $upd = $pdo->prepare("UPDATE migration_mapping_journals SET proposed_notes = :notes, automation_hash = :hash, last_updated_at = CURRENT_TIMESTAMP WHERE mapping_id = :mid");
-    while ($r = $sel->fetch(PDO::FETCH_ASSOC)) {
-        $mid = (int)$r['mapping_id'];
-        $notes = (string)$r['proposed_notes'];
-
-        // protect Original Jira issue lines
-        $preserve = [];
-        $i = 0;
-        $prot = preg_replace_callback(
-            '/(?m)^[[:space:]>]*Original Jira issue:[^\r\n]*(?:\r?\n)?/',
-            function($m) use (&$preserve, &$i) {
-                $key = "__ORIGJIRA_{$i}__";
-                $preserve[$key] = $m[0];
-                $i++;
-                return $key . PHP_EOL;
-            },
-            $notes
-        );
-
-        $newNotes = preg_replace_callback('/\[(.*?)]\(\s*(https?:\/\/[^\s)]+)\s*\)/i', function($m) use ($replaceUrlToHash) {
-            $url = $m[2];
-            $repl = $replaceUrlToHash($url);
-            if ($repl === $url) return $m[0];
-            return $repl;
-        }, $prot);
-
-        $newNotes = preg_replace_callback('/https?:\/\/[^\s)\]>]+/i', function($m) use ($replaceUrlToHash) {
-            return $replaceUrlToHash($m[0]);
-        }, $newNotes);
-
-        if (!empty($preserve)) {
-            foreach ($preserve as $k => $v) $newNotes = str_replace($k . PHP_EOL, $v, $newNotes);
-        }
-
-        if ($newNotes !== $notes) {
-            $upd->execute([
-                ':notes' => $newNotes,
-                ':hash' => hash('sha256', $newNotes),
-                ':mid' => $mid,
-            ]);
-        }
-    }
+    // 2) Update migration_mapping_journals.proposed_notes
+    // Note: journal proposed_notes are canonicalised elsewhere to avoid double-processing.
 }
 
 /**
@@ -858,6 +884,8 @@ function replaceJiraUserLinksWithRedmineIds(string $text, array $userLookup): st
 
     $text = preg_replace('/user#(\d+)\s+class=/i', 'user#$1', $text) ?? $text;
     $text = preg_replace('/\[[^]]*]\(\s*<?user#(\d+)[^)]*>\s*\)/i', 'user#$1', $text) ?? $text;
+    $text = preg_replace('/\[[^]]*]\(\s*<?user(?:%20|\s)*#(?:%20|\s)*(\d+)[^)]*>\s*\)/i', 'user#$1', $text) ?? $text;
+    $text = preg_replace('/\[[^]]*]\(\s*<?user(?:%20|\s)*#(?:%20|\s)*(\d+)[^)]*\)/i', 'user#$1', $text) ?? $text;
 
     $replaceAccountId = function (?string $maybeUrl) use ($userLookup): ?string {
         if ($maybeUrl === null || $maybeUrl === '') return null;
@@ -892,20 +920,69 @@ function replaceJiraUserLinksWithRedmineIds(string $text, array $userLookup): st
     }, $text);
 
     // 2) HTML anchors: <a href="...">Label</a>
-    $text = preg_replace_callback('/<a\b[^>]*href=(["\'])(.*?)\1[^>]*>(.*?)<\/a>/mi', function ($m) use ($replaceAccountId, $userLookup) {
-        $url = $m[2];
-        $repl = $replaceAccountId($url);
-        if ($repl !== null) {
-            return $repl;
-        }
-        if (preg_match('/data-account-id=(["\'])(.*?)\1/i', $m[0], $accMatch)) {
-            $acc = urldecode($accMatch[2]);
-            if ($acc !== '' && isset($userLookup[$acc]['redmine_user_id'])) {
-                return 'user#' . (int)$userLookup[$acc]['redmine_user_id'];
+    // inside replaceJiraUserLinksWithRedmineIds, replace the HTML anchor regex block with:
+    if (stripos($text, '<a') !== false) {
+        $doc = new DOMDocument();
+        $prev = libxml_use_internal_errors(true);
+        $payload = '<?xml encoding="utf-8"?>' . $text;
+        $options = 0;
+        if (defined('LIBXML_HTML_NOIMPLIED')) $options |= LIBXML_HTML_NOIMPLIED;
+        if (defined('LIBXML_HTML_NODEFDTD')) $options |= LIBXML_HTML_NODEFDTD;
+
+        if (@$doc->loadHTML($payload, $options)) {
+            $anchors = iterator_to_array($doc->getElementsByTagName('a'));
+            foreach ($anchors as $a) {
+                if (!$a instanceof DOMElement) continue;
+
+                // Prefer data-account-id attribute if present
+                $acc = $a->getAttribute('data-account-id') ?: null;
+
+                // fallback: look for accountId param in href
+                $href = $a->getAttribute('href');
+                if ($acc === null || $acc === '') {
+                    if ($href !== '') {
+                        if (preg_match('/[?&]accountId=([^&\s]+)/i', $href, $m)) {
+                            $acc = rawurldecode($m[1]);
+                        }
+                        // sometimes path-based /secure/ViewProfile/<id>
+                        if ($acc === null && preg_match('~/secure/ViewProfile/([^/]+)~i', $href, $m2)) {
+                            $acc = rawurldecode($m2[1]);
+                        }
+                    }
+                }
+
+                // If we have an account id and mapping, replace the whole anchor node with text "user#ID"
+                if ($acc !== null && $acc !== '') {
+                    if (isset($userLookup[$acc]) && !empty($userLookup[$acc]['redmine_user_id'])) {
+                        $replacement = $doc->createTextNode('user#' . (int)$userLookup[$acc]['redmine_user_id']);
+                        $a->parentNode?->replaceChild($replacement, $a);
+                        continue;
+                    }
+                }
+
+                // Otherwise try matching an encoded accountId in other attributes (data-account-id, accountid)
+                $accAttr = $a->getAttribute('accountid') ?: $a->getAttribute('data-account-id');
+                if ($accAttr !== '') {
+                    $accAttr = rawurldecode($accAttr);
+                    if (isset($userLookup[$accAttr]) && !empty($userLookup[$accAttr]['redmine_user_id'])) {
+                        $replacement = $doc->createTextNode('user#' . (int)$userLookup[$accAttr]['redmine_user_id']);
+                        $a->parentNode?->replaceChild($replacement, $a);
+                        continue;
+                    }
+                }
             }
+
+            $out = $doc->saveHTML();
+            libxml_clear_errors();
+            libxml_use_internal_errors($prev);
+            // strip xml header
+            $out = preg_replace('/^\s*<\?xml[^>]+\?>\s*/i', '', $out);
+            $text = $out !== false ? $out : $text;
+        } else {
+            libxml_clear_errors();
+            libxml_use_internal_errors($prev);
         }
-        return $m[0];
-    }, $text);
+    }
 
     // 3) Bare profile URLs (rare): replace direct URLs if possible
     $text = preg_replace_callback(
@@ -918,7 +995,7 @@ function replaceJiraUserLinksWithRedmineIds(string $text, array $userLookup): st
         $text
     );
 
-    return $text;
+    return normalizeRedmineReferenceSpacing($text);
 }
 
 /**
@@ -957,5 +1034,5 @@ function inlineReplaceJiraIssueKeysWithHashes(string $text, array $jiraToRedmine
         return isset($jiraToRedmine[$key]) ? ('#' . $jiraToRedmine[$key]) : $m[0];
     }, $text);
 
-    return $text;
+    return normalizeRedmineReferenceSpacing($text);
 }

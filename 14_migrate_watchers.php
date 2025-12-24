@@ -294,6 +294,9 @@ function summariseWatcherStatuses(PDO $pdo): array
     return $result;
 }
 
+/**
+ * @throws DateMalformedStringException
+ */
 function runWatcherPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $isDryRun): void
 {
     $statement = $pdo->query(<<<SQL
@@ -417,7 +420,7 @@ function runWatcherPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $
 
 /**
  * @throws BadResponseException
- * @throws GuzzleException
+ * @throws GuzzleException|\Random\RandomException
  */
 function jiraGetWithRetry(
     Client $client,
@@ -470,6 +473,9 @@ function jiraGetWithRetry(
     } while (true);
 }
 
+/**
+ * @throws \Random\RandomException
+ */
 function calculateRateLimitDelayMs(int $attempt, ?int $retryAfterSeconds): int
 {
     if ($retryAfterSeconds !== null && $retryAfterSeconds > 0) {

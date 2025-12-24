@@ -5427,7 +5427,7 @@ function normalizeAttachmentLinksInText(string $text, array $attachmentsMap): st
     );
 
     // patterns like "/attachment/1234" or "/secure/attachment/1234"
-    return preg_replace_callback(
+    $text = preg_replace_callback(
         '#(?:/secure/attachment/|/attachment/|/attachment/content/)(\d+)#i',
         function ($m) use ($attachmentsMap) {
             $id = $m[1] ?? null;
@@ -5437,6 +5437,8 @@ function normalizeAttachmentLinksInText(string $text, array $attachmentsMap): st
         },
         $text
     );
+
+    return normalizeRedmineReferenceSpacing($text);
 }
 
 /**
