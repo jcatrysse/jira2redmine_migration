@@ -172,6 +172,7 @@ function transformChecklists(PDO $pdo, array $config): array
             redmine_issue_id,
             proposed_payload,
             migration_status,
+            notes,
             automation_hash
         ) VALUES (
             :jira_issue_id,
@@ -179,6 +180,7 @@ function transformChecklists(PDO $pdo, array $config): array
             :redmine_issue_id,
             :proposed_payload,
             :migration_status,
+            :notes,
             :automation_hash
         )
     SQL);
@@ -190,6 +192,7 @@ function transformChecklists(PDO $pdo, array $config): array
             redmine_issue_id = :redmine_issue_id,
             proposed_payload = :proposed_payload,
             migration_status = :migration_status,
+            notes = :notes,
             automation_hash = :automation_hash,
             last_updated_at = CURRENT_TIMESTAMP
         WHERE mapping_id = :mapping_id
@@ -247,10 +250,14 @@ function transformChecklists(PDO $pdo, array $config): array
         $redmineIssueId = $mappingIndex[$jiraIssueId] ?? null;
         $proposedPayload = $items !== [] ? encodeJsonColumn($items) : null;
         $migrationStatus = 'PENDING_ANALYSIS';
+        $notes = null;
         if ($items === []) {
             $migrationStatus = 'IGNORED';
+            $notes = 'No checklist items found in Jira payload.';
         } elseif ($redmineIssueId !== null) {
             $migrationStatus = 'READY_FOR_PUSH';
+        } else {
+            $notes = 'Missing Redmine issue mapping; rerun 10_migrate_issues.php.';
         }
 
         if ($migrationStatus === 'READY_FOR_PUSH') {
@@ -273,6 +280,7 @@ function transformChecklists(PDO $pdo, array $config): array
                 'redmine_issue_id' => $redmineIssueId,
                 'proposed_payload' => $proposedPayload,
                 'migration_status' => $migrationStatus,
+                'notes' => $notes,
                 'automation_hash' => $automationHash,
             ]);
             continue;
@@ -292,6 +300,7 @@ function transformChecklists(PDO $pdo, array $config): array
             'redmine_issue_id' => $redmineIssueId,
             'proposed_payload' => $proposedPayload,
             'migration_status' => $migrationStatus,
+            'notes' => $notes,
             'automation_hash' => $automationHash,
         ]);
     }
