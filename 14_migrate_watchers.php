@@ -296,6 +296,10 @@ function transformWatcherMappings(PDO $pdo): array
                 WHEN user_map.redmine_user_id IS NULL THEN 'PENDING_ANALYSIS'
                 ELSE 'READY_FOR_PUSH'
             END,
+            map.notes = CASE
+                WHEN issue_map.redmine_issue_id IS NULL THEN 'Missing Redmine issue mapping; rerun 10_migrate_issues.php.'
+                WHEN user_map.redmine_user_id IS NULL THEN 'Missing Redmine user mapping; rerun 02_migrate_users.php.'
+                END,
             map.last_updated_at = CURRENT_TIMESTAMP
         WHERE 1
     SQL;
