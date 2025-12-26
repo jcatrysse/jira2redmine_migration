@@ -795,6 +795,16 @@ CREATE TABLE `staging_jira_watchers` (
                                          PRIMARY KEY (`issue_id`, `account_id`)
 ) COMMENT='Raw extraction of Jira issue watchers.';
 
+CREATE TABLE `staging_jira_watcher_fetch_failures` (
+                                                        `issue_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                                        `issue_key` VARCHAR(255) NOT NULL,
+                                                        `status_code` INT NULL,
+                                                        `message` TEXT NOT NULL,
+                                                        `response_body` TEXT NULL,
+                                                        `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                        KEY `idx_watcher_fetch_failures_issue_key` (`issue_key`)
+) COMMENT='Warnings encountered when fetching Jira issue watchers.';
+
 CREATE TABLE `migration_mapping_watchers` (
                                               `mapping_id` INT AUTO_INCREMENT PRIMARY KEY,
                                               `jira_issue_id` VARCHAR(255) NOT NULL,

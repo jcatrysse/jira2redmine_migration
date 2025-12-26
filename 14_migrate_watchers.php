@@ -80,10 +80,11 @@ function main(array $config, array $cliOptions): void
         $jiraClient = createJiraClient(extractArrayConfig($config, 'jira'));
         $summary = fetchJiraWatchers($jiraClient, $pdo);
         printf(
-            "[%s] Jira watcher extraction complete. Watchers processed: %d (updated %d).%s",
+            "[%s] Jira watcher extraction complete. Watchers processed: %d (updated %d, warnings %d).%s",
             formatCurrentTimestamp(),
             $summary['watchers_processed'],
             $summary['watchers_updated'],
+            $summary['warnings'],
             PHP_EOL
         );
     } else {
@@ -133,7 +134,7 @@ function printVersion(): void
 }
 
 /**
- * @return array{watchers_processed: int, watchers_updated: int}
+ * @return array{watchers_processed: int, watchers_updated: int, warnings: int}
  * @throws Throwable
  */
 function fetchJiraWatchers(Client $client, PDO $pdo): array
@@ -165,20 +166,66 @@ function fetchJiraWatchers(Client $client, PDO $pdo): array
         throw new RuntimeException('Failed to prepare Jira watcher insert.');
     }
 
+    $warningInsert = $pdo->prepare(<<<SQL
+        INSERT INTO staging_jira_watcher_fetch_failures (
+            issue_id,
+            issue_key,
+            status_code,
+            message,
+            response_body
+        ) VALUES (
+            :issue_id,
+            :issue_key,
+            :status_code,
+            :message,
+            :response_body
+        )
+        ON DUPLICATE KEY UPDATE
+            status_code = VALUES(status_code),
+            message = VALUES(message),
+            response_body = VALUES(response_body),
+            extracted_at = CURRENT_TIMESTAMP
+    SQL);
+
+    if ($warningInsert === false) {
+        throw new RuntimeException('Failed to prepare Jira watcher warning insert.');
+    }
+
     $processed = 0;
     $updated = 0;
+    $warnings = 0;
 
     foreach ($issues as $issue) {
         $issueId = (string)$issue['id'];
         $issueKey = isset($issue['issue_key']) ? (string)$issue['issue_key'] : $issueId;
 
-        $response = jiraGetWithRetry(
-            $client,
-            sprintf('/rest/api/3/issue/%s/watchers', $issueId),
-            [],
-            $issueKey,
-            'watchers'
-        );
+        try {
+            $response = jiraGetWithRetry(
+                $client,
+                sprintf('/rest/api/3/issue/%s/watchers', $issueId),
+                [],
+                $issueKey,
+                'watchers'
+            );
+        } catch (BadResponseException $exception) {
+            $response = $exception->getResponse();
+            $status = $response instanceof ResponseInterface ? $response->getStatusCode() : null;
+            if ($status !== 403 && $status !== 404) {
+                throw $exception;
+            }
+            $message = sprintf('Jira watchers not accessible for issue %s (HTTP %d).', $issueKey, $status);
+            $body = $response instanceof ResponseInterface ? extractErrorBody($response) : $exception->getMessage();
+            $warningInsert->execute([
+                'issue_id' => $issueId,
+                'issue_key' => $issueKey,
+                'status_code' => $status,
+                'message' => $message,
+                'response_body' => $body,
+            ]);
+            printf("  [warn] %s%s", $message, PHP_EOL);
+            $warnings++;
+            continue;
+        }
 
         $payload = decodeJsonResponse($response);
         $watchers = isset($payload['watchers']) && is_array($payload['watchers']) ? $payload['watchers'] : [];
@@ -209,6 +256,7 @@ function fetchJiraWatchers(Client $client, PDO $pdo): array
     return [
         'watchers_processed' => $processed,
         'watchers_updated' => $updated,
+        'warnings' => $warnings,
     ];
 }
 
