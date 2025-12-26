@@ -14,6 +14,17 @@ const AVAILABLE_PHASES = [
     'transform' => 'Reconcile Jira issue links with Redmine targets and propose relation types.',
     'push' => 'Create the pending Redmine issue relations.',
 ];
+const REDMINE_RELATION_TYPES = [
+    'relates',
+    'duplicates',
+    'duplicated_by',
+    'blocks',
+    'blocked_by',
+    'precedes',
+    'follows',
+    'copied_to',
+    'copied_from',
+];
 
 if (PHP_SAPI !== 'cli') {
     throw new RuntimeException('This script is intended to be run from the command line.');
@@ -166,8 +177,6 @@ function runRelationTransformPhase(PDO $pdo): void
             ? (int)$row['target_redmine_issue_id']
             : null;
 
-        $proposedRelationType = 'relates';
-
         $nextStatus = 'READY_FOR_CREATION';
         $notes = null;
 
@@ -179,6 +188,36 @@ function runRelationTransformPhase(PDO $pdo): void
             $notes = 'Missing Redmine issue mapping for source or target; rerun 10_migrate_issues.php.';
             $summary['manual']++;
         } else {
+            $relationMapping = mapJiraRelationToRedmineType(
+                $row['jira_link_type_name'] ?? null,
+                $row['jira_link_type_outward'] ?? null,
+                $row['jira_link_type_inward'] ?? null
+            );
+            $proposedRelationType = $relationMapping['relation_type'];
+            $notes = mergeNotes($notes, $relationMapping['note']);
+
+            $blockedConflictNote = detectBlockedRelationConflict(
+                $proposedRelationType,
+                $row['source_redmine_is_closed'] ?? null,
+                $row['target_redmine_is_closed'] ?? null
+            );
+            if ($blockedConflictNote !== null) {
+                $notes = mergeNotes($notes, $blockedConflictNote);
+                $nextStatus = 'MANUAL_INTERVENTION_REQUIRED';
+                $summary['manual']++;
+            }
+        }
+
+        if ($row['redmine_relation_id'] !== null) {
+            $proposedRelationType = $row['proposed_relation_type'] ?? 'relates';
+            $notes = null;
+        } elseif ($sourceRedmineId === null || $targetRedmineId === null) {
+            $proposedRelationType = 'relates';
+        } elseif (!isset($proposedRelationType)) {
+            $proposedRelationType = 'relates';
+        }
+
+        if ($nextStatus === 'READY_FOR_CREATION') {
             $summary['ready']++;
         }
 
@@ -436,10 +475,14 @@ function fetchRelationMappings(PDO $pdo): array
         SELECT
             rel.*, 
             src.redmine_issue_id AS source_redmine_issue_id,
-            tgt.redmine_issue_id AS target_redmine_issue_id
+            tgt.redmine_issue_id AS target_redmine_issue_id,
+            src_status.is_closed AS source_redmine_is_closed,
+            tgt_status.is_closed AS target_redmine_is_closed
         FROM migration_mapping_issue_relations rel
         LEFT JOIN migration_mapping_issues src ON src.jira_issue_id = rel.jira_source_issue_id
         LEFT JOIN migration_mapping_issues tgt ON tgt.jira_issue_id = rel.jira_target_issue_id
+        LEFT JOIN staging_redmine_issue_statuses src_status ON src_status.id = src.redmine_status_id
+        LEFT JOIN staging_redmine_issue_statuses tgt_status ON tgt_status.id = tgt.redmine_status_id
         ORDER BY rel.mapping_id
     SQL;
 
@@ -459,37 +502,128 @@ function fetchRelationMappings(PDO $pdo): array
     return $rows;
 }
 
-function guessRedmineRelationType(?string $name, ?string $outward, ?string $inward): ?string
+/**
+ * @return array{relation_type: string, note: ?string}
+ */
+function mapJiraRelationToRedmineType(?string $name, ?string $outward, ?string $inward): array
 {
-    $candidates = array_filter([
-        is_string($outward) ? $outward : null,
-        is_string($name) ? $name : null,
-        is_string($inward) ? $inward : null,
-    ]);
+    $relationType = null;
+    $note = null;
 
-    foreach ($candidates as $candidate) {
-        $normalized = strtolower($candidate);
-        if (str_contains($normalized, 'block')) {
-            return 'blocks';
+    if (is_string($outward) && trim($outward) !== '') {
+        $relationType = mapJiraDescriptionToRelationType($outward, true);
+    }
+
+    if ($relationType === null && is_string($inward) && trim($inward) !== '') {
+        $relationType = mapJiraDescriptionToRelationType($inward, false);
+    }
+
+    if ($relationType === null && is_string($name) && trim($name) !== '') {
+        $relationType = mapJiraDescriptionToRelationType($name, true)
+            ?? mapJiraDescriptionToRelationType($name, false);
+    }
+
+    if ($relationType === null || !isSupportedRedmineRelationType($relationType)) {
+        $fallback = $relationType;
+        $relationType = 'relates';
+        $note = $fallback === null
+            ? 'Jira relation type not recognised; defaulted to relates.'
+            : sprintf('Jira relation "%s" not supported by Redmine; defaulted to relates.', $fallback);
+    }
+
+    return [
+        'relation_type' => $relationType,
+        'note' => $note,
+    ];
+}
+
+function mapJiraDescriptionToRelationType(string $description, bool $isOutward): ?string
+{
+    $normalized = strtolower(trim($description));
+    if ($normalized === '') {
+        return null;
+    }
+
+    if (str_contains($normalized, 'blocked by')) {
+        return $isOutward ? 'blocked_by' : 'blocks';
+    }
+    if (str_contains($normalized, 'blocks')) {
+        return $isOutward ? 'blocks' : 'blocked_by';
+    }
+    if (str_contains($normalized, 'duplicated by')) {
+        return $isOutward ? 'duplicated_by' : 'duplicates';
+    }
+    if (str_contains($normalized, 'duplicates')) {
+        return $isOutward ? 'duplicates' : 'duplicated_by';
+    }
+    if (str_contains($normalized, 'copied from')) {
+        return $isOutward ? 'copied_from' : 'copied_to';
+    }
+    if (str_contains($normalized, 'copied by')) {
+        return $isOutward ? 'copied_from' : 'copied_to';
+    }
+    if (str_contains($normalized, 'copied to') || str_contains($normalized, 'copies') || str_contains($normalized, 'clones')) {
+        return $isOutward ? 'copied_to' : 'copied_from';
+    }
+    if (str_contains($normalized, 'precedes') || str_contains($normalized, 'preced')) {
+        return $isOutward ? 'precedes' : 'follows';
+    }
+    if (str_contains($normalized, 'follows')) {
+        return $isOutward ? 'follows' : 'precedes';
+    }
+    if (str_contains($normalized, 'depend')) {
+        return $isOutward ? 'follows' : 'precedes';
+    }
+    if (str_contains($normalized, 'relat')) {
+        return 'relates';
+    }
+
+    return null;
+}
+
+function isSupportedRedmineRelationType(string $relationType): bool
+{
+    return in_array($relationType, REDMINE_RELATION_TYPES, true);
+}
+
+function detectBlockedRelationConflict(string $relationType, ?int $sourceIsClosed, ?int $targetIsClosed): ?string
+{
+    if (!in_array($relationType, ['blocks', 'blocked_by'], true)) {
+        return null;
+    }
+
+    if ($relationType === 'blocks') {
+        if ($targetIsClosed === 1) {
+            return 'Blocked issue is already closed; review before creating a blocks relation.';
         }
-        if (str_contains($normalized, 'duplicate')) {
-            return 'duplicates';
+        if ($sourceIsClosed === 1 && $targetIsClosed === 0) {
+            return 'Blocking issue is closed while the blocked issue is open; review relation before creating.';
         }
-        if (str_contains($normalized, 'relat')) {
-            return 'relates';
+    }
+
+    if ($relationType === 'blocked_by') {
+        if ($sourceIsClosed === 1) {
+            return 'Blocked issue is already closed; review before creating a blocked_by relation.';
         }
-        if (str_contains($normalized, 'preced') || str_contains($normalized, 'depend')) {
-            return 'precedes';
-        }
-        if (str_contains($normalized, 'follow')) {
-            return 'follows';
-        }
-        if (str_contains($normalized, 'clone') || str_contains($normalized, 'copy')) {
-            return 'copied_to';
+        if ($targetIsClosed === 1 && $sourceIsClosed === 0) {
+            return 'Blocking issue is closed while the blocked issue is open; review relation before creating.';
         }
     }
 
     return null;
+}
+
+function mergeNotes(?string $current, ?string $addition): ?string
+{
+    if ($addition === null || $addition === '') {
+        return $current;
+    }
+
+    if ($current === null || $current === '') {
+        return $addition;
+    }
+
+    return $current . ' ' . $addition;
 }
 
 function determinePhasesToRun(array $cliOptions): array
@@ -574,19 +708,26 @@ function extractArrayConfig(array $config, string $key): array
 
 function createDatabaseConnection(array $databaseConfig): PDO
 {
-    $host = (string)($databaseConfig['host'] ?? 'localhost');
-    $port = (int)($databaseConfig['port'] ?? 3306);
-    $dbname = (string)($databaseConfig['dbname'] ?? 'migration');
-    $user = (string)($databaseConfig['user'] ?? 'root');
+    $dsn = isset($databaseConfig['dsn']) ? (string)$databaseConfig['dsn'] : '';
+    if ($dsn === '') {
+        $host = (string)($databaseConfig['host'] ?? 'localhost');
+        $port = (int)($databaseConfig['port'] ?? 3306);
+        $dbname = (string)($databaseConfig['dbname'] ?? 'migration');
+        $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $host, $port, $dbname);
+    }
+    $user = (string)($databaseConfig['username'] ?? ($databaseConfig['user'] ?? ''));
     $password = (string)($databaseConfig['password'] ?? '');
-
-    $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $host, $port, $dbname);
-
-    try {
-        $pdo = new PDO($dsn, $user, $password, [
+    $options = isset($databaseConfig['options']) && is_array($databaseConfig['options'])
+        ? $databaseConfig['options']
+        : [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        ]);
+        ];
+
+    try {
+        $pdo = new PDO($dsn, $user, $password, $options);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
     } catch (PDOException $exception) {
         throw new RuntimeException('Unable to connect to the database: ' . $exception->getMessage(), 0, $exception);
     }
@@ -596,9 +737,10 @@ function createDatabaseConnection(array $databaseConfig): PDO
 
 function createRedmineClient(array $redmineConfig): Client
 {
-    $baseUri = (string)($redmineConfig['base_uri'] ?? '');
+    $baseUri = (string)($redmineConfig['base_url'] ?? $redmineConfig['base_uri'] ?? '');
+    $baseUri = rtrim($baseUri, '/');
     if ($baseUri === '') {
-        throw new RuntimeException('Redmine base_uri is required.');
+        throw new RuntimeException('Redmine base_url is required.');
     }
 
     $apiKey = (string)($redmineConfig['api_key'] ?? '');
