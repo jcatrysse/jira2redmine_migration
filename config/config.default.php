@@ -89,6 +89,41 @@ return [
             // Set to null to skip author overrides when using the extended API.
             'default_redmine_author_id' => null,
         ],
+        'relations' => [
+            // Optional custom mappings for Jira issue link types to Redmine relation types (including plugin-defined types).
+            // Keys are Jira link type names, values define the Redmine relation type to use for outward/inward directions.
+            // Leave empty to fall back to default Redmine relation mapping (e.g. "relates").
+            'custom_mappings' => [
+                'To Wiki' => [
+                    'outward' => 'relates_to_wiki',
+                    'inward' => 'relates_from_wiki',
+                ],
+                'To Labo Defective Equipment' => [
+                    'outward' => 'relates_to_labo_defective_eq',
+                    'inward' => 'relates_from_labo_defective_eq',
+                ],
+                'To Labo Task' => [
+                    'outward' => 'relates_to_labo_task',
+                    'inward' => 'relates_from_labo_task',
+                ],
+                'Create RMA' => [
+                    'outward' => 'relates_to_create_rma',
+                    'inward' => 'relates_from_create_rma',
+                ],
+                'To DATA Support' => [
+                    'outward' => 'relates_to_data_support',
+                    'inward' => 'relates_from_data_support',
+                ],
+                'Polaris work item link' => [
+                    'outward' => 'relates_to_polaris_work_item',
+                    'inward' => 'relates_from_polaris_work_item',
+                ],
+                'Cloners' => [
+                    'outward' => 'relates_to_cloners',
+                    'inward' => 'relates_from_cloners',
+                ],
+            ],
+        ],
         'checklists' => [
             // Primary rendered field storing checklist lines (e.g. "* [open] item").
             'primary_rendered_field' => 'customfield_10083',

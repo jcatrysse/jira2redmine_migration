@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_RELATIONS_SCRIPT_VERSION = '0.0.3';
+const MIGRATE_RELATIONS_SCRIPT_VERSION = '0.0.4';
 const AVAILABLE_PHASES = [
     'transform' => 'Reconcile Jira issue links with Redmine targets and propose relation types.',
     'push' => 'Create the pending Redmine issue relations.',
@@ -76,7 +76,7 @@ function main(array $config, array $cliOptions): void
     $pdo = createDatabaseConnection($databaseConfig);
 
     if (in_array('transform', $phasesToRun, true)) {
-        runRelationTransformPhase($pdo);
+        runRelationTransformPhase($pdo, $config);
     } else {
         printf('[%s] Skipping transform phase (disabled via CLI option).%s', formatCurrentTimestamp(), PHP_EOL);
     }
@@ -111,8 +111,11 @@ function printVersion(): void
 /**
  * @throws Throwable
  */
-function runRelationTransformPhase(PDO $pdo): void
+function runRelationTransformPhase(PDO $pdo, array $config): void
 {
+    $customMappings = normalizeCustomRelationMappings(extractCustomRelationMappings($config));
+    $supportedRelationTypes = buildSupportedRelationTypes($customMappings);
+
     printf('[%s] Synchronising Jira issue links...%s', formatCurrentTimestamp(), PHP_EOL);
     $syncSummary = syncIssueRelationMappings($pdo);
     printf(
@@ -191,7 +194,9 @@ function runRelationTransformPhase(PDO $pdo): void
             $relationMapping = mapJiraRelationToRedmineType(
                 $row['jira_link_type_name'] ?? null,
                 $row['jira_link_type_outward'] ?? null,
-                $row['jira_link_type_inward'] ?? null
+                $row['jira_link_type_inward'] ?? null,
+                $customMappings,
+                $supportedRelationTypes
             );
             $proposedRelationType = $relationMapping['relation_type'];
             $notes = mergeNotes($notes, $relationMapping['note']);
@@ -503,12 +508,73 @@ function fetchRelationMappings(PDO $pdo): array
 }
 
 /**
+ * @return array<string, mixed>
+ */
+function extractCustomRelationMappings(array $config): array
+{
+    $migrationConfig = $config['migration'] ?? [];
+    if (!is_array($migrationConfig)) {
+        return [];
+    }
+
+    $relationsConfig = $migrationConfig['relations'] ?? [];
+    if (!is_array($relationsConfig)) {
+        return [];
+    }
+
+    $customMappings = $relationsConfig['custom_mappings'] ?? [];
+    if (!is_array($customMappings)) {
+        return [];
+    }
+
+    return $customMappings;
+}
+
+/**
+ * @param array<string, array{outward: ?string, inward: ?string}> $customMappings
+ * @return array<int, string>
+ */
+function buildSupportedRelationTypes(array $customMappings): array
+{
+    $types = REDMINE_RELATION_TYPES;
+
+    foreach ($customMappings as $mapping) {
+        if (!is_array($mapping)) {
+            continue;
+        }
+
+        foreach (['outward', 'inward'] as $direction) {
+            $value = $mapping[$direction] ?? null;
+            if (is_string($value) && trim($value) !== '') {
+                $types[] = trim($value);
+            }
+        }
+    }
+
+    return array_values(array_unique($types));
+}
+
+/**
  * @return array{relation_type: string, note: ?string}
  */
-function mapJiraRelationToRedmineType(?string $name, ?string $outward, ?string $inward): array
+function mapJiraRelationToRedmineType(
+    ?string $name,
+    ?string $outward,
+    ?string $inward,
+    array $customMappings,
+    array $supportedRelationTypes
+): array
 {
     $relationType = null;
     $note = null;
+
+    $customRelationType = resolveCustomRelationType($name, $outward, $inward, $customMappings);
+    if ($customRelationType !== null) {
+        return [
+            'relation_type' => $customRelationType,
+            'note' => null,
+        ];
+    }
 
     if (is_string($outward) && trim($outward) !== '') {
         $relationType = mapJiraDescriptionToRelationType($outward, true);
@@ -523,7 +589,7 @@ function mapJiraRelationToRedmineType(?string $name, ?string $outward, ?string $
             ?? mapJiraDescriptionToRelationType($name, false);
     }
 
-    if ($relationType === null || !isSupportedRedmineRelationType($relationType)) {
+    if ($relationType === null || !isSupportedRedmineRelationType($relationType, $supportedRelationTypes)) {
         $fallback = $relationType;
         $relationType = 'relates';
         $note = $fallback === null
@@ -535,6 +601,81 @@ function mapJiraRelationToRedmineType(?string $name, ?string $outward, ?string $
         'relation_type' => $relationType,
         'note' => $note,
     ];
+}
+
+/**
+ * @return array<string, array{outward: ?string, inward: ?string}>
+ */
+function normalizeCustomRelationMappings(array $customMappings): array
+{
+    $normalized = [];
+
+    foreach ($customMappings as $name => $mapping) {
+        if (!is_array($mapping)) {
+            continue;
+        }
+
+        $key = normalizeRelationMappingKey($name);
+        if ($key === '') {
+            continue;
+        }
+
+        $normalized[$key] = [
+            'outward' => normalizeRelationTypeValue($mapping['outward'] ?? null),
+            'inward' => normalizeRelationTypeValue($mapping['inward'] ?? null),
+        ];
+    }
+
+    return $normalized;
+}
+
+function normalizeRelationMappingKey(mixed $value): string
+{
+    if (!is_string($value)) {
+        return '';
+    }
+
+    return strtolower(trim($value));
+}
+
+function normalizeRelationTypeValue(mixed $value): ?string
+{
+    if (!is_string($value)) {
+        return null;
+    }
+
+    $trimmed = trim($value);
+    return $trimmed !== '' ? $trimmed : null;
+}
+
+function resolveCustomRelationType(
+    ?string $name,
+    ?string $outward,
+    ?string $inward,
+    array $customMappings
+): ?string {
+    if (!is_string($name) || trim($name) === '') {
+        return null;
+    }
+
+    $key = normalizeRelationMappingKey($name);
+    if (!isset($customMappings[$key])) {
+        return null;
+    }
+
+    $mapping = $customMappings[$key];
+    $outwardValue = $mapping['outward'] ?? null;
+    $inwardValue = $mapping['inward'] ?? null;
+
+    if (is_string($outward) && trim($outward) !== '' && $outwardValue !== null) {
+        return $outwardValue;
+    }
+
+    if (is_string($inward) && trim($inward) !== '' && $inwardValue !== null) {
+        return $inwardValue;
+    }
+
+    return $outwardValue ?? $inwardValue;
 }
 
 function mapJiraDescriptionToRelationType(string $description, bool $isOutward): ?string
@@ -581,9 +722,9 @@ function mapJiraDescriptionToRelationType(string $description, bool $isOutward):
     return null;
 }
 
-function isSupportedRedmineRelationType(string $relationType): bool
+function isSupportedRedmineRelationType(string $relationType, array $supportedRelationTypes): bool
 {
-    return in_array($relationType, REDMINE_RELATION_TYPES, true);
+    return in_array($relationType, $supportedRelationTypes, true);
 }
 
 function detectBlockedRelationConflict(string $relationType, ?int $sourceIsClosed, ?int $targetIsClosed): ?string
