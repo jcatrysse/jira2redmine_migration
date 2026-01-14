@@ -349,7 +349,29 @@ function exportIssueTypeSchemes(Client $client, PDO $pdo): void
         ]);
         $count++;
 
-        $detailResponse = jiraGetWithRetry($client, sprintf('/rest/api/3/issuetypescheme/%s', $schemeId), [], $schemeId, 'issue-type-scheme');
+        try {
+            $detailResponse = jiraGetWithRetry(
+                $client,
+                sprintf('/rest/api/3/issuetypescheme/%s', $schemeId),
+                [],
+                $schemeId,
+                'issue-type-scheme'
+            );
+        } catch (BadResponseException $exception) {
+            $response = $exception->getResponse();
+            $status = $response instanceof ResponseInterface ? $response->getStatusCode() : null;
+            if ($status === 405) {
+                printf(
+                    "  [warn] Jira issue type scheme detail not accessible for %s (HTTP 405). Skipping detail export.%s",
+                    $schemeId,
+                    PHP_EOL
+                );
+                continue;
+            }
+
+            throw $exception;
+        }
+
         $detailPayload = decodeJsonResponse($detailResponse);
         $statement->execute([
             'scheme_id' => $schemeId,
@@ -365,7 +387,10 @@ function exportIssueTypeSchemes(Client $client, PDO $pdo): void
 
 function exportIssueTypeSchemeProjects(Client $client, PDO $pdo): void
 {
-    $items = fetchPagedItems($client, '/rest/api/3/issuetypescheme/project', 'values');
+    $projectRows = $pdo->query('SELECT project_id FROM staging_jira_projects_export ORDER BY project_id');
+    if ($projectRows === false) {
+        throw new RuntimeException('Failed to load projects for issue type scheme export.');
+    }
 
     $statement = $pdo->prepare(<<<SQL
         INSERT INTO staging_jira_issue_type_scheme_projects (
@@ -387,18 +412,46 @@ function exportIssueTypeSchemeProjects(Client $client, PDO $pdo): void
     }
 
     $count = 0;
-    foreach ($items as $mapping) {
-        $projectId = (string)($mapping['projectId'] ?? '');
-        $schemeId = (string)($mapping['issueTypeSchemeId'] ?? '');
-        if ($projectId === '' || $schemeId === '') {
+    foreach ($projectRows as $project) {
+        $projectId = (string)($project['project_id'] ?? '');
+        if ($projectId === '') {
             continue;
         }
-        $statement->execute([
-            'project_id' => $projectId,
-            'scheme_id' => $schemeId,
-            'raw_payload' => encodeJson($mapping),
-        ]);
-        $count++;
+
+        $response = jiraGetWithRetry(
+            $client,
+            '/rest/api/3/issuetypescheme/project',
+            [
+                'query' => [
+                    'projectId' => $projectId,
+                ],
+            ],
+            $projectId,
+            'issue-type-scheme-project'
+        );
+        $payload = decodeJsonResponse($response);
+        $items = [];
+        if (isset($payload['values']) && is_array($payload['values'])) {
+            $items = $payload['values'];
+        } elseif (is_array($payload)) {
+            $items = $payload;
+        }
+
+        foreach ($items as $mapping) {
+            if (!is_array($mapping)) {
+                continue;
+            }
+            $schemeId = (string)($mapping['issueTypeSchemeId'] ?? '');
+            if ($schemeId === '') {
+                continue;
+            }
+            $statement->execute([
+                'project_id' => (string)($mapping['projectId'] ?? $projectId),
+                'scheme_id' => $schemeId,
+                'raw_payload' => encodeJson($mapping),
+            ]);
+            $count++;
+        }
     }
 
     printf("[%s] Issue type scheme projects exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
@@ -494,10 +547,17 @@ function exportProjectRoles(Client $client, PDO $pdo): void
     $projectRows->closeCursor();
 
     foreach (array_keys($uniqueRoleIds) as $roleId) {
-        $response = jiraGetWithRetry($client, sprintf('/rest/api/3/role/%s', $roleId), [], $roleId, 'role-detail');
+        $roleIdString = (string)$roleId;
+        $response = jiraGetWithRetry(
+            $client,
+            sprintf('/rest/api/3/role/%s', $roleIdString),
+            [],
+            $roleIdString,
+            'role-detail'
+        );
         $payload = decodeJsonResponse($response);
         $roleInsert->execute([
-            'role_id' => $roleId,
+            'role_id' => $roleIdString,
             'role_name' => isset($payload['name']) ? (string)$payload['name'] : null,
             'raw_payload' => encodeJson($payload),
         ]);
@@ -842,7 +902,21 @@ function exportFieldConfigurationSchemes(Client $client, PDO $pdo): void
 
 function exportAutomationRules(Client $client, PDO $pdo): void
 {
-    $items = fetchPagedItems($client, '/rest/api/3/automation/rules', 'values');
+    try {
+        $items = fetchPagedItems($client, '/rest/api/3/automation/rules', 'values');
+    } catch (BadResponseException $exception) {
+        $response = $exception->getResponse();
+        $status = $response instanceof ResponseInterface ? $response->getStatusCode() : null;
+        if ($status === 404) {
+            printf(
+                "  [warn] Jira automation rules endpoint not available (HTTP 404). Skipping automation export.%s",
+                PHP_EOL
+            );
+            return;
+        }
+
+        throw $exception;
+    }
 
     $statement = $pdo->prepare(<<<SQL
         INSERT INTO staging_jira_automation_rules (
