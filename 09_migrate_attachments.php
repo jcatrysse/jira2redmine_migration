@@ -11,7 +11,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Pool;
 use GuzzleHttp\Psr7\Utils;
 use Psr\Http\Message\ResponseInterface;
-const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.20';
+const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
     'jira' => 'Synchronise Jira attachment metadata with the migration mapping table.',
     'pull' => 'Download Jira attachment binaries into the working directory.',

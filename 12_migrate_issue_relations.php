@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 
-const MIGRATE_RELATIONS_SCRIPT_VERSION = '0.0.4';
+const MIGRATE_RELATIONS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
     'transform' => 'Reconcile Jira issue links with Redmine targets and propose relation types.',
     'push' => 'Create the pending Redmine issue relations.',
