@@ -929,6 +929,7 @@ SQL);
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
                 'redmine_upload_token' => null,
+                'redmine_attachment_id' => null,
                 'sharepoint_url' => null,
                 'notes' => sprintf('Local attachment missing: %s', $localPath !== '' ? $localPath : '[unknown path]'),
                 'mapping_id' => $mappingId,
@@ -942,6 +943,7 @@ SQL);
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
                 'redmine_upload_token' => null,
+                'redmine_attachment_id' => null,
                 'sharepoint_url' => null,
                 'notes' => sprintf('Unable to open attachment for upload: %s', $localPath),
                 'mapping_id' => $mappingId,
@@ -956,6 +958,7 @@ SQL);
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
                 'redmine_upload_token' => null,
+                'redmine_attachment_id' => null,
                 'sharepoint_url' => null,
                 'notes' => sprintf('Unable to determine attachment size: %s', $localPath),
                 'mapping_id' => $mappingId,
@@ -973,6 +976,7 @@ SQL);
                 $updateStatement->execute([
                     'migration_status' => 'PENDING_ASSOCIATION',
                     'redmine_upload_token' => null,
+                    'redmine_attachment_id' => null,
                     'sharepoint_url' => $sharePointUrl,
                     'notes' => null,
                     'mapping_id' => $mappingId,
@@ -982,6 +986,7 @@ SQL);
                 $updateStatement->execute([
                     'migration_status' => 'FAILED',
                     'redmine_upload_token' => null,
+                    'redmine_attachment_id' => null,
                     'sharepoint_url' => null,
                     'notes' => 'Failed to upload attachment to SharePoint: ' . $exception->getMessage(),
                     'mapping_id' => $mappingId,
