@@ -243,10 +243,9 @@ function transformIssueTags(PDO $pdo): array
         }
 
         $current = $existing[$jiraIssueId];
-        $storedProposed = $current['proposed_tags'];
         $storedHash = normalizeStoredAutomationHash($current['automation_hash'] ?? null);
-        $currentHash = is_string($storedProposed) ? hash('sha256', $storedProposed) : null;
-        if ($storedHash !== null && $currentHash !== null && !hash_equals($storedHash, $currentHash)) {
+
+        if ($storedHash !== null && hash_equals($storedHash, $automationHash)) {
             continue;
         }
 
