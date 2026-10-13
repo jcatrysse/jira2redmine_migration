@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Jira2Redmine\Http;
 
 use GuzzleHttp\Client;
+use GuzzleHttp\HandlerStack;
 use RuntimeException;
 
 /**
@@ -31,7 +32,7 @@ final class ClientFactory
 
         $options = [
             'base_uri' => rtrim($baseUrl, '/') . '/',
-            'handler' => \jiraHandlerStack($jiraConfig),
+            'handler' => self::withRetry(\jiraHandlerStack($jiraConfig), $jiraConfig),
             'auth' => [$username, $apiToken],
             'headers' => [
                 'Accept' => 'application/json',
@@ -62,6 +63,7 @@ final class ClientFactory
 
         $options = [
             'base_uri' => rtrim($baseUrl, '/') . '/',
+            'handler' => self::withRetry(HandlerStack::create(), $redmineConfig),
             'headers' => [
                 'Accept' => 'application/json',
                 'X-Redmine-API-Key' => $apiKey,
@@ -72,5 +74,21 @@ final class ClientFactory
         }
 
         return new Client($options);
+    }
+
+    /**
+     * Adds the central retry on rate limits; `retry.max_retries` in the client's config (default 5,
+     * 0 switches it off).
+     *
+     * @param array<string, mixed> $config
+     */
+    private static function withRetry(HandlerStack $stack, array $config): HandlerStack
+    {
+        $maxRetries = (int)($config['retry']['max_retries'] ?? 5);
+        if ($maxRetries > 0) {
+            $stack->push((new RetryPolicy($maxRetries))->middleware(), 'retry');
+        }
+
+        return $stack;
     }
 }
