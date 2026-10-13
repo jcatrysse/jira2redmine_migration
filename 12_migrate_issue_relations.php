@@ -208,10 +208,10 @@ function runRelationTransformPhase(PDO $pdo, array $config): void
                 $row['source_redmine_is_closed'] ?? null,
                 $row['target_redmine_is_closed'] ?? null
             );
+            // Jira had the relation and Redmine accepts it (201 on 7.0 for a closed blocked issue): create it
+            // and keep the remark, instead of leaving the relation out for a manual review.
             if ($blockedConflictNote !== null) {
                 $notes = mergeNotes($notes, $blockedConflictNote);
-                $nextStatus = 'MANUAL_INTERVENTION_REQUIRED';
-                $summary['manual']++;
             }
         }
 
