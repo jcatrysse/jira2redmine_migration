@@ -10,6 +10,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Jira\ExtractionGuard;
 
 const MIGRATE_PROJECTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -83,6 +84,7 @@ function main(array $config, array $cliOptions): void
         printf("[%s] Starting Jira project extraction...%s", formatCurrentTimestamp(), PHP_EOL);
 
         $totalJiraProcessed = fetchAndStoreJiraProjects($jiraClient, $pdo);
+        ExtractionGuard::requireProjects($totalJiraProcessed);
 
         printf(
             "[%s] Completed Jira extraction. %d project records processed.%s",
