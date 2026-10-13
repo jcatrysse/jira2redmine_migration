@@ -492,41 +492,37 @@ function mapAttachmentUrlToTarget(string $url, array $attachmentsMap): string
 }
 
 /**
- * Transformfase: vervang profile links naar user#ID, verwijder avatars,
- * en canonicaliseer issue links naar https://host/browse/KEY (maar vervang niet naar #id).
- * (Alleen issue descriptions, geen comment body_html.)
- *
- * Roept DB alleen per rij update aan (batch-friendly).
+ * Link markup that Jira showed as plain text, typed by a user as Jira wiki markup "[label|url]" or as
+ * Markdown "[label](url)", reaches us escaped by the HTML converter ("\\[label|url\\]"). The link rewrites
+ * after it ignored the escapes and left half a link: "](" visible in Redmine (B42). It becomes a real
+ * link here; parentheses in the address are percent-encoded so the link stays one link.
  */
-function transformDescriptionsForUsersAndCanonicalizeIssues(PDO $pdo): void
+function restoreLiteralMarkupLinks(string $text): string
 {
-    // preload user map: jira_account_id => redmine_user_id
-    $userMap = [];
-    $stmt = $pdo->query("SELECT jira_account_id, redmine_user_id, migration_status FROM migration_mapping_users");
-    while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
-        if (!in_array($r['migration_status'], ['MATCH_FOUND','CREATION_SUCCESS'], true)) continue;
-        if (!empty($r['jira_account_id']) && !empty($r['redmine_user_id'])) {
-            $userMap[(string)$r['jira_account_id']] = (int)$r['redmine_user_id'];
-        }
+    if (!str_contains($text, '\\[')) {
+        return $text;
     }
 
-    // prepare selects/updates
-    $selIssues = $pdo->query("SELECT mapping_id, proposed_description FROM migration_mapping_issues");
-    $updIssue = $pdo->prepare("UPDATE migration_mapping_issues SET proposed_description = :desc, last_updated_at = CURRENT_TIMESTAMP WHERE mapping_id = :mid");
+    $address = static function (string $url): string {
+        $url = (string)preg_replace('/\\\\([\\\\`*_{}\[\]()#+\-.!|~])/', '$1', $url);
 
-    // do for issues
-    while ($row = $selIssues->fetch(PDO::FETCH_ASSOC)) {
-        $mid = (int)$row['mapping_id'];
-        $desc = (string)$row['proposed_description'];
+        return strtr(rtrim($url), ['(' => '%28', ')' => '%29', ' ' => '%20']);
+    };
+    $label = static fn (string $value): string => trim((string)preg_replace('/\\\\([\\\\`*_{}\[\]()#+\-.!|~])/', '$1', $value));
 
-        $new = transform_text_in_transform_phase($desc, $userMap);
-        if ($new !== $desc) {
-            $updIssue->execute([':desc' => $new, ':mid' => $mid]);
-            printf("Transform: updated mapping_id %d\n", $mid);
-        }
-    }
+    // \[label\](url\)  (Markdown typed into Jira)
+    $text = (string)preg_replace_callback(
+        '/\\\\\[([^\]\n]{1,300}?)\\\\\]\((https?:\/\/(?:[^\s()\\\\]|\\\\.|\([^\s()]*\))+)\\\\?\)/u',
+        static fn (array $m): string => '[' . $label($m[1]) . '](' . $address($m[2]) . ')',
+        $text
+    );
 
-    // Note: do not mutate staging_jira_comments.body_html; keep raw Jira source intact.
+    // \[label|url\]  (Jira wiki markup typed into the new editor)
+    return (string)preg_replace_callback(
+        '/\\\\\[([^\]|\n]{1,300}?)\s*(?:\\\\)?\|\s*(https?:\/\/(?:[^\s\]\\\\]|\\\\[^\]])+)\\\\?\]/u',
+        static fn (array $m): string => '[' . $label($m[1]) . '](' . $address($m[2]) . ')',
+        $text
+    );
 }
 
 /**
@@ -555,6 +551,8 @@ function transform_text_in_transform_phase(string $text, array $userMap): string
         'user#$1',
         $text
     ) ?? $text;
+
+    $text = restoreLiteralMarkupLinks($text);
 
     // 1) Preserve Original Jira issue lines by placeholders
     $orig = [];

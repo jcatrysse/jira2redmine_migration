@@ -111,12 +111,6 @@ function main(array $config, array $cliOptions): void
             PHP_EOL
         );
         try {
-            transformDescriptionsForUsersAndCanonicalizeIssues($pdo);
-            printf("  [transform] Issue descriptions: avatars removed and user links canonicalized.%s", PHP_EOL);
-        } catch (Throwable $e) {
-            printf("  [warn] transformDescriptionsForUsersAndCanonicalizeIssues failed: %s%s", $e->getMessage(), PHP_EOL);
-        }
-        try {
             $noteSummary = populateProposedJournalNotes($pdo);
             printf(
                 "  [transform] Proposed journal notes updated: %d (skipped manual overrides: %d).%s",
@@ -1692,6 +1686,11 @@ function convertJournalBodyToMarkdown(?string $bodyHtml, ?string $bodyAdf, array
 
     if ($bodyText === null && $bodyAdf !== null) {
         $bodyText = convertJiraAdfToPlaintext($bodyAdf);
+    }
+
+    if ($bodyText !== null) {
+        // Link markup Jira showed as text becomes a link (B42).
+        $bodyText = restoreLiteralMarkupLinks($bodyText);
     }
 
     if ($bodyText !== null && $issueAttachments !== []) {
