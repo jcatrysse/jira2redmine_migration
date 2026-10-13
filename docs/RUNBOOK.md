@@ -111,13 +111,13 @@ handled in the tool (plan, Results).
 `J2R_STEP=restore` (or by hand): remove the opened workflow transitions, lock the activated users
 again; check the group memberships; switch prune, LDAP sync and stealth mode back on.
 
-## Choices for Jan (plan work list 15)
+## Choices for Jan (plan work list 15, decided 2026-10-13)
 
 | manual step today | options | recommendation |
 |---|---|---|
-| open workflows, reset after | (a) script it (done: `workflows` / `restore`); (b) Extended API import mode that skips the workflow and initial-status checks (session A) | (a) now; (b) if the reset is a risk in production |
-| activate locked users, lock after | (a) script it (done: `members` / `restore`); (b) Extended API import mode that accepts locked users as author and assignee | (a) |
-| attachment prune off | (a) prune off during the run; (b) upload each attachment in 10 right before its issue is created, so nothing waits 24 h | (a) for runs within a day; (b) for long volume runs |
+| open workflows, reset after | (a) script it (done: `workflows` / `restore`); (b) Extended API import mode that skips the workflow and initial-status checks (session A) | **Jan: (a)** |
+| activate locked users, lock after | (a) script it (done: `members` / `restore`); (b) Extended API import mode that accepts locked users as author and assignee | **Jan: (a)** |
+| attachment prune off | (a) prune off during the run; (b) upload each attachment in 10 right before its issue is created, so nothing waits 24 h | **Jan: (a)**, runbook step, no code change |
 | LDAP sync and stealth mode off | runbook step | runbook step |
 
 ## Appendix: Apache for the new server (large attachments)

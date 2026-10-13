@@ -10,6 +10,78 @@ With several sessions in parallel, the session Jan starts is the coordinator; se
 This file is the plan and the memory of that work. Update it as you go: results, findings, what
 is left. Written 2026-10-13 from a reading of the code and Jan's answers in the planning session.
 
+## Handover to B2 (session B, 2026-10-13, about 19:45 UTC)
+
+Session B stops writing here; **B2 is the only writer of this file and of the repository** from now
+on. Session B stays available to the coordinator for questions.
+
+**State.** Branch `redmine70-migration`, everything pushed, worktree clean; the commit carrying this
+section is the hand-over point. `tools/qa.sh`: 74 PHPUnit tests, PHPStan level 8 and PSR-12 clean at
+the last code commit. Nothing is running. Nothing is half done in the code. The test instances in
+session B's container (5.1 reset to its baseline dump with Extended API 132fff5; 7.0 holding the p8
+run) are lost with that container: B2 rebuilds them.
+
+**Done.** Phases 2 to 5; phase 6 first part (`src/` library: client and database factories, central
+retry; proof: a full 5.1 run recorded through `tools/testenv/record_proxy.mjs` before and after the
+refactor, **3,918 Redmine requests, 0 differing**, `compare_requests.php` exit 0); phase 7 item 12
+and item 14 (status under item 14); phase 8 (runbook, README, `docs/SCRIPTS.md`, CHANGELOG).
+
+**Gate on Extended API 96fe96a (5.1).** Script results equal to 132fff5 (365 issues created, 48
+failed, 5 manual, 2 update failed, 6 waiting; journals 939; relations 60/60; watchers 777;
+attachments 367); 373 created issues, 11 parents, author_id and created_on equal to Jira for all. No
+SystemStackError. **The verify step did not finish** (token revoked during the run): rerun the gate
+with verify. The extended_api branch is now 9867918 (docs only on top of 96fe96a), so the gate stays
+valid for that commit. Production 5.1 = `main` = 132fff5 (force-pushed back on Jan's instruction).
+
+**Last verify on 7.0 (run p8, all fixes except B24, B14 and Resolved landed later): 6 failures**, all
+explained, each handled in `lib/verify.php` (commit "Verify: open parents in the counts, parents
+outside the run, mentions and issue links count as links"), **not yet confirmed by a rerun**:
+
+| check | cause | handled |
+|---|---|---|
+| counts tracker/status, OAC (2) | the two open parents (OAC-19, OAC-42) are Resolved by Jan's rule, not their Jira status | counts expect Resolved for `[open-parent]` rows |
+| fields: parent, GEOS-87 | parent in a project outside the run (READY_FOR_REWRITE by design) | reported as "parent outside the run", not a failure |
+| description links, GEOS-41, GEOS-116, SIS-49 | Redmine renders mentions, `#id` and e-mail autolinks as links Jira does not count, and the reverse | mentions, issue links and e-mail autolinks counted on both sides |
+
+**Open, in order** (the first five need the new token):
+
+1. New token: write probe (decision 1, expect 401 "scope does not match"), cloudId into
+   `/tmp/claude-0/cid` (read by `tools/testenv/env.sh`).
+2. 03, 04, 16 with the granular scopes; B25 (16 calls `GET /rest/api/3/workflow`, gone from the spec):
+   see the real answer, then fix with a test.
+3. Full runs 5.1 and 7.0 with all fixes (`tools/testenv/run_all.sh 51|70 LABEL`); verify green on
+   both, B14 and Resolved included; rerun the stability check (10 twice, second run changes nothing).
+4. Extended API gate on 5.1 with verify (item above).
+5. WIKI through the conversion bench pipeline (Text conversion protocol); then phase 7 item 13
+   (conversion fixes with PHPUnit cases) and bench step 3 (visual check with Jan).
+6. SURV volume run: first implement the attachment sample test option (Jan's rule, under work list
+   2; off by default; skipped files reported "skipped by sample" and expected-absent in verify).
+7. Phase 6 rest: the 8 helper functions still copied in every script (M1), CLI and config helpers,
+   each step proven with identical recorded requests.
+8. Phase 9: final runs on both targets, numbers in "Results".
+
+**Test environment, for `tools/testenv/setup.sh` in a fresh container.**
+- Attach the private plugin repositories first (`add_repo`); 44 plugins for 5.1 in
+  `plugins-5.1.tsv`. Takes about 15 minutes per target; disk is tight: setup clones with
+  `--depth 1`; remove `.git` directories under vendor if bundler leaves full clones (4.9 GB once).
+- Already handled by setup.sh: `activerecord-session_store` in Gemfile.local (5.1),
+  redmine_custom_workflows v2.1.2 on 5.1, redmineup pinned to 1.1.4 (1.1.5+ duplicates a route),
+  issue_recurring moved aside during `db:migrate` on an empty database, plugin directory = plugin id,
+  `generate_secret_token`.
+- `config/config.local.php` is gitignored and must be recreated. Session B's version reads everything
+  from the environment: `jira.base_url = 'https://'.getenv('JIRA_SITE')`, username/api_token from
+  `JIRA_EMAIL`/`JIRA_API_TOKEN`, `cloud_id` from `JIRA_CLOUD_ID`; `redmine.base_url`/`api_key` from
+  `REDMINE_URL`/`REDMINE_API_KEY`; `extended_api` enabled, prefix `/extended_api`; `paths.tmp` from
+  `J2R_TMP`; `migration.issues.jql` from `J2R_JQL` (default `project in (GEOS, SIS, OAC)`);
+  `default_redmine_author_id` 1 for issues and journals; staging DSN from `STAGING_DSN`, user
+  `jira2redmine`. `tools/testenv/env.sh 51|70` sets those variables (API keys from `setup5x.out`).
+- Redmine runs on puma (`start.sh 51|70`, ports 3051/3070); `reset.sh` restores the baseline dump.
+  Do not use `pkill -f` with a pattern that matches your own shell (it killed the shell, exit 144).
+- run_all.sh: `RECORD=file.jsonl` records every Redmine request through the proxy (port 31xx);
+  `manual_steps.rb` does workflows/members/restore. Apache + Passenger + mod_xsendfile for the large
+  attachment test: `tools/testenv/apache-redmine70.conf`, `large_attachment_apache.sh`.
+- Verify reports and run logs hold Jira data: keep them outside the repository.
+
 ## Goal
 
 - Run **test migrations** from Jira Cloud to two full Redmine instances, both on PostgreSQL 16:
@@ -26,7 +98,7 @@ is left. Written 2026-10-13 from a reading of the code and Jan's answers in the 
 | | |
 |---|---|
 | Branch | `redmine70-migration` (from `main` at `1de1fc9`) |
-| Phase | 2 to 5 done, 6 first part and 7 largely done (session B, 2026-10-13); see Results |
+| Phase | 2 to 5 and 8 done, 6 first part and 7 largely done; Jira work waits for B2 (see Handover) |
 | Scripts | 16 scripts, ~39,000 lines of PHP, no shared library, no tests |
 | Targets | Redmine 5.1 and 7.0; the scripts stay dual-target (unlike the plugins, 5.1 is not dropped) |
 | Extended API | to be made compatible with Redmine 5.1, 6.1 and 7.0 (own repo, own branch) |
@@ -57,6 +129,9 @@ is left. Written 2026-10-13 from a reading of the code and Jan's answers in the 
    when `::Webhook` exists.
 7. **Text conversion** (Jira to Redmine Markdown) must be tested thoroughly; it has caused trouble
    before.
+8. **Manual steps stay scripted** (2026-10-13, after the runbook): `manual_steps.rb`
+   workflows/members/restore; no Extended API import mode.
+9. **Attachment prune off during the run** is a runbook step; no code change (2026-10-13).
 
 ## Measured on 2026-10-13 (reading the code, nothing run yet)
 
@@ -180,6 +255,8 @@ In this order. Each item records its result under "Results" when done.
     retry (decision 5), database, CLI, mapping helpers. Scripts keep their CLI. PHPUnit for the
     pure transformations, PHPStan, PSR-12. Proof of no behaviour change: the push payloads of a
     dry run are identical before and after, on the same staging data.
+    **First part DONE** 2026-10-13: `src/` (ClientFactory, RetryPolicy, ConnectionFactory), QA tools;
+    a full 5.1 run recorded before and after: 3,918 Redmine requests, 0 differing. Rest: M1 helpers.
 
 **Phase 7, fixes**
 
@@ -205,6 +282,7 @@ In this order. Each item records its result under "Results" when done.
     with options (examples: upload and attach per issue so prune can stay on; an Extended API
     import mode that skips workflow and initial-status checks and accepts locked users, admin
     only, `/extended_api` only).
+    **DONE** 2026-10-13; Jan: manual steps stay scripted, prune off as a runbook step (decisions 8, 9).
 16. README rewritten from the runbook; CHANGELOG back to a changelog.
     Status 2026-10-13: done. Runbook in `docs/RUNBOOK.md` (sequence, checks, manual steps with
     `manual_steps.rb` workflows/members/restore, choices for Jan, Apache appendix). README is a short
@@ -219,7 +297,7 @@ In this order. Each item records its result under "Results" when done.
 ## Sessions
 
 The work runs in parallel sessions that write **disjoint repositories**, so they never conflict.
-Exactly one session writes this file: session B.
+Exactly one session writes this file: session B until 2026-10-13, B2 from then on (see Handover).
 
 **Coordinator** (the session Jan starts; it has the Jira variables). It does not build. It:
 
