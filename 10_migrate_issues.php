@@ -13,6 +13,7 @@ use Karvaka\AdfToGfm\Converter as AdfConverter;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Redmine\IssueFinalUpdate;
+use Jira2Redmine\Redmine\IssueDates;
 
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -1295,8 +1296,9 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
             $proposedDescription = replaceJiraUserLinksWithRedmineIds($proposedDescription, $userLookup);
         }
 
-        $proposedStartDate = $issueCreatedAt !== null ? substr($issueCreatedAt, 0, 10) : null;
         $proposedDueDate = $issueDueDate !== null ? $issueDueDate : null;
+        // Start = creation date, or the due date when that is earlier (Redmine refuses due < start, B8).
+        $proposedStartDate = IssueDates::startDate($issueCreatedAt, $proposedDueDate);
         $proposedDoneRatio = ($issueStatusCategory !== null && strtolower($issueStatusCategory) === 'done') ? 100 : null;
         $proposedEstimatedHours = $issueTimeOriginalEstimate !== null ? round($issueTimeOriginalEstimate / 3600, 2) : null;
         $proposedIsPrivate = $defaultIsPrivate;
