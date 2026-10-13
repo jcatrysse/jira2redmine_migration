@@ -51,11 +51,14 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
    see the real answer, then fix with a test. **DONE (B2)**: B25 to B32 under Findings.
 3. Full runs 5.1 and 7.0 with all fixes (`tools/testenv/run_all.sh 51|70 LABEL`); verify green on
    both, B14 and Resolved included; rerun the stability check (10 twice, second run changes nothing). **DONE (B2)**: verify green on both, see item 14; the stability check found B35.
-4. Extended API gate on 5.1 with verify (item above).
+4. Extended API gate on 5.1 with verify (item above). **DONE (B2): green**, `redmine70-migration` c806a17
+   (code 161fa52) on 5.1, fresh full run: verify 22 checks, 0 failures, results equal to `main` 132fff5.
 5. WIKI through the conversion bench pipeline (Text conversion protocol); then phase 7 item 13
    (conversion fixes with PHPUnit cases) and bench step 3 (visual check with Jan).
+   **B2:** WIKI run and bench done (Text conversion protocol, results B2); fixes B37 to B43 and B42 (conversion).
 6. SURV volume run: first implement the attachment sample test option (Jan's rule, under work list
    2; off by default; skipped files reported "skipped by sample" and expected-absent in verify).
+   **B2:** option built (`attachments.test_sample`, B33 commit list); SURV run on 5.1, see Results.
 7. Phase 6 rest: the 8 helper functions still copied in every script (M1), CLI and config helpers,
    each step proven with identical recorded requests.
 8. Phase 9: final runs on both targets, numbers in "Results".
@@ -391,6 +394,28 @@ nested list, mailto, img), and no visible Markdown syntax (`**`, `\|`, `](`, `|-
 - Constructs absent from these projects: task lists, dates, expand. Present (issue counts): mention
   664, image 311, issue link 205, attachment link 111, nested list 61, panel 39, code block 30,
   table 28, email link 24, emoji 23, heading 16, status lozenge 14, colour 11, quote 10.
+**Results B2, 2026-10-13**: a run on 7.0 with GEOS, SIS, OAC and WIKI (1,883 issues, 3,535 comments,
+`attachments.test_sample`: 1,103 of 1,413 files), every staged item rendered by Redmine 5.1:
+
+| path | items | without loss | B (earlier) |
+|---|---:|---:|---:|
+| html (converter only) | 4,648 | 4,572 (98.4%) | 4,630 (99.6%) |
+| adf | 4,648 | 4,270 (91.9%) | 2,098 (45.1%) |
+| pipeline (what is pushed) | 3,842 | 3,702 (96.4%) | 1,057 of 1,139 (92.8%, three projects) |
+
+- Pipeline losses (140): 98 only "fewer than 99% of the words" (Jira keys rewritten to `#id` by design,
+  names of users that are not migrated, a few link labels), 22 with `](` visible, 7 missing images, 5
+  with raw HTML tags, 6 with `**` visible, 1 heading and quote lost. Weakest constructs in the pipeline:
+  issue link 144/215, status lozenge 3/14, heading 5/12.
+- `](` visible: link markup that Jira showed as text (`[label|url]` and `[label](url)` typed by a user)
+  half converted by the link rewrites, and URLs with parentheses: **fixed, B42** (8 descriptions and
+  part of the 14 comments; the rest are e-mail-originated comments with Outlook safelinks). Avatars
+  reached Redmine in 3 issues and 3 journals: descriptions fixed with B41, journals open.
+- The HTML path alone dropped from 99.6% to 98.4% since B's measurement: the mention conversion now
+  writes `@login`, which the bench renders unresolved on the html path (the pipeline path resolves it).
+- Not yet done: a pipeline measurement after B41/B42 on a fresh run, bench step 3 (visual check with
+  Jan), the remaining defect classes as PHPUnit cases.
+
 - Curated set (step 1), two or three per construct: table GEOS-10, OAC-39, SIS-12; code block SIS-249,
   WIKI-66, WIKI-843; panel WIKI-161, WIKI-185; nested list GEOS-15, OAC-19; image GEOS-87, OAC-47;
   attachment link GEOS-8, GEOS-23; mention GEOS-10, SIS-162; issue link GEOS-65, OAC-16; heading
@@ -493,6 +518,11 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
   step then only activates locked users; (b) 04 migrates the project role actors only (done, see B31)
   and the `members` step gives everyone else Developer; (c) keep 04's old expansion. Meanwhile (b) is
   implemented and used in the test runs.
+- **B37, B38/B39 (put to Jan 2026-10-13 by B2):** a select value Jira no longer offers: (a, recommended,
+  implemented) added to the Redmine field, (b) mapped to an existing value by config, (c) left empty.
+  Parents and links across projects: (a, recommended, test runs) Redmine settings "cross-project
+  subtasks: with all projects" and "allow cross-project issue relations", (b) a relation instead of a
+  parent, (c) left out and logged.
 - Automation rules: not exported. `/rest/api/3/automation/rules` does not exist in the Jira platform
   API (404 classic, 401 scoped); Jira's automation rules have their own REST API and scope. Open: does
   Jan want them exported (to rebuild as custom workflows)?
@@ -578,6 +608,13 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B34 | 12 marks a refused relation CREATION_FAILED without its automation hash | every later transform takes it for a hand edit ("preserved manual overrides") and never retries; 17 relations after the relation types were added | **fixed** (`src/Relations/RelationState.php`); proof on 5.1: 17 failed, a plain rerun created all 17. Test env: `setup.sh` now installs the relation types (B18) |
 | B35 | **11 pushes every journal again on each rerun** (also on `main`): the transform set every journal of a created issue to READY_FOR_PUSH, pushed ones included; FAILED journals were never retried | stability check: +1,277 duplicate journals on 5.1 and 7.0; verify still passed (each Jira comment was found) | **fixed** (`src/Journals/JournalStatus.php`): pushed journals stay SUCCESS, FAILED and SKIPPED are judged again; proof on 5.1: rerun pushed 0 comments, journal count unchanged. verify now fails on a journal present twice (51 of 75 sampled issues on the duplicated instance) |
 | B36 | verify read the `[open-parent]` note, which the push clears once the issue exists; verify's own clients had no retry | OAC 2 count failures after a full run; one verify run stopped on a dropped connection | **fixed**: open parents from the mapping (proposed status differs from the mapped Jira status), clients from `ClientFactory` |
+| B37 | A select option Jira no longer offers stays on old issues (WIKI: Department "Survey", option 10748, 294 issues; the list has "Survey Department") | the Redmine field had only the offered values; 10 held all 294 issues back as MANUAL | **fixed** (option a, open for Jan): 08 adds used values to the field (`UsedValues`), taken in the usage phase once 10 staged the issues; 10 reads the options from 08's Redmine snapshot, so a value added to an existing field by hand is used too |
+| B38 | A Jira parent in another project (GEOS issues under WIKI epics) | 422 "Parent task is invalid": Redmine allows subtasks within a project tree by default | Redmine setting "cross-project subtasks: with all projects" (option a, open for Jan); test runs set it |
+| B39 | Jira links across projects | 29 relations 422 "doesn't belong to the same project" | Redmine setting "allow cross-project issue relations" (with B38, open for Jan); test runs set it |
+| B40 | A Jira link between an issue and its own parent or subtask | 6 relations 422 | **fixed**: IGNORED with a note (the hierarchy holds it) |
+| B41 | 11 rewrote 10's issue descriptions in staging after 10 pushed them | avatars stayed in Redmine (3 issues); issues not created yet got a broken hash and stayed "manual overrides" (17) | **fixed**: 10 cleans descriptions before its hash and push, 11 no longer touches them |
+| B42 | Link markup Jira showed as text, URLs with parentheses | `](` visible (22 items) | **fixed** in descriptions and comments, PHPUnit cases from anonymised input |
+| B43 | 08's purge of mappings without a Jira field deleted the synthetic `cascading_parent:` rows on every transform; after a rerun of 08 nothing recreated them | 10 lost the parent field of 3 cascading fields; issues created after the rerun lost their parent value (41 verify failures in the healed WIKI run) | **fixed** (`MappingKeys`) |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
