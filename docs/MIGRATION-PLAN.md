@@ -172,6 +172,7 @@ In this order. Each item records its result under "Results" when done.
    **Steps 1, 2 and 4 DONE** 2026-10-13: `tools/conversion_bench.php`, results under that protocol.
    Step 3 (visual check with Jan) and 5 (PHPUnit cases) follow in phase 7.
 10. Large attachment test (decision 3), see "Large attachment protocol".
+    **DONE** 2026-10-13, results under that protocol.
 
 **Phase 6, code quality without behaviour change**
 
@@ -301,6 +302,30 @@ On 5.1 and 7.0, with `attachment_max_size` raised (e.g. 4 GB) and SharePoint off
   X-Sendfile where the test server allows it;
 - list what only production can show: Apache `LimitRequestBody` (1 GiB default since 2.4.53),
   proxy timeouts, X-Sendfile, backup size.
+
+**Results 2026-10-13 (session B)**, `tools/testenv/large_attachment_test.sh`, Puma directly (no
+Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
+
+| | 5.1 video 431 MB | 5.1 tif 1,811 MB | 7.0 video 431 MB | 7.0 tif 1,811 MB |
+|---|---|---|---|---|
+| upload through the API | 4.7 s | 17.2 s | 4.8 s | 23.0 s |
+| PHP peak memory | 4 MB | 4 MB | 4 MB | 4 MB |
+| Redmine RSS during upload | 270 to 378 MB | +47 MB | 435 to 577 MB | 460 to 670 MB |
+| stored size, sha256 of the download | equal, equal | equal, equal | equal, equal | equal, equal |
+| download | 1.6 s | 4.9 to 15.7 s | 0.6 s | 0.9 to 2.8 s |
+| **Redmine RSS during download** | grows | **275 to 2,087 MB, stays** | flat | **284 to 285 MB** |
+| range request `bytes=1000-1999` | 200, whole file | 200, whole file | 200, whole file | 200, whole file |
+| issue page load (Chromium) | 0.7 s | 0.4 s | 0.6 s | 0.4 s |
+
+- Upload works on both up to 1.8 GB; the scripts stream (4 MB PHP) and Redmine writes to disk.
+- **5.1 reads a download into memory** and keeps it (Puma, Rails 6.1): a 1.8 GB file costs 1.8 GB
+  RSS per worker. 7.0 streams. In production Apache with X-Sendfile would serve the file itself:
+  check whether X-Sendfile is on for 5.1 before large files go in.
+- **No range requests** without a web server in front: a video cannot be seeked in the browser; with
+  Apache and X-Sendfile Apache answers ranges (206).
+- Only production can show: `LimitRequestBody` (1 GiB default since Apache 2.4.53, so the 1.8 GB
+  upload fails behind a default Apache), proxy and Passenger timeouts for a 20 to 30 s upload,
+  X-Sendfile, backup size.
 
 ## Rules
 
