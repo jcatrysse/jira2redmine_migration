@@ -18,6 +18,10 @@ All notable changes to this project. Steps to take before and after a migration 
   (open workflows, activate users, restore), recording proxy for refactor proofs, large attachment
   and Apache tests, conversion bench.
 - docs: runbook, script reference, migration plan.
+- `migration.roles.mappings`: Jira project role name to Redmine role (default `Administrators` =>
+  `Manager`; `atlassian-addons-project-access` ignored).
+- `attachments.test_sample` (test option, off): only attachments up to 512 KB plus the largest per
+  file extension up to 20 MB; the rest is noted "skipped by sample" and expected absent by verify.
 
 ### Changed
 - Issues are created with their description; parents and rewritten Jira links follow in the same
@@ -30,6 +34,9 @@ All notable changes to this project. Steps to take before and after a migration 
 - Custom fields are enabled where Jira issues hold values, not only where Jira shows the field (B24).
 - 'blocks' relations to closed issues are created instead of held for review.
 - Tracker names are shortened to Redmine's 30 characters (B1).
+- 04: a user in a Jira project role becomes a member of that project; the role is no longer given to
+  every group the user is in (B31). Ignored roles and app accounts end IGNORED.
+- 16 exports workflows through `workflow/search` with transitions, rules and statuses.
 
 ### Fixed
 - Cascading fields: value dependencies are set as option ids after the child field exists (B7).
@@ -40,6 +47,11 @@ All notable changes to this project. Steps to take before and after a migration 
 - Tags on Redmine 7.0: fall back to the issue update when `POST /issues/:id/tags.json` is gone (B19).
 - Watchers: read back what Redmine stored instead of trusting the 204 (B20).
 - No Jira projects found stops the run with the likely causes (F5).
+- 16 with a read-scoped token: no legacy `/workflow`, `/issuetypescheme/{id}` or `/automation/rules`
+  call (401); workflows keep their names; pages shorter than asked no longer skip items; issue type
+  scheme projects are read from the nested answer (B25 to B28).
+- Jira links returned on the gateway are not prefixed twice (04 read no project role, B30).
+- 04 reruns no longer queue memberships it already created.
 
 ## [0.0.1]
 
