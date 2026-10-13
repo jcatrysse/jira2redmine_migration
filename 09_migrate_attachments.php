@@ -14,6 +14,7 @@ use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Attachments\AttachmentSample;
+use Jira2Redmine\Attachments\PullRetry;
 const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
     'jira' => 'Synchronise Jira attachment metadata with the migration mapping table.',
@@ -202,15 +203,20 @@ function runAttachmentPullPhase(PDO $pdo, array $config, bool $confirmPull, bool
     }
 
     $jiraClient = createJiraClient(extractArrayConfig($config, 'jira'));
-    $downloadSummary = downloadPendingJiraAttachments($jiraClient, $pdo, $config, $downloadLimit);
-    printf(
-        "[%s] Jira attachment download summary — queued: %d, downloaded: %d, failed: %d.%s",
-        formatCurrentTimestamp(),
-        $downloadSummary['queued'],
-        $downloadSummary['downloaded'],
-        $downloadSummary['failed'],
-        PHP_EOL
-    );
+    $passes = 0;
+    do {
+        $downloadSummary = downloadPendingJiraAttachments($jiraClient, $pdo, $config, $downloadLimit);
+        $passes++;
+        printf(
+            "[%s] Jira attachment download summary%s — queued: %d, downloaded: %d, failed: %d.%s",
+            formatCurrentTimestamp(),
+            $passes > 1 ? sprintf(' (pass %d)', $passes) : '',
+            $downloadSummary['queued'],
+            $downloadSummary['downloaded'],
+            $downloadSummary['failed'],
+            PHP_EOL
+        );
+    } while (PullRetry::anotherPass($downloadSummary, $downloadLimit, $passes));
 }
 
 /**
@@ -303,7 +309,6 @@ function runAttachmentTransformPhase(PDO $pdo): array
             local_filepath = NULL,
             redmine_upload_token = NULL,
             sharepoint_url = NULL,
-            notes = NULL,
             last_updated_at = CURRENT_TIMESTAMP
         WHERE migration_status = 'FAILED'
     SQL);
@@ -771,6 +776,7 @@ function downloadPendingJiraAttachments(Client $client, PDO $pdo, array $config,
                     'notes' => $message,
                     'mapping_id' => $mappingId,
                 ]);
+                printf("  [failed] Jira attachment %s: %s%s", $attachmentId, $message, PHP_EOL);
 
                 $failed++;
             } catch (GuzzleException | RuntimeException $exception) {
@@ -787,6 +793,7 @@ function downloadPendingJiraAttachments(Client $client, PDO $pdo, array $config,
                     'notes' => 'Failed to download attachment: ' . $exception->getMessage(),
                     'mapping_id' => $mappingId,
                 ]);
+                printf("  [failed] Jira attachment %s: %s%s", $attachmentId, $exception->getMessage(), PHP_EOL);
 
                 $failed++;
             }
@@ -881,6 +888,7 @@ function downloadPendingJiraAttachments(Client $client, PDO $pdo, array $config,
                     'notes' => $message,
                     'mapping_id' => $mappingId,
                 ]);
+                printf("  [failed] Jira attachment %s: %s%s", (string)$row['jira_attachment_id'], $message, PHP_EOL);
 
                 $failed++;
                 $processed++;
