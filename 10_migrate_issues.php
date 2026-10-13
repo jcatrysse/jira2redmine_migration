@@ -1167,7 +1167,9 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
 
     foreach ($mappings as $row) {
         $currentStatus = (string)$row['migration_status'];
-        $allowedStatuses = ['PENDING_ANALYSIS', 'READY_FOR_CREATION', 'MATCH_FOUND', 'CREATION_FAILED'];
+        // MANUAL rows are judged again (a missing mapping or default may be there now, B6); a row edited by
+        // hand keeps its edits through the automation hash check below.
+        $allowedStatuses = ['PENDING_ANALYSIS', 'READY_FOR_CREATION', 'MATCH_FOUND', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED'];
         if (!in_array($currentStatus, $allowedStatuses, true)) {
             $summary['skipped']++;
             continue;
