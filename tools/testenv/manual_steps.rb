@@ -1,11 +1,11 @@
-# Stand-in, for the test runs only, for the manual steps of today's workflow (CHANGELOG, plan M8) and for
-# 04_migrate_roles.php while the token lacks the scope it needs. Run with
+# Stand-in, for the test runs only, for the manual steps of today's workflow (CHANGELOG, plan M8). Run with
 #   J2R_STEP=workflows|members|restore J2R_PROJECTS=geos,sis,oac bundle exec rails runner manual_steps.rb
 # workflows: every transition open for Manager and Developer on every tracker, new issues included
 #            ("open the workflows", reset after the migration); watchers need view_watched_issues
 #            (redmine_view_issue_description), given to both roles; parent priority independent (B13).
 # members:   activate locked users, flagged with preference j2r_relock ("activate locked users"), and add
-#            every user to the test projects as Developer (stands in for 04_migrate_roles.php).
+#            every user to the test projects as Developer: Jira grants project access through permission
+#            schemes, which 04 does not read (04 migrates project role actors only). Run after 04.
 # restore:   undo after the migration: remove exactly the workflow transitions "workflows" added (listed in
 #            tmp/j2r_added_workflows.json) and lock again the users "members" activated.
 step = ENV.fetch('J2R_STEP')
