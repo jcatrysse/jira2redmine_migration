@@ -11,6 +11,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\CustomFields\DependingValueDependencies;
 
 const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -5753,6 +5754,36 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                         );
                     }
                     $encodedEnumerations = encodeJsonColumn($newEnumerations);
+
+                    // The child's enumeration ids exist only now: replace the labels sent at creation (B7).
+                    if ($effectiveFormat === 'depending_enumeration' && $normalizedDependencies !== []) {
+                        $translated = DependingValueDependencies::labelsToIds(
+                            $normalizedDependencies,
+                            is_array($parentEnumerations) ? $parentEnumerations : [],
+                            is_array($newEnumerations) ? $newEnumerations : []
+                        );
+                        try {
+                            $redmineClient->put(sprintf('/depending_custom_fields/%d.json', $newFieldId), [
+                                'json' => ['custom_field' => ['value_dependencies' => $translated['dependencies']]],
+                            ]);
+                        } catch (GuzzleException $exception) {
+                            // The field exists; only its dependencies are wrong. Report, do not fail the creation.
+                            printf(
+                                "  [warn] Custom field #%d created, but its value dependencies could not be set to option ids: %s%s",
+                                $newFieldId,
+                                $exception->getMessage(),
+                                PHP_EOL
+                            );
+                        }
+                        if ($translated['unresolved'] !== []) {
+                            printf(
+                                "  [warn] Custom field #%d: value dependencies without a Redmine option: %s%s",
+                                $newFieldId,
+                                implode(', ', array_slice($translated['unresolved'], 0, 10)),
+                                PHP_EOL
+                            );
+                        }
+                    }
 
                     $automationHash = computeCustomFieldAutomationStateHash(
                         $newFieldId,
