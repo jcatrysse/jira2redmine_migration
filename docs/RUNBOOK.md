@@ -29,9 +29,11 @@ hand in the mapping tables keep their edits (automation hash).
 1. **Open the workflows** (`J2R_STEP=workflows`): every transition for the roles that create issues, new
    issues included. Without it every issue is created in its tracker's default status (B12). The step
    records what it adds; `J2R_STEP=restore` removes exactly that after the run.
-2. **Activate locked users and add them to the projects** (`J2R_STEP=members`): Redmine refuses a locked
-   user or a non-member as assignee (B5). Activated users are flagged and locked again by `restore`.
-   With the new token, 04_migrate_roles.php adds the project memberships itself.
+2. **Activate locked users and add them to the projects** (`J2R_STEP=members`, after 04): Redmine refuses
+   a locked user or a non-member as assignee (B5). Activated users are flagged and locked again by
+   `restore`. 04 adds only what Jira's project roles hold (at GEOxyz the project administrators); Jira
+   grants project access through permission schemes, so the step gives every user the Developer role
+   in the run's projects (open question for Jan in the plan, B31).
 3. **Watch permission**: roles need `view_watched_issues` (redmine_view_issue_description), otherwise
    Redmine drops watchers silently (14 now reports them as FAILED with the reason).
 4. Switch off for the duration: attachment prune (uploads wait for their issue; prune deletes unattached
@@ -43,6 +45,8 @@ hand in the mapping tables keep their edits (automation hash).
 php 01_migrate_projects.php && php 01_migrate_projects.php --phases=push --confirm-push
 php 02_migrate_users.php    && php 02_migrate_users.php    --phases=push --confirm-push
 php 03_migrate_groups.php   && php 03_migrate_groups.php   --phases=push --confirm-push
+# members wait for their group: a second pass once the groups exist
+php 03_migrate_groups.php --skip=jira && php 03_migrate_groups.php --phases=push --confirm-push
 php 04_migrate_roles.php    && php 04_migrate_roles.php    --phases=push --confirm-push
 php 05_migrate_statuses.php && php 05_migrate_statuses.php --phases=push --confirm-push
 php 06_migrate_priorities.php && php 06_migrate_priorities.php --phases=push --confirm-push
@@ -55,7 +59,12 @@ Check the summary line of each (`Matched / Ready / Manual`):
 - trackers: names longer than 30 characters are shortened (note on the mapping row);
 - statuses and trackers: names in the language of the Redmine instance; Jira `Done` maps to a closed
   status, `To Do` to New;
-- 03, 04, 16 need the granular read scopes; without them they stop at the first 401.
+- 03, 04, 16 need the granular read scopes; without them they stop at the first 401;
+- groups: the first pass creates the groups (members AWAITING_GROUP), the second adds the members;
+  members whose Jira account is not migrated stay AWAITING_USER;
+- roles: `migration.roles.mappings` maps Jira role names to Redmine roles (default `Administrators` =>
+  `Manager`, `atlassian-addons-project-access` ignored); a user in a Jira project role becomes a member
+  of that project, a group in it a group member; nothing is given to a user's other groups.
 
 ## 2. Custom fields, issues and attachments
 
