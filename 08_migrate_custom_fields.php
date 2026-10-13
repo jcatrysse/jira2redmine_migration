@@ -2535,6 +2535,13 @@ function runCustomFieldUsagePhase(PDO $pdo): array
 {
     $analysisTimestamp = formatCurrentTimestamp('Y-m-d H:i:s');
 
+    // The jira phase runs before 10 stages the issues (runbook order), so the field scopes and values the
+    // issues hold are taken again here, once they are staged (B37).
+    $backfilled = backfillProjectIssueTypeFieldsFromIssues($pdo, $analysisTimestamp);
+    if ($backfilled > 0) {
+        printf("  %d project/issue-type field assignment(s) added or completed from staged issues.%s", $backfilled, PHP_EOL);
+    }
+
     try {
         $issuesCountStatement = $pdo->query('SELECT COUNT(*) FROM staging_jira_issues');
     } catch (PDOException $exception) {
