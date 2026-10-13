@@ -46,9 +46,9 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
 **Open, in order** (the first five need the new token):
 
 1. New token: write probe (decision 1, expect 401 "scope does not match"), cloudId into
-   `/tmp/claude-0/cid` (read by `tools/testenv/env.sh`).
+   `/tmp/claude-0/cid` (read by `tools/testenv/env.sh`). **DONE (B2)**, see work list item 6.
 2. 03, 04, 16 with the granular scopes; B25 (16 calls `GET /rest/api/3/workflow`, gone from the spec):
-   see the real answer, then fix with a test.
+   see the real answer, then fix with a test. **DONE (B2)**: B25 to B32 under Findings.
 3. Full runs 5.1 and 7.0 with all fixes (`tools/testenv/run_all.sh 51|70 LABEL`); verify green on
    both, B14 and Resolved included; rerun the stability check (10 twice, second run changes nothing).
 4. Extended API gate on 5.1 with verify (item above).
@@ -98,7 +98,7 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
 | | |
 |---|---|
 | Branch | `redmine70-migration` (from `main` at `1de1fc9`) |
-| Phase | 2 to 5 and 8 done, 6 first part and 7 largely done; Jira work waits for B2 (see Handover) |
+| Phase | 2 to 5 and 8 done, 6 first part and 7 largely done; B2 (2026-10-13): new token proven, 03, 04 and 16 run with it, full runs with all fixes on both targets in progress |
 | Scripts | 16 scripts, ~39,000 lines of PHP, no shared library, no tests |
 | Targets | Redmine 5.1 and 7.0; the scripts stay dual-target (unlike the plugins, 5.1 is not dropped) |
 | Extended API | to be made compatible with Redmine 5.1, 6.1 and 7.0 (own repo, own branch) |
@@ -225,6 +225,11 @@ In this order. Each item records its result under "Results" when done.
    extracts 15 projects through the gateway; an attachment download returns 200 with the exact
    size (Jira redirects to `api.media.atlassian.com`). Tests: `tests/JiraGatewayTest.php`, 3 of 8
    fail without the rewrite.
+   **New token (granular read scopes), B2, 2026-10-13:** `GET /rest/api/3/myself` 200;
+   `PUT /rest/api/3/issue/ZZPROBE-999999999` and `POST .../comment` 401 "Unauthorized; scope does not
+   match"; `role`, `group/member`, `workflowscheme`, `screens`, `workflow/search`, `issuetypescheme`,
+   `issuetypescreenscheme`, `screenscheme`, `fieldconfiguration`, `fieldconfigurationscheme`,
+   `permissionscheme` 200; the legacy `GET /rest/api/3/workflow` 401.
 
 **Phase 4, baseline**
 
@@ -457,7 +462,7 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
   (exists and is open on 5.1 and 7.0, id 3). Implemented as the default rule; parents noted
   `[open-parent]` with their Jira status; the verify tool expects Resolved for them. In the baseline
   data: OAC-19 and OAC-42.
-- Granular read scopes (approved by Jan 2026-10-13: read:group:jira, read:user:jira,
+- ~~Granular read scopes~~ **done**: the new token works (B2, work list item 6). (Approved by Jan 2026-10-13: read:group:jira, read:user:jira,
   read:project-role:jira, read:workflow:jira, read:workflow-scheme:jira, read:issue-type-scheme:jira,
   read:issue-type-screen-scheme:jira, read:screen:jira, read:screen-scheme:jira, read:screen-tab:jira,
   read:screenable-field:jira, read:field-configuration:jira, read:field-configuration-scheme:jira,
@@ -469,7 +474,19 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
   the spec (16 calls it after workflow/search; expect an error that stops the export, fix with a test
   once the real answer is seen); workflow/search, fieldconfiguration and fieldconfigurationscheme are
   deprecated; `/rest/api/3/automation/rules` is not a Jira platform endpoint (16 already skips it on
-  404). Logged as B25.
+  404). Logged as B25. **Confirmed and fixed (B2)**: see B25 to B28.
+- **Project memberships (B31), open, put to Jan 2026-10-13 by B2.** Jira's project roles hold almost
+  nothing at GEOxyz ("Administrators": 36 users in 8 projects and 2 groups; the add-ons role: 240 app
+  accounts); project access is granted to groups in the permission schemes (Browse projects 22 times
+  to a group, Assignable user 23 times; the token can read them). Options: (a, recommended) 04 follows
+  Jira: groups with Browse projects become group members with Developer, groups with Administer
+  projects Manager, project role users direct members, no expansion to a user's groups; the `members`
+  step then only activates locked users; (b) 04 migrates the project role actors only (done, see B31)
+  and the `members` step gives everyone else Developer; (c) keep 04's old expansion. Meanwhile (b) is
+  implemented and used in the test runs.
+- Automation rules: not exported. `/rest/api/3/automation/rules` does not exist in the Jira platform
+  API (404 classic, 401 scoped); Jira's automation rules have their own REST API and scope. Open: does
+  Jan want them exported (to rebuild as custom workflows)?
 
 ## Findings
 
@@ -541,7 +558,13 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B21 | Downloads: 09 pulls 1.5 GB in about 800 s (about 1.9 MB/s); curl on the same gateway 17 MB/s | the SURV volume run is slow | 09 pull |
 | B22 | An open subtask under a closed parent: 422 "An open issue cannot be attached to a closed parent task" on the final update, and the description in that same update is lost | OAC-44, OAC-47: no parent, empty description | 10 final update, `subtask_status_behavior` |
 | B23 | Uploads happen before the issue exists (M9); for issues that fail, the upload stays orphaned | 208 orphans | 09, 10 |
-| B25 | 16 calls `GET /rest/api/3/workflow`, which is no longer in the Jira Cloud spec; workflow/search, fieldconfiguration and fieldconfigurationscheme are deprecated (coordinator, from the OpenAPI spec) | 16 likely stops at the legacy workflow call; not yet seen (token) | 16 |
+| B25 | 16 calls `GET /rest/api/3/workflow`, which is no longer in the Jira Cloud spec; workflow/search, fieldconfiguration and fieldconfigurationscheme are deprecated (coordinator, from the OpenAPI spec) | seen with the new token: 401 "scope does not match", the export stops; so do `GET /issuetypescheme/{id}` (no GET in the spec; 405 with a classic token, skipped) and `/automation/rules` (not a platform endpoint) | **fixed** (B2): workflow/search only, the scheme's issue types from `/issuetypescheme/mapping`, no automation call; 16 exit 0 |
+| B26 | workflow/search returns the name in `id.name` (an object); 16 read `name` | all 64 workflows stored as "unknown", one row left | **fixed**, `src/Jira/WorkflowSearch.php`; with `expand` the export holds transitions (856), rules and statuses |
+| B27 | Paging advances by the requested page size; Jira caps workflow/search at 50 when asked for 100 | 14 of 64 workflows skipped | **fixed** in 16 (`src/Jira/Paging.php`); 11 pages comments and changelog the same way, Jira honours 100 there today (checked), latent |
+| B28 | `issuetypescheme/project` nests the scheme (`issueTypeScheme.id`, `projectIds`); 16 read flat keys | 0 project to scheme rows | **fixed**, 15 rows |
+| B30 | Jira returns project role URLs on the gateway; 04 uses their path, the gateway rewrite added `/ex/jira/{cloudId}` a second time | all 45 role requests 401, 04 extracted no actor and exited 0 with warnings | **fixed** in `lib/jira_gateway.php` (a prefixed path keeps one prefix), 278 actors |
+| B31 | 04 gave a project role held by a user to every group the user is in | one admin in a 254-member group made it admin (Manager) of 8 projects, 143 group assignments | **fixed** for what both options share: user actors are direct members, group actors their group; `migration.roles.mappings` (Administrators => Manager, add-ons role ignored); app accounts IGNORED; a pushed membership stays recorded on a rerun. Result: 36 users and 2 groups (max 6 members) Manager, as in Jira. Base access: open question for Jan |
+| B32 | 03 adds group members only once the groups exist; the runbook ran it once | 754 members AWAITING_GROUP, no group had members | runbook and `run_all.sh`: a second pass (551 members added; 203 wait for accounts that are not migrated) |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
