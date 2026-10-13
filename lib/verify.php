@@ -173,7 +173,11 @@ function verifyMarkdownLinkCounts(?string $markdown): array
 
     $images = preg_match_all('/!\[[^\]]*\]\([^)]*\)|<img\b/i', $markdown) ?: 0;
     $withoutImages = preg_replace('/!\[[^\]]*\]\([^)]*\)/', '', $markdown) ?? $markdown;
-    $links = preg_match_all('/\[[^\]]*\]\([^)]*\)|<https?:[^>]+>|<a\b[^>]*href=/i', $withoutImages) ?: 0;
+    // Inline links, URL and e-mail autolinks, HTML anchors.
+    $linkPattern = '/\[[^\]]*\]\([^)]*\)|<(?:https?|mailto):[^>]+>|<[^\s<>@"\/]+@[^\s<>@"]+>|<a\b[^>]*href=/i';
+    $links = preg_match_all($linkPattern, $withoutImages) ?: 0;
+    // Redmine renders these as links too: user#1, @login (mentions) and #123 (issues).
+    $links += preg_match_all('/\buser#\d+|(?<![\w@\/.])@[A-Za-z0-9_.@-]*[A-Za-z0-9_]|(?<![\w&#\/])#\d+\b/', $withoutImages) ?: 0;
     $withoutLinks = preg_replace('/\[[^\]]*\]\([^)]*\)|<[^>]+>/', '', $withoutImages) ?? $withoutImages;
     $links += preg_match_all('#(?<![(\w])https?://\S+#', $withoutLinks) ?: 0;
 

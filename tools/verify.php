@@ -167,8 +167,9 @@ foreach ($projectKeys as $projectKey) {
     } while ($token !== null && ($page['isLast'] ?? true) === false);
 
     $expectedCounts = [];
-    foreach ($jiraIssues as [$typeId, $statusId]) {
-        $k = ($maps['tracker'][$typeId] ?? 'unmapped type ' . $typeId) . '/' . ($maps['status'][$statusId] ?? 'unmapped status ' . $statusId);
+    foreach ($jiraIssues as $jiraIssueId => [$typeId, $statusId]) {
+        $redmineStatus = $openParents[(string)$jiraIssueId] ?? ($maps['status'][$statusId] ?? 'unmapped status ' . $statusId);
+        $k = ($maps['tracker'][$typeId] ?? 'unmapped type ' . $typeId) . '/' . $redmineStatus;
         $expectedCounts[$k] = ($expectedCounts[$k] ?? 0) + 1;
     }
     $actualCounts = [];
@@ -230,6 +231,10 @@ foreach ($projectKeys as $projectKey) {
         $record('fields: assignee', (string)($rm['assigned_to']['id'] ?? '') === $expectedAssignee, $issueKey,
             sprintf('Redmine %s, expected %s', $rm['assigned_to']['id'] ?? '-', $expectedAssignee ?: '-'));
         $expectedParent = isset($fields['parent']['id']) ? ($maps['issue'][(string)$fields['parent']['id']] ?? 'unmapped') : '';
+        // A parent in a project outside this run cannot be linked.
+        if ($expectedParent === 'unmapped' && !in_array(strtok((string)($fields['parent']['key'] ?? ''), '-'), $projectKeys, true)) {
+            $expectedParent = '';
+        }
         $record('fields: parent', (string)($rm['parent']['id'] ?? '') === $expectedParent, $issueKey,
             sprintf('Redmine %s, expected %s', $rm['parent']['id'] ?? '-', $expectedParent ?: '-'));
         $jiraCreated = (new DateTimeImmutable((string)$fields['created']))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i');

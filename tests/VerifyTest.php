@@ -86,6 +86,12 @@ final class VerifyTest extends TestCase
         self::assertSame(['links' => 3, 'images' => 1], verifyMarkdownLinkCounts($markdown));
     }
 
+    public function testMentionsIssueLinksAndEmailAutolinksCountAsLinks(): void
+    {
+        $markdown = 'Ask @jane.doe@example.eu or user#7 about #123, mail <jane@example.eu>; not a@b.c';
+        self::assertSame(['links' => 4, 'images' => 0], verifyMarkdownLinkCounts($markdown));
+    }
+
     public function testCompareFilesAsMultiset(): void
     {
         $result = verifyCompareFiles([['a.png', 10], ['a.png', 10], ['b.pdf', 5]], [['a.png', 10], ['b.pdf', 6]]);
