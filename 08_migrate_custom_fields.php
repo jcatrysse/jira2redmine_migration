@@ -11,6 +11,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\CustomFields\UsedValues;
 use Jira2Redmine\CustomFields\DependingValueDependencies;
 use Jira2Redmine\CustomFields\UsageScopes;
 
@@ -1725,6 +1726,7 @@ function backfillProjectIssueTypeFieldsFromIssues(PDO $pdo, string $extractedAt)
 {
     $existingAssignments = [];
     $existingAllowedValues = [];
+    $existingRawFields = [];
 
     try {
         $existingStatement = $pdo->query(<<<SQL
@@ -1756,6 +1758,7 @@ function backfillProjectIssueTypeFieldsFromIssues(PDO $pdo, string $extractedAt)
         $key = sprintf('%s|%s|%s', $projectId, $issueTypeId, $fieldId);
         $existingAssignments[$key] = true;
         $existingAllowedValues[$key] = normalizeAllowedValuesPayload(decodeJsonColumn($row['allowed_values_json'] ?? null));
+        $existingRawFields[$key] = $row['raw_field'] ?? null;
     }
 
     $fieldsById = loadJiraFieldMetadata($pdo);
@@ -1916,6 +1919,29 @@ function backfillProjectIssueTypeFieldsFromIssues(PDO $pdo, string $extractedAt)
             $updateStatement->execute([
                 'allowed_values_json' => encodeJsonColumn($normalizedAllowedValues),
                 'raw_field' => encodeJsonColumn($rawFieldPayload),
+                'jira_project_id' => $projectId,
+                'jira_issue_type_id' => $issueTypeId,
+                'jira_field_id' => $fieldId,
+            ]);
+
+            $updated++;
+            continue;
+        }
+
+        // Values the issues hold but the field no longer offers (B37) are added, so 10 can set them.
+        $missingValues = UsedValues::missing($existingValues, $normalizedAllowedValues);
+        if ($missingValues !== []) {
+            printf(
+                "  [values] %s on project %s, issue type %s: issues hold %s, which Jira no longer offers; added.%s",
+                $fieldId,
+                $projectId,
+                $issueTypeId,
+                implode(', ', $missingValues),
+                PHP_EOL
+            );
+            $updateStatement->execute([
+                'allowed_values_json' => encodeJsonColumn(mergeAllowedValuesPayloads($existingValues, $normalizedAllowedValues)),
+                'raw_field' => $existingRawFields[$key] ?? encodeJsonColumn($rawFieldPayload),
                 'jira_project_id' => $projectId,
                 'jira_issue_type_id' => $issueTypeId,
                 'jira_field_id' => $fieldId,
