@@ -45,6 +45,40 @@ final class JiraGatewayTest extends TestCase
         self::assertSame(self::GATEWAY . '/rest/api/3/attachment/content/10001', (string)$rewritten);
     }
 
+    /**
+     * Jira returns links (project role URLs, "self") on the gateway. 04 keeps only their path,
+     * "/ex/jira/{cloudId}/rest/api/3/project/1/role/2", which the client resolves against the site;
+     * the prefix must not be added a second time (B30: every project role answered 401).
+     */
+    public function testSitePathThatAlreadyCarriesThePrefixIsNotPrefixedAgain(): void
+    {
+        $uri = new Uri(self::SITE . '/ex/jira/' . self::CLOUD_ID . '/rest/api/3/project/10008/role/10002');
+        $rewritten = jiraGatewayRewriteUri($uri, self::GATEWAY, self::SITE);
+        self::assertSame(self::GATEWAY . '/rest/api/3/project/10008/role/10002', (string)$rewritten);
+    }
+
+    public function testClientCallWithAGatewayPathReachesTheGatewayOnce(): void
+    {
+        $seen = [];
+        $stack = jiraHandlerStack(['base_url' => self::SITE, 'cloud_id' => self::CLOUD_ID]);
+        $stack->setHandler(new MockHandler([new Response(200), new Response(200)]));
+        $stack->push(static function (callable $next) use (&$seen) {
+            return static function ($request, array $options) use ($next, &$seen) {
+                $seen[] = (string)$request->getUri();
+
+                return $next($request, $options);
+            };
+        });
+        $client = new Client(['base_uri' => self::SITE, 'handler' => $stack]);
+        $client->get('/ex/jira/' . self::CLOUD_ID . '/rest/api/3/project/10008/role/10002');
+        $client->get(self::GATEWAY . '/rest/api/3/project/10008/role/10002');
+
+        self::assertSame([
+            self::GATEWAY . '/rest/api/3/project/10008/role/10002',
+            self::GATEWAY . '/rest/api/3/project/10008/role/10002',
+        ], $seen);
+    }
+
     public function testOtherHostsAreLeftAlone(): void
     {
         $uri = new Uri('https://api.media.atlassian.com/file/abc/binary?token=x');

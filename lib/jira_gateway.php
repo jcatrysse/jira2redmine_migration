@@ -36,7 +36,9 @@ function jiraGatewayPrefix(array $jiraConfig): ?string
  * Rewrites a resolved request URI so it goes through the gateway:
  * - a path with a leading slash ("/rest/api/3/...") resolves to the gateway host root and loses
  *   "/ex/jira/{cloudId}"; the prefix is put back;
- * - an absolute URL on the Jira site (attachment "content" links) moves to the gateway.
+ * - an absolute URL on the Jira site (attachment "content" links) moves to the gateway;
+ * - a path that already carries "/ex/jira/{cloudId}" (a gateway link Jira returned, used as a path)
+ *   keeps it once.
  * Other hosts (e.g. a redirect to Atlassian's media service) are left alone.
  */
 function jiraGatewayRewriteUri(UriInterface $uri, string $gatewayPrefix, string $siteBaseUrl): UriInterface
@@ -60,11 +62,16 @@ function jiraGatewayRewriteUri(UriInterface $uri, string $gatewayPrefix, string 
     }
 
     if ($siteHost !== '' && $host === $siteHost) {
+        $path = $uri->getPath();
+        if ($path !== $prefixPath && !str_starts_with($path, $prefixPath . '/')) {
+            $path = $prefixPath . '/' . ltrim($path, '/');
+        }
+
         return $uri
             ->withScheme($gateway->getScheme())
             ->withHost($gateway->getHost())
             ->withPort($gateway->getPort())
-            ->withPath($prefixPath . '/' . ltrim($uri->getPath(), '/'));
+            ->withPath($path);
     }
 
     return $uri;
