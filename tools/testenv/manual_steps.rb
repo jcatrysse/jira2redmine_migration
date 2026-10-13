@@ -37,9 +37,11 @@ when 'workflows'
   Setting.parent_issue_priority = 'independent'
   # B38 (open for Jan, option a): Jira parents can be in another project (GEOS issues under WIKI epics).
   Setting.cross_project_subtasks = 'system'
+  # B39 (open for Jan, with B38): Jira links issues across projects (29 links in the WIKI run).
+  Setting.cross_project_issue_relations = '1'
   perms = Redmine::AccessControl.permissions.map(&:name) & %i[view_watched_issues view_issue_description]
   roles.each { |role| perms.each { |p| role.add_permission!(p) } }
-  puts "workflow transitions created=#{created} permissions=#{perms.inspect} cross_project_subtasks=#{Setting.cross_project_subtasks}"
+  puts "workflow transitions created=#{created} permissions=#{perms.inspect} cross_project_subtasks=#{Setting.cross_project_subtasks} cross_project_issue_relations=#{Setting.cross_project_issue_relations}"
 when 'members'
   role = Role.find_by!(name: 'Developer')
   projects = Project.where(identifier: ENV.fetch('J2R_PROJECTS').split(',')).to_a
