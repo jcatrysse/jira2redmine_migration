@@ -55,4 +55,23 @@ final class RelationStateTest extends TestCase
 
         self::assertTrue(str_contains($script, 'RelationState::failed('), '12 marks a failure without its automation hash');
     }
+
+    public function testALinkToAnAncestorOrDescendantIsFound(): void
+    {
+        // epic 1 > story 2 > subtask 3; issue 4 elsewhere
+        $parentOf = ['2' => '1', '3' => '2'];
+
+        self::assertTrue(RelationState::linksAncestor('2', '1', $parentOf));
+        self::assertTrue(RelationState::linksAncestor('1', '3', $parentOf));
+        self::assertFalse(RelationState::linksAncestor('3', '4', $parentOf));
+        // a broken chain with a cycle ends
+        self::assertFalse(RelationState::linksAncestor('2', '9', ['2' => '5', '5' => '2']));
+    }
+
+    public function testTheTransformSkipsThem(): void
+    {
+        $script = (string)file_get_contents(__DIR__ . '/../12_migrate_issue_relations.php');
+
+        self::assertTrue(str_contains($script, 'RelationState::linksAncestor('), '12 sends links Redmine refuses');
+    }
 }

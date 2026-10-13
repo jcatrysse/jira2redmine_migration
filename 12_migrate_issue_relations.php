@@ -154,7 +154,11 @@ function runRelationTransformPhase(PDO $pdo, array $config): void
         'manual' => 0,
         'success' => 0,
         'preserved' => 0,
+        'ignored' => 0,
     ];
+    $parentRows = $pdo->query('SELECT id, parent_issue_id FROM staging_jira_issues WHERE parent_issue_id IS NOT NULL');
+    /** @var array<int|string, int|string> $parentOf */
+    $parentOf = $parentRows !== false ? $parentRows->fetchAll(PDO::FETCH_KEY_PAIR) : [];
 
     foreach ($rows as $row) {
         $currentHash = computeRelationAutomationStateHash(
@@ -189,6 +193,10 @@ function runRelationTransformPhase(PDO $pdo, array $config): void
         if ($row['redmine_relation_id'] !== null) {
             $nextStatus = 'CREATION_SUCCESS';
             $summary['success']++;
+        } elseif (RelationState::linksAncestor((string)$row['jira_source_issue_id'], (string)$row['jira_target_issue_id'], $parentOf)) {
+            $nextStatus = 'IGNORED';
+            $notes = 'Parent and subtask in Redmine already; Redmine does not relate an issue to its own subtask.';
+            $summary['ignored']++;
         } elseif ($sourceRedmineId === null || $targetRedmineId === null) {
             $nextStatus = 'MANUAL_INTERVENTION_REQUIRED';
             $notes = 'Missing Redmine issue mapping for source or target; rerun 10_migrate_issues.php.';
@@ -252,6 +260,7 @@ function runRelationTransformPhase(PDO $pdo, array $config): void
     printf("  Ready for creation: %d%s", $summary['ready'], PHP_EOL);
     printf("  Completed previously: %d%s", $summary['success'], PHP_EOL);
     printf("  Manual review required: %d%s", $summary['manual'], PHP_EOL);
+    printf("  Ignored (parent and subtask): %d%s", $summary['ignored'], PHP_EOL);
     printf("  Preserved manual overrides: %d%s", $summary['preserved'], PHP_EOL);
 }
 

@@ -40,6 +40,36 @@ final class RelationState
     }
 
     /**
+     * Whether one issue is an ancestor of the other in Jira's hierarchy. Redmine refuses a relation
+     * between an issue and its own subtask or parent ("An issue cannot be linked to one of its subtasks",
+     * 6 links in the WIKI run, B40); the hierarchy already holds that link.
+     *
+     * @param array<int|string, int|string> $parentOf Jira issue id => Jira parent issue id
+     */
+    public static function linksAncestor(string $sourceId, string $targetId, array $parentOf): bool
+    {
+        return self::isAncestor($sourceId, $targetId, $parentOf) || self::isAncestor($targetId, $sourceId, $parentOf);
+    }
+
+    /**
+     * @param array<int|string, int|string> $parentOf
+     */
+    private static function isAncestor(string $ancestor, string $issue, array $parentOf): bool
+    {
+        $seen = [];
+        $current = isset($parentOf[$issue]) ? (string)$parentOf[$issue] : null;
+        while ($current !== null && $current !== '' && !isset($seen[$current])) {
+            if ($current === $ancestor) {
+                return true;
+            }
+            $seen[$current] = true;
+            $current = isset($parentOf[$current]) ? (string)$parentOf[$current] : null;
+        }
+
+        return false;
+    }
+
+    /**
      * A row edited by hand since the script last wrote it: its stored hash no longer matches its state.
      *
      * @param array<string, mixed> $row
