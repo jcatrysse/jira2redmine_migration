@@ -110,7 +110,7 @@ In this order. Each item records its result under "Results" when done.
 
    | plugin | branch on 5.1 |
    |---|---|
-   | `redmine_custom_workflows` | `main` per Jan; no such branch exists, `master` and `5.x` are v3.1.1 and need Redmine 6 (F2); test uses tag `v2.1.2` |
+   | `redmine_custom_workflows` | tag `v2.1.2` (decided by Jan 2026-10-13; `master` and `5.x` are v3.1.1 and need Redmine 6, F2) |
    | `bless-this-redmine-sso` | `feature_version_2.0.0` |
    | `redmine_issue_templates` | `master-geoxyz` |
    | `redmine_subtask` | `develop` |
@@ -349,7 +349,6 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
 - Staging database: stay on MySQL or move to PostgreSQL (decide after the baseline).
 - Worklogs to time entries: in scope or not.
 - Which manual steps to automate (decide after the baseline, per step).
-- `redmine_custom_workflows` on 5.1 production: which commit (F2)? `main` does not exist.
 - Attachment names in Redmine: keep `{jiraId}__name` (unique inline references) or the original
   Jira name (B14)?
 - Redmine setting "parent priority/dates/done ratio derived from subtasks" or independent (B13)?
@@ -367,7 +366,7 @@ Before the baseline (session B, 2026-10-13):
 | # | finding | effect | action |
 |---|---|---|---|
 | F1 | `5.1-stable-GEOxyz` sets `session_store :active_record_store` but its Gemfile lacks `activerecord-session_store` (7.0 has it) | 5.1 does not boot from the repo alone | Jan: Gemfile.local through the test setup, nothing committed to the Redmine fork (done in `setup.sh`) |
-| F2 | `redmine_custom_workflows`: Jan says production 5.1 runs `main`; the repo has no `main`, and `master` (2aacc23) and `5.x` (38d6a53) are v3.1.1 with `requires_redmine 6.0.0`: "PluginRequirementError ... requires Redmine 6.0.0 or higher but current is 5.1.13.stable" | does not load on 5.1 | test env uses tag `v2.1.2`; **open for Jan**: the commit on the 5.1 server |
+| F2 | `redmine_custom_workflows`: Jan says production 5.1 runs `main`; the repo has no `main`, and `master` (2aacc23) and `5.x` (38d6a53) are v3.1.1 with `requires_redmine 6.0.0`: "PluginRequirementError ... requires Redmine 6.0.0 or higher but current is 5.1.13.stable" | does not load on 5.1 | **decided**: tag `v2.1.2`. Custom workflow scripts run on issue save through the REST API, so they are part of an import; the test instances have none of production's scripts |
 | F3 | `redmineup` >= 1.1.5 defines route `auto_complete_taggable_tags`, `redmine_contacts` master too | 5.1 does not boot with the newest gem | test env pins `redmineup` 1.1.4 in the lockfile |
 | F4 | `issue_recurring` loads models from its rake file | `rake db:migrate` fails on an empty database | setup moves it aside for the first migrate |
 | F5 | Jira client with a scoped token on the site URL (no gateway) | `01 --phases=jira` reports "0 project records processed" and exits 0, no error | phase 7: an empty or unauthorised extraction must fail loudly |
