@@ -10,3 +10,4 @@ parameters:
         - vendor/autoload.php
         - lib/jira_gateway.php
         - lib/verify.php
+        - lib/description_conversion.php
