@@ -9,6 +9,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Redmine\Watchers;
 
 const MIGRATE_WATCHERS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -406,6 +407,7 @@ function runWatcherPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $
         throw new RuntimeException('Failed to prepare watcher update statement.');
     }
 
+    $addedPerIssue = [];
     foreach ($rows as $row) {
         $mappingId = (int)$row['mapping_id'];
         $redmineIssueId = $row['redmine_issue_id'] !== null ? (int)$row['redmine_issue_id'] : null;
@@ -463,12 +465,42 @@ function runWatcherPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $
             continue;
         }
 
-        $updateStatement->execute([
-            'mapping_id' => $mappingId,
-            'migration_status' => 'SUCCESS',
-            'notes' => null,
-        ]);
-        printf("  [watcher] Redmine issue #%d updated.%s", $redmineIssueId, PHP_EOL);
+        // Redmine answers 204 even when it does not store the watcher: read back per issue below (B20).
+        $addedPerIssue[$redmineIssueId][$mappingId] = $redmineUserId;
+    }
+
+    foreach ($addedPerIssue as $redmineIssueId => $added) {
+        try {
+            $response = $client->get(sprintf('/issues/%d.json', $redmineIssueId), ['query' => ['include' => 'watchers']]);
+            $stored = Watchers::storedUserIds(json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR));
+        } catch (GuzzleException | JsonException $exception) {
+            foreach (array_keys($added) as $mappingId) {
+                $updateStatement->execute([
+                    'mapping_id' => $mappingId,
+                    'migration_status' => 'FAILED',
+                    'notes' => sprintf('Watcher sent but not verified on Redmine issue #%d: %s', $redmineIssueId, $exception->getMessage()),
+                ]);
+            }
+            printf("  [error] Could not read back the watchers of Redmine issue #%d: %s%s", $redmineIssueId, $exception->getMessage(), PHP_EOL);
+            continue;
+        }
+
+        $notStored = Watchers::notStored(array_values($added), $stored);
+        foreach ($added as $mappingId => $redmineUserId) {
+            $missing = in_array($redmineUserId, $notStored, true);
+            $updateStatement->execute([
+                'mapping_id' => $mappingId,
+                'migration_status' => $missing ? 'FAILED' : 'SUCCESS',
+                'notes' => $missing
+                    ? sprintf('Redmine answered 204 but did not store user #%d as watcher (missing permission such as view_watched_issues, or no access to the project).', $redmineUserId)
+                    : null,
+            ]);
+        }
+        if ($notStored !== []) {
+            printf("  [error] Redmine issue #%d: watcher(s) not stored: user #%s%s", $redmineIssueId, implode(', #', $notStored), PHP_EOL);
+        } else {
+            printf("  [watcher] Redmine issue #%d updated.%s", $redmineIssueId, PHP_EOL);
+        }
     }
 }
 
