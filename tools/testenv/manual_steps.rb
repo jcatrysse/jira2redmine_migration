@@ -35,9 +35,11 @@ when 'workflows'
   File.write(added_file, JSON.generate(previous + keys))
   # Decided by Jan (B13): a parent keeps its own priority, as in Jira.
   Setting.parent_issue_priority = 'independent'
+  # B38 (open for Jan, option a): Jira parents can be in another project (GEOS issues under WIKI epics).
+  Setting.cross_project_subtasks = 'system'
   perms = Redmine::AccessControl.permissions.map(&:name) & %i[view_watched_issues view_issue_description]
   roles.each { |role| perms.each { |p| role.add_permission!(p) } }
-  puts "workflow transitions created=#{created} permissions=#{perms.inspect}"
+  puts "workflow transitions created=#{created} permissions=#{perms.inspect} cross_project_subtasks=#{Setting.cross_project_subtasks}"
 when 'members'
   role = Role.find_by!(name: 'Developer')
   projects = Project.where(identifier: ENV.fetch('J2R_PROJECTS').split(',')).to_a
