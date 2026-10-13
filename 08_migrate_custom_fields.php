@@ -12,6 +12,7 @@ use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\CustomFields\DependingValueDependencies;
+use Jira2Redmine\CustomFields\UsageScopes;
 
 const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -2975,6 +2976,18 @@ function extractIdListFromRedmineCustomField(mixed $value): ?string
  */
 function runCustomFieldTransformationPhase(PDO $pdo): array
 {
+    $usageScopes = new UsageScopes();
+    $issueStatement = $pdo->query('SELECT project_id, issuetype_id, raw_payload FROM staging_jira_issues');
+    if ($issueStatement !== false) {
+        while (($issue = $issueStatement->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $payload = json_decode((string)$issue['raw_payload'], true);
+            if (is_array($payload) && is_array($payload['fields'] ?? null)) {
+                $usageScopes->addIssue((string)$issue['project_id'], (string)$issue['issuetype_id'], $payload['fields']);
+            }
+        }
+        $issueStatement->closeCursor();
+    }
+
     syncCustomFieldMappings($pdo);
     refreshCustomFieldMetadata($pdo);
     logCustomFieldMappingStats($pdo);
@@ -3170,6 +3183,9 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
         $jiraIssueTypeIds = is_array($jiraIssueTypeIds)
             ? array_values(array_map('strval', array_filter($jiraIssueTypeIds, static fn($value) => trim((string)$value) !== '')))
             : [];
+        // Also where the staged issues hold a value, not only where Jira shows the field today (B24).
+        $jiraProjectIds = $usageScopes->projectsFor((string)$row['jira_field_id'], $jiraProjectIds);
+        $jiraIssueTypeIds = $usageScopes->issueTypesFor((string)$row['jira_field_id'], $jiraIssueTypeIds);
 
         $jiraAllowedValuesRaw = decodeJsonColumn($row['jira_allowed_values'] ?? null);
         $hasJiraAllowedValues = $jiraAllowedValuesRaw !== null;
