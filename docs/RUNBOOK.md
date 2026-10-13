@@ -8,7 +8,9 @@ the test environment, verify included.
 Every script has the phases `jira` (extract), `redmine` (snapshot), `transform` (mapping) and `push`
 (write). Nothing is written to Redmine without `--confirm-push`; preview with `--dry-run` first. Every
 script can be rerun: migrated rows are skipped, failed and manual rows are judged again, rows edited by
-hand in the mapping tables keep their edits (automation hash).
+hand in the mapping tables keep their edits (automation hash). Checked on 5.1 and 7.0 by running 10 to
+14 a second time: nothing changes. Do not rerun 11 from `main` on a target: before B35 every rerun of
+11 created all journals again.
 
 ## 0. Before the run
 
@@ -112,8 +114,9 @@ php tools/verify.php --projects=GEOS,SIS,OAC --sample=25
 ```
 
 Green means every check passes. The report holds issue keys and short Jira texts: keep it out of the
-repository. On 7.0 with all fixes the baseline projects gave 6 failures, all explained and since
-handled in the tool (plan, Results).
+repository. With all fixes GEOS, SIS and OAC are green on 5.1 and 7.0 (21 checks, 0 failures). A
+journal present twice on an issue fails the run; with `attachments.test_sample` the files skipped by
+the sample are expected to be absent.
 
 ## 5. After the run
 
