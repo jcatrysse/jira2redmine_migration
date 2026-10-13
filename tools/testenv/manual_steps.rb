@@ -1,11 +1,13 @@
 # Stand-in, for the test runs only, for the manual steps of today's workflow (CHANGELOG, plan M8) and for
 # 04_migrate_roles.php while the token lacks the scope it needs. Run with
-#   J2R_STEP=workflows|members J2R_PROJECTS=geos,sis,oac bundle exec rails runner manual_steps.rb
+#   J2R_STEP=workflows|members|restore J2R_PROJECTS=geos,sis,oac bundle exec rails runner manual_steps.rb
 # workflows: every transition open for Manager and Developer on every tracker, new issues included
 #            ("open the workflows", reset after the migration); watchers need view_watched_issues
 #            (redmine_view_issue_description), given to both roles; parent priority independent (B13).
 # members:   activate locked users, flagged with preference j2r_relock ("activate locked users"), and add
 #            every user to the test projects as Developer (stands in for 04_migrate_roles.php).
+# restore:   undo after the migration: remove exactly the workflow transitions "workflows" added (listed in
+#            tmp/j2r_added_workflows.json) and lock again the users "members" activated.
 step = ENV.fetch('J2R_STEP')
 roles = Role.where(name: %w[Manager Developer]).to_a
 
@@ -27,6 +29,10 @@ when 'workflows'
   end
   rows.each_slice(5000) { |slice| WorkflowRule.insert_all(slice) }
   created = rows.size
+  added_file = Rails.root.join('tmp', 'j2r_added_workflows.json')
+  previous = File.exist?(added_file) ? JSON.parse(File.read(added_file)) : []
+  keys = rows.map { |r| [r[:tracker_id], r[:role_id], r[:old_status_id], r[:new_status_id]] }
+  File.write(added_file, JSON.generate(previous + keys))
   # Decided by Jan (B13): a parent keeps its own priority, as in Jira.
   Setting.parent_issue_priority = 'independent'
   perms = Redmine::AccessControl.permissions.map(&:name) & %i[view_watched_issues view_issue_description]
@@ -53,4 +59,24 @@ when 'members'
     end
   end
   puts "activated=#{activated} memberships=#{added}"
+when 'restore'
+  added_file = Rails.root.join('tmp', 'j2r_added_workflows.json')
+  removed = 0
+  if File.exist?(added_file)
+    JSON.parse(File.read(added_file)).each_slice(1000) do |slice|
+      slice.each do |tracker_id, role_id, from, to|
+        removed += WorkflowTransition.where(tracker_id: tracker_id, role_id: role_id, old_status_id: from, new_status_id: to).delete_all
+      end
+    end
+    File.delete(added_file)
+  end
+  relocked = 0
+  UserPreference.find_each do |pref|
+    next unless pref[:j2r_relock] == '1'
+    pref.user.update_column(:status, User::STATUS_LOCKED)
+    pref.others.delete(:j2r_relock)
+    pref.save!
+    relocked += 1
+  end
+  puts "workflow transitions removed=#{removed} users locked again=#{relocked}"
 end
