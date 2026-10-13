@@ -9,6 +9,9 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Jira\IssueTypeSchemes;
+use Jira2Redmine\Jira\Paging;
+use Jira2Redmine\Jira\WorkflowSearch;
 
 const EXPORT_WORKFLOWS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -93,7 +96,8 @@ function main(array $config, array $cliOptions): void
     exportIssueTypeScreenSchemes($jiraClient, $pdo);
     exportFieldConfigurations($jiraClient, $pdo);
     exportFieldConfigurationSchemes($jiraClient, $pdo);
-    exportAutomationRules($jiraClient, $pdo);
+    // Automation rules are not in the Jira platform REST API: /rest/api/3/automation/rules answers 404
+    // to a classic token and 401 "scope does not match" to a read-scoped one, so they are not exported.
 }
 
 function printUsage(): void
@@ -114,10 +118,7 @@ function printVersion(): void
 
 function exportWorkflows(Client $client, PDO $pdo): void
 {
-    $items = fetchPagedItems($client, '/rest/api/3/workflow/search', 'values');
-    $legacyPayload = jiraGetWithRetry($client, '/rest/api/3/workflow', [], 'workflows', 'workflow');
-    $legacyDecoded = decodeJsonResponse($legacyPayload);
-    $legacyItems = extractWorkflowItems($legacyDecoded);
+    $items = fetchPagedItems($client, WorkflowSearch::PATH, 'values', ['expand' => WorkflowSearch::EXPAND]);
 
     $statement = $pdo->prepare(<<<SQL
         INSERT INTO staging_jira_workflows (
@@ -140,20 +141,10 @@ function exportWorkflows(Client $client, PDO $pdo): void
 
     $count = 0;
     foreach ($items as $workflow) {
-        $name = extractWorkflowName($workflow) ?? 'unknown';
+        $name = WorkflowSearch::name($workflow) ?? 'unknown';
         $statement->execute([
             'workflow_name' => $name,
             'source' => 'search',
-            'raw_payload' => encodeJson($workflow),
-        ]);
-        $count++;
-    }
-
-    foreach ($legacyItems as $workflow) {
-        $name = extractWorkflowName($workflow) ?? 'unknown';
-        $statement->execute([
-            'workflow_name' => $name,
-            'source' => 'legacy',
             'raw_payload' => encodeJson($workflow),
         ]);
         $count++;
@@ -313,6 +304,9 @@ function exportIssueTypes(Client $client, PDO $pdo): void
 function exportIssueTypeSchemes(Client $client, PDO $pdo): void
 {
     $items = fetchPagedItems($client, '/rest/api/3/issuetypescheme', 'values');
+    $issueTypesPerScheme = IssueTypeSchemes::issueTypesPerScheme(
+        fetchPagedItems($client, IssueTypeSchemes::MAPPING_PATH, 'values')
+    );
 
     $statement = $pdo->prepare(<<<SQL
         INSERT INTO staging_jira_issue_type_schemes (
@@ -351,35 +345,14 @@ function exportIssueTypeSchemes(Client $client, PDO $pdo): void
         ]);
         $count++;
 
-        try {
-            $detailResponse = jiraGetWithRetry(
-                $client,
-                sprintf('/rest/api/3/issuetypescheme/%s', $schemeId),
-                [],
-                $schemeId,
-                'issue-type-scheme'
-            );
-        } catch (BadResponseException $exception) {
-            $response = $exception->getResponse();
-            $status = $response instanceof ResponseInterface ? $response->getStatusCode() : null;
-            if ($status === 405) {
-                printf(
-                    "  [warn] Jira issue type scheme detail not accessible for %s (HTTP 405). Skipping detail export.%s",
-                    $schemeId,
-                    PHP_EOL
-                );
-                continue;
-            }
-
-            throw $exception;
-        }
-
-        $detailPayload = decodeJsonResponse($detailResponse);
         $statement->execute([
             'scheme_id' => $schemeId,
             'scheme_name' => $schemeName,
-            'source' => 'detail',
-            'raw_payload' => encodeJson($detailPayload),
+            'source' => 'mapping',
+            'raw_payload' => encodeJson([
+                'issueTypeSchemeId' => $schemeId,
+                'issueTypeIds' => $issueTypesPerScheme[$schemeId] ?? [],
+            ]),
         ]);
         $count++;
     }
@@ -439,18 +412,11 @@ function exportIssueTypeSchemeProjects(Client $client, PDO $pdo): void
             $items = $payload;
         }
 
-        foreach ($items as $mapping) {
-            if (!is_array($mapping)) {
-                continue;
-            }
-            $schemeId = (string)($mapping['issueTypeSchemeId'] ?? '');
-            if ($schemeId === '') {
-                continue;
-            }
+        foreach (IssueTypeSchemes::projectAssignments($items, $projectId) as $assignment) {
             $statement->execute([
-                'project_id' => (string)($mapping['projectId'] ?? $projectId),
-                'scheme_id' => $schemeId,
-                'raw_payload' => encodeJson($mapping),
+                'project_id' => $assignment['project_id'],
+                'scheme_id' => $assignment['scheme_id'],
+                'raw_payload' => encodeJson($assignment),
             ]);
             $count++;
         }
@@ -902,69 +868,10 @@ function exportFieldConfigurationSchemes(Client $client, PDO $pdo): void
     printf("[%s] Field configuration schemes exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
 }
 
-function exportAutomationRules(Client $client, PDO $pdo): void
-{
-    try {
-        $items = fetchPagedItems($client, '/rest/api/3/automation/rules', 'values');
-    } catch (BadResponseException $exception) {
-        $response = $exception->getResponse();
-        $status = $response instanceof ResponseInterface ? $response->getStatusCode() : null;
-        if ($status === 404) {
-            printf(
-                "  [warn] Jira automation rules endpoint not available (HTTP 404). Skipping automation export.%s",
-                PHP_EOL
-            );
-            return;
-        }
-
-        throw $exception;
-    }
-
-    $statement = $pdo->prepare(<<<SQL
-        INSERT INTO staging_jira_automation_rules (
-            rule_id,
-            name,
-            project_id,
-            raw_payload
-        ) VALUES (
-            :rule_id,
-            :name,
-            :project_id,
-            :raw_payload
-        )
-        ON DUPLICATE KEY UPDATE
-            name = VALUES(name),
-            project_id = VALUES(project_id),
-            raw_payload = VALUES(raw_payload),
-            extracted_at = CURRENT_TIMESTAMP
-    SQL);
-
-    if ($statement === false) {
-        throw new RuntimeException('Failed to prepare automation rule insert.');
-    }
-
-    $count = 0;
-    foreach ($items as $rule) {
-        $ruleId = (string)($rule['id'] ?? '');
-        if ($ruleId === '') {
-            continue;
-        }
-        $statement->execute([
-            'rule_id' => $ruleId,
-            'name' => isset($rule['name']) ? (string)$rule['name'] : null,
-            'project_id' => isset($rule['projectId']) ? (string)$rule['projectId'] : null,
-            'raw_payload' => encodeJson($rule),
-        ]);
-        $count++;
-    }
-
-    printf("[%s] Automation rules exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
-}
-
 /**
  * @return array<int, array<string, mixed>>
  */
-function fetchPagedItems(Client $client, string $path, string $valuesKey): array
+function fetchPagedItems(Client $client, string $path, string $valuesKey, array $extraQuery = []): array
 {
     $startAt = 0;
     $maxResults = 100;
@@ -975,7 +882,7 @@ function fetchPagedItems(Client $client, string $path, string $valuesKey): array
             'query' => [
                 'startAt' => $startAt,
                 'maxResults' => $maxResults,
-            ],
+            ] + $extraQuery,
         ], $path, 'paged-export');
 
         $payload = decodeJsonResponse($response);
@@ -992,37 +899,10 @@ function fetchPagedItems(Client $client, string $path, string $valuesKey): array
             }
         }
 
-        $total = isset($payload['total']) ? (int)$payload['total'] : count($pageItems);
-        $startAt += $maxResults;
-    } while ($startAt < $total);
+        $startAt = Paging::nextStartAt($payload, $startAt, count($pageItems));
+    } while ($startAt !== null);
 
     return $items;
-}
-
-/**
- * @return array<int, array<string, mixed>>
- */
-function extractWorkflowItems(array $payload): array
-{
-    if (isset($payload['values']) && is_array($payload['values'])) {
-        return array_values(array_filter($payload['values'], 'is_array'));
-    }
-    if (isset($payload['workflows']) && is_array($payload['workflows'])) {
-        return array_values(array_filter($payload['workflows'], 'is_array'));
-    }
-
-    return [];
-}
-
-function extractWorkflowName(array $workflow): ?string
-{
-    foreach (['name', 'workflowName', 'id'] as $key) {
-        if (isset($workflow[$key]) && is_string($workflow[$key])) {
-            return $workflow[$key];
-        }
-    }
-
-    return null;
 }
 
 function extractRoleIdFromUrl(string $url): ?string
