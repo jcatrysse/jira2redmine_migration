@@ -13,6 +13,7 @@ use GuzzleHttp\Psr7\Utils;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Attachments\AttachmentSample;
 const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
     'jira' => 'Synchronise Jira attachment metadata with the migration mapping table.',
@@ -98,6 +99,19 @@ function main(array $config, array $cliOptions): void
             $summary['relinked'],
             PHP_EOL
         );
+
+        $sample = applyAttachmentSample($pdo, (bool)($config['attachments']['test_sample'] ?? false));
+        if ($sample['enabled']) {
+            printf(
+                "[%s] Test sample (attachments.test_sample): %d selected, %d %s (%s not downloaded).%s",
+                formatCurrentTimestamp(),
+                $sample['selected'],
+                $sample['skipped'],
+                AttachmentSample::NOTE,
+                formatBytes($sample['skipped_bytes']),
+                PHP_EOL
+            );
+        }
     } else {
         printf("[%s] Skipping Jira sync phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
     }
@@ -485,6 +499,69 @@ function stageAttachmentsFromStagedIssues(PDO $pdo): array
 /**
  * @return array{new_mappings: int, relinked: int}
  */
+/**
+ * attachments.test_sample: rows outside the sample are switched off for download and upload and noted
+ * "skipped by sample"; rows already downloaded are left alone. Switching the option off (or a row
+ * entering the sample) switches them on again.
+ *
+ * @return array{enabled: bool, selected: int, skipped: int, skipped_bytes: int}
+ */
+function applyAttachmentSample(PDO $pdo, bool $enabled): array
+{
+    $statement = $pdo->query(<<<SQL
+        SELECT map.mapping_id, map.jira_attachment_id, map.migration_status, map.notes, att.filename, att.size_bytes
+        FROM migration_mapping_attachments map
+        JOIN staging_jira_attachments att ON att.id = map.jira_attachment_id
+    SQL);
+    if ($statement === false) {
+        throw new RuntimeException('Failed to read attachments for the test sample.');
+    }
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $statement->closeCursor();
+
+    $selected = $enabled ? AttachmentSample::select(array_map(static fn (array $row): array => [
+        'id' => (string)$row['jira_attachment_id'],
+        'filename' => (string)$row['filename'],
+        'size' => (int)$row['size_bytes'],
+    ], $rows)) : [];
+
+    $skip = $pdo->prepare(<<<SQL
+        UPDATE migration_mapping_attachments
+        SET download_enabled = 0, upload_enabled = 0, notes = :notes
+        WHERE mapping_id = :mapping_id
+    SQL);
+    $restore = $pdo->prepare(<<<SQL
+        UPDATE migration_mapping_attachments
+        SET download_enabled = 1, upload_enabled = 1, notes = NULL
+        WHERE mapping_id = :mapping_id
+    SQL);
+    if ($skip === false || $restore === false) {
+        throw new RuntimeException('Failed to prepare the test sample updates.');
+    }
+
+    $result = ['enabled' => $enabled, 'selected' => 0, 'skipped' => 0, 'skipped_bytes' => 0];
+    foreach ($rows as $row) {
+        $id = (string)$row['jira_attachment_id'];
+        $markedBySample = $row['notes'] === AttachmentSample::NOTE;
+        if (!$enabled || isset($selected[$id])) {
+            if ($markedBySample) {
+                $restore->execute(['mapping_id' => $row['mapping_id']]);
+            }
+            $result['selected'] += $enabled ? 1 : 0;
+            continue;
+        }
+        if ($markedBySample || in_array($row['migration_status'], ['PENDING_DOWNLOAD', 'FAILED'], true)) {
+            if (!$markedBySample) {
+                $skip->execute(['notes' => AttachmentSample::NOTE, 'mapping_id' => $row['mapping_id']]);
+            }
+            $result['skipped']++;
+            $result['skipped_bytes'] += (int)$row['size_bytes'];
+        }
+    }
+
+    return $result;
+}
+
 function syncAttachmentMappings(PDO $pdo): array
 {
     $insertSql = <<<SQL

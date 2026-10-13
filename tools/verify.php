@@ -13,7 +13,8 @@ declare(strict_types=1);
  *   fields       subject, tracker, status, priority, author, assignee, parent, created date
  *   description  words of Jira's rendered description found in the Redmine Markdown (>= 98%), links, images
  *   comments     every Jira comment found in a Redmine journal note (>= 95% of its words)
- *   attachments  name and size as a multiset; sha256 of both downloads up to --checksum-max-bytes
+ *   attachments  name and size as a multiset; sha256 of both downloads up to --checksum-max-bytes;
+ *                files "skipped by sample" (attachments.test_sample) are expected absent
  *   watchers     Jira watchers (mapped users) are Redmine watchers
  *   relations    Jira links between migrated issues exist as Redmine relations (either direction)
  *   custom       a mapped custom field with a Jira value has a Redmine value
@@ -85,6 +86,11 @@ $customFields = verifyMap($pdo, "SELECT jira_field_id, redmine_custom_field_id F
 $defaultAuthor = (string)($config['migration']['issues']['default_redmine_author_id'] ?? '');
 // Parents of an open subtask get an open status instead of their closed Jira status (Jan, 2026-10-13).
 $openParents = verifyMap($pdo, "SELECT jira_issue_id, proposed_status_id FROM migration_mapping_issues WHERE notes LIKE '%[open-parent]%'");
+// Attachments left out by the test option attachments.test_sample are expected to be absent.
+$skippedBySample = verifyMap($pdo, sprintf(
+    "SELECT jira_attachment_id, notes FROM migration_mapping_attachments WHERE notes = '%s'",
+    \Jira2Redmine\Attachments\AttachmentSample::NOTE
+));
 
 /** @return array<string, mixed> */
 function verifyGetJson(Client $client, string $path, array $query = []): array
@@ -279,6 +285,10 @@ foreach ($projectKeys as $projectKey) {
         // Attachments.
         $expectedFiles = [];
         foreach ($fields['attachment'] ?? [] as $attachment) {
+            if (isset($skippedBySample[(string)$attachment['id']])) {
+                $record('attachments: skipped by sample (expected absent)', true, $issueKey);
+                continue;
+            }
             $expectedFiles[] = [(string)$attachment['filename'], (int)$attachment['size']];
         }
         $actualFiles = [];
@@ -298,14 +308,16 @@ foreach ($projectKeys as $projectKey) {
         }
         $expectedNames = [];
         foreach (\Jira2Redmine\Attachments\AttachmentNames::assign($originals) as $id => $name) {
-            $expectedNames[] = [$name, $sizes[(string)$id]];
+            if (!isset($skippedBySample[(string)$id])) {
+                $expectedNames[] = [$name, $sizes[(string)$id]];
+            }
         }
         $exact = verifyCompareFiles($expectedNames, $actualFiles);
         $record('attachments: file name rule', $exact['missing'] === [], $issueKey,
             count($exact['missing']) . ' of ' . count($expectedNames) . ' under another name, e.g. expected '
             . ($exact['missing'][0] ?? '-') . ', found ' . ($exact['unexpected'][0] ?? '-'));
         foreach ($fields['attachment'] ?? [] as $attachment) {
-            if ((int)$attachment['size'] > $checksumMax) {
+            if ((int)$attachment['size'] > $checksumMax || isset($skippedBySample[(string)$attachment['id']])) {
                 continue;
             }
             foreach ($rm['attachments'] ?? [] as $rmAttachment) {

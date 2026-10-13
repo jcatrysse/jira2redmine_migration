@@ -149,6 +149,9 @@ return [
     'attachments' => [
         // Number of concurrent download workers for Jira attachments; increase to speed up pulls if network allows.
         'download_concurrency' => 1,
+        // Test option, off by default: download and upload only every attachment up to 512 KB plus, per file
+        // extension, the largest one up to 20 MB; the rest is noted "skipped by sample" (volume test runs).
+        'test_sample' => false,
         // Optional Redmine user identifier used for attachment uploads when the Jira author cannot be mapped.
         // Set to null to avoid overriding the uploader when using the extended API.
         'default_redmine_author_id' => null,
