@@ -17,6 +17,8 @@ function verifyHtmlToText(?string $html): string
     }
 
     $html = preg_replace('#<(script|style)\b[^>]*>.*?</\1>#is', ' ', $html) ?? $html;
+    // A mention is a chip in Jira: "<a class="user-hover">Jane Doe</a>thanks" reads as two words.
+    $html = preg_replace('#(<a\b[^>]*\buser-hover\b[^>]*>.*?</a>)#is', ' $1 ', $html) ?? $html;
     // Block elements and line breaks separate words.
     $html = preg_replace('#<(br|/p|/div|/li|/tr|/td|/th|/h[1-6]|/pre|/blockquote)\b[^>]*>#i', ' ', $html) ?? $html;
     $text = html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8');

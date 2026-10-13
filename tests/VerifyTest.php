@@ -12,6 +12,12 @@ final class VerifyTest extends TestCase
         self::assertSame(['first', 'line', 'second', 'third', 'fourth'], verifyWords($text));
     }
 
+    public function testMentionIsAWordBoundary(): void
+    {
+        $html = '<p><a href="https://x.atlassian.net/secure/ViewProfile.jspa?accountId=1" class="user-hover">Jane Doe</a>thanks</p>';
+        self::assertSame(['jane', 'doe', 'thanks'], verifyWords(verifyHtmlToText($html)));
+    }
+
     public function testMarkdownToTextKeepsLinkLabelsAndAltText(): void
     {
         $markdown = "## Title\n\nSee [the manual](https://example.com/m) and ![diagram](diagram.png)\n\n| a | b |\n|---|---|\n| c | d |";
