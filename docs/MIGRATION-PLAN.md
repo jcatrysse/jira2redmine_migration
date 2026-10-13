@@ -384,6 +384,14 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
   read:issue-type-screen-scheme:jira, read:screen:jira, read:screen-scheme:jira, read:screen-tab:jira,
   read:screenable-field:jira, read:field-configuration:jira, read:field-configuration-scheme:jira,
   read:avatar:jira): waiting for the new token; then write probe again and rerun 03, 04, 16.
+  Correction (coordinator, checked against Atlassian's OpenAPI spec 2026-10-13): a granular token needs
+  every scope an operation lists; the 14 missed 7. Jan gets the union of 21 granular scopes plus
+  read:jira-work and read:jira-user (list in the runbook, step 0).
+- 16 against the current spec (to confirm with the new token): `GET /rest/api/3/workflow` is gone from
+  the spec (16 calls it after workflow/search; expect an error that stops the export, fix with a test
+  once the real answer is seen); workflow/search, fieldconfiguration and fieldconfigurationscheme are
+  deprecated; `/rest/api/3/automation/rules` is not a Jira platform endpoint (16 already skips it on
+  404). Logged as B25.
 
 ## Findings
 
@@ -455,6 +463,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B21 | Downloads: 09 pulls 1.5 GB in about 800 s (about 1.9 MB/s); curl on the same gateway 17 MB/s | the SURV volume run is slow | 09 pull |
 | B22 | An open subtask under a closed parent: 422 "An open issue cannot be attached to a closed parent task" on the final update, and the description in that same update is lost | OAC-44, OAC-47: no parent, empty description | 10 final update, `subtask_status_behavior` |
 | B23 | Uploads happen before the issue exists (M9); for issues that fail, the upload stays orphaned | 208 orphans | 09, 10 |
+| B25 | 16 calls `GET /rest/api/3/workflow`, which is no longer in the Jira Cloud spec; workflow/search, fieldconfiguration and fieldconfigurationscheme are deprecated (coordinator, from the OpenAPI spec) | 16 likely stops at the legacy workflow call; not yet seen (token) | 16 |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
