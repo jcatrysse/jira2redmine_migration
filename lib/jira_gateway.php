@@ -84,7 +84,8 @@ function jiraHandlerStack(array $jiraConfig): HandlerStack
     }
 
     $site = rtrim(trim((string)($jiraConfig['base_url'] ?? '')), '/');
-    $stack->push(Middleware::mapRequest(
+    // unshift: the rewrite runs before http_errors, so error messages show the URL actually called.
+    $stack->unshift(Middleware::mapRequest(
         static fn (RequestInterface $request): RequestInterface => $request->withUri(
             jiraGatewayRewriteUri($request->getUri(), $prefix, $site)
         )

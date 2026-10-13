@@ -80,6 +80,21 @@ final class JiraGatewayTest extends TestCase
         ], $seen);
     }
 
+    public function testErrorMessagesShowTheGatewayUrl(): void
+    {
+        $stack = jiraHandlerStack(['base_url' => self::SITE, 'cloud_id' => self::CLOUD_ID]);
+        $stack->setHandler(new MockHandler([new Response(401, [], '{"code":401}')]));
+        $client = new Client(['base_uri' => self::SITE, 'handler' => $stack]);
+
+        try {
+            $client->get('/rest/api/3/group/member?groupId=x');
+            self::fail('Expected a 401.');
+        } catch (\GuzzleHttp\Exception\ClientException $exception) {
+            self::assertStringContainsString(self::GATEWAY . '/rest/api/3/group/member', $exception->getMessage());
+            self::assertSame(self::GATEWAY . '/rest/api/3/group/member?groupId=x', (string)$exception->getRequest()->getUri());
+        }
+    }
+
     public function testHandlerWithoutCloudIdHasNoGatewayMiddleware(): void
     {
         $stack = jiraHandlerStack(['base_url' => self::SITE]);
