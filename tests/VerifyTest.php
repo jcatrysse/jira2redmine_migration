@@ -42,6 +42,7 @@ final class VerifyTest extends TestCase
     public function testMarkdownAutolinksAreText(): void
     {
         $text = verifyMarkdownToText('Linked with <https://example.com/docs> and <mailto:a@b.example>');
+        self::assertSame(['from', 'jane', 'example', 'eu'], verifyWords(verifyMarkdownToText('From &lt;<jane@example.eu>&gt;')));
         $expected = ['linked', 'with', 'https', 'example', 'com', 'docs', 'and', 'mailto', 'a', 'b', 'example'];
         self::assertSame($expected, verifyWords($text));
     }

@@ -75,7 +75,7 @@ function verifyMarkdownToText(?string $markdown, ?callable $userName = null): st
     $text = preg_replace('/!\[([^\]]*)\]\([^)]*\)/u', ' $1 ', $text) ?? $text;
     $text = preg_replace('/\[([^\]]*)\]\([^)]*\)/u', ' $1 ', $text) ?? $text;
     // Autolinks are text, not tags.
-    $text = preg_replace('/<((?:https?|ftp|mailto):[^>\s]+)>/iu', ' $1 ', $text) ?? $text;
+    $text = preg_replace('/<((?:https?|ftp|mailto):[^>\s]+|[^\s<>@"\/]+@[^\s<>@"]+)>/iu', ' $1 ', $text) ?? $text;
     $text = strip_tags($text);
     $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
