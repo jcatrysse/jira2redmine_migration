@@ -50,7 +50,7 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
 2. 03, 04, 16 with the granular scopes; B25 (16 calls `GET /rest/api/3/workflow`, gone from the spec):
    see the real answer, then fix with a test. **DONE (B2)**: B25 to B32 under Findings.
 3. Full runs 5.1 and 7.0 with all fixes (`tools/testenv/run_all.sh 51|70 LABEL`); verify green on
-   both, B14 and Resolved included; rerun the stability check (10 twice, second run changes nothing).
+   both, B14 and Resolved included; rerun the stability check (10 twice, second run changes nothing). **DONE (B2)**: verify green on both, see item 14; the stability check found B35.
 4. Extended API gate on 5.1 with verify (item above).
 5. WIKI through the conversion bench pipeline (Text conversion protocol); then phase 7 item 13
    (conversion fixes with PHPUnit cases) and bench step 3 (visual check with Jan).
@@ -279,6 +279,15 @@ In this order. Each item records its result under "Results" when done.
     B18 (production config of redmine_issue_view_columns, documented in the runbook).
     Run on 7.0 with the fixes (before B24, B14, Resolved and the parent priority setting): 420 of 426
     issues, every tracker/status count equal to Jira, presence 75/75, watchers 960 stored.
+    **Full runs with all fixes, B2, 2026-10-13** (`run_all.sh 51|70 b2-full1`, new token, 03 in two
+    passes, 04 with push, Extended API 132fff5 on 5.1 and 9867918 on 7.0): **verify green on both**, 21
+    checks, 0 failures (presence 75/75, counts 30/30, comments 254, attachments 75/75 and sha256 136,
+    custom fields 340, relations 35, watchers 75, every field 75/75). Both targets the same: 426 issues
+    (422 created, 4 READY_FOR_REWRITE: parent outside the run), 1,277 journals, 576 attachments, 71
+    relations (49 MANUAL: other side outside the run), 960 watchers, 38 project role memberships. Green
+    after reruns that needed no SQL: 12 for 17 relations (relation types missing in the rebuilt test
+    instances, B34), 09/10/11 on 7.0 for GEOS-23 (B33). Stability check (10 to 14 a second time):
+    10, 12, 13, 14 change nothing (13 and 14 caught up GEOS-23); 11 pushed every journal again (B35, fixed).
 
 **Phase 8, workflow and documentation**
 
@@ -565,6 +574,10 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B30 | Jira returns project role URLs on the gateway; 04 uses their path, the gateway rewrite added `/ex/jira/{cloudId}` a second time | all 45 role requests 401, 04 extracted no actor and exited 0 with warnings | **fixed** in `lib/jira_gateway.php` (a prefixed path keeps one prefix), 278 actors |
 | B31 | 04 gave a project role held by a user to every group the user is in | one admin in a 254-member group made it admin (Manager) of 8 projects, 143 group assignments | **fixed** for what both options share: user actors are direct members, group actors their group; `migration.roles.mappings` (Administrators => Manager, add-ons role ignored); app accounts IGNORED; a pushed membership stays recorded on a rerun. Result: 36 users and 2 groups (max 6 members) Manager, as in Jira. Base access: open question for Jan |
 | B32 | 03 adds group members only once the groups exist; the runbook ran it once | 754 members AWAITING_GROUP, no group had members | runbook and `run_all.sh`: a second pass (551 members added; 203 wait for accounts that are not migrated) |
+| B33 | A download that fails (a dropped tunnel to api.atlassian.com, two runs in parallel) is FAILED; the transform requeued it and cleared the reason; 10 holds the issue back | 7.0: 2 of 576 files, GEOS-23 not created, no visible cause | **fixed**: 09 tries failed files once more in the same pull, prints each failure with its reason and keeps it when requeued (`src/Attachments/PullRetry.php`); 10 no longer waits for a switched-off attachment (`IssueAttachmentState`) |
+| B34 | 12 marks a refused relation CREATION_FAILED without its automation hash | every later transform takes it for a hand edit ("preserved manual overrides") and never retries; 17 relations after the relation types were added | **fixed** (`src/Relations/RelationState.php`); proof on 5.1: 17 failed, a plain rerun created all 17. Test env: `setup.sh` now installs the relation types (B18) |
+| B35 | **11 pushes every journal again on each rerun** (also on `main`): the transform set every journal of a created issue to READY_FOR_PUSH, pushed ones included; FAILED journals were never retried | stability check: +1,277 duplicate journals on 5.1 and 7.0; verify still passed (each Jira comment was found) | **fixed** (`src/Journals/JournalStatus.php`): pushed journals stay SUCCESS, FAILED and SKIPPED are judged again; proof on 5.1: rerun pushed 0 comments, journal count unchanged. verify now fails on a journal present twice (51 of 75 sampled issues on the duplicated instance) |
+| B36 | verify read the `[open-parent]` note, which the push clears once the issue exists; verify's own clients had no retry | OAC 2 count failures after a full run; one verify run stopped on a dropped connection | **fixed**: open parents from the mapping (proposed status differs from the mapped Jira status), clients from `ClientFactory` |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
