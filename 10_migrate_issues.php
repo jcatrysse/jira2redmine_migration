@@ -15,6 +15,7 @@ use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Redmine\IssueFinalUpdate;
 use Jira2Redmine\Redmine\IssueDates;
 use Jira2Redmine\Issues\AssigneeRule;
+use Jira2Redmine\Jira\ProjectSelection;
 
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -558,9 +559,15 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
         throw new RuntimeException('Failed to prepare project status update statement.');
     }
 
+    $projectSelection = new ProjectSelection($issueConfig['projects'] ?? null);
     foreach ($projectsToMigrate as $project) {
         $projectKey = isset($project['project_key']) ? (string)$project['project_key'] : '';
         $jiraProjectId = isset($project['jira_project_id']) ? (string)$project['jira_project_id'] : '';
+
+        // Projects outside migration.issues.projects are left alone, not marked as extracted (B4).
+        if (!$projectSelection->includes($projectKey)) {
+            continue;
+        }
 
         if ($projectKey === '') {
             printf("  [WARN] Skipping Jira project %s because no key was found.%s", $jiraProjectId !== '' ? $jiraProjectId : '[unknown]', PHP_EOL);

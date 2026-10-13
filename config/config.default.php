@@ -64,6 +64,9 @@ return [
             // Optional JQL filter AND-ed with each automatic `project = "KEY"` clause before `ORDER BY id ASC`.
             // Provide any additional constraints (date range, issue types, etc.) or leave blank to export every issue per project.
             'jql' => '',
+            // Jira project keys whose issues are extracted, e.g. ['GEOS', 'SIS']; empty for every project.
+            // Projects left out are not marked as extracted, so they can be added in a later run.
+            'projects' => [],
             // Number of issues requested per Jira search page (max 100).
             'batch_size' => 100,
             // Optional base URL used to link back to the original Jira issue in migrated descriptions.
