@@ -7,6 +7,46 @@ use League\HTMLToMarkdown\HtmlConverter;
 use League\HTMLToMarkdown\Converter\TableConverter;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
 
+/**
+ * Markdown autolinks (<https://...>, <mailto:...>, <name@domain>) look like tags to DOMDocument, which
+ * then drops the part after "@" and wraps the text in <p> (B15). The DOM passes over Markdown hide them
+ * behind placeholders first and put them back after.
+ *
+ * @param array<string, string> $saved filled with placeholder => autolink
+ */
+function protectMarkdownAutolinks(string $text, array &$saved): string
+{
+    return preg_replace_callback(
+        '/<(?:[A-Za-z][A-Za-z0-9+.\-]{1,31}:[^\s<>]*|[^\s<>@"\/]+@[^\s<>@"]+)>/',
+        static function (array $m) use (&$saved): string {
+            $placeholder = 'J2RAUTOLINK' . count($saved) . 'X';
+            $saved[$placeholder] = $m[0];
+
+            return $placeholder;
+        },
+        $text
+    ) ?? $text;
+}
+
+/**
+ * @param array<string, string> $saved
+ */
+function restoreMarkdownAutolinks(string $text, array $saved): string
+{
+    return $saved === [] ? $text : strtr($text, $saved);
+}
+
+/**
+ * True when the text holds one of these HTML tags as a real tag ("<a href", "<img ", "<div>"), not just
+ * the same letters at the start of an autolink such as "<alice@example.eu>".
+ *
+ * @param list<string> $tags
+ */
+function textHasHtmlTag(string $text, array $tags): bool
+{
+    return preg_match('/<(?:' . implode('|', array_map('preg_quote', $tags)) . ')(?=[\s>\/])/i', $text) === 1;
+}
+
 function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
 {
     if ($html === null) {
@@ -919,9 +959,10 @@ function replaceJiraUserLinksWithRedmineIds(string $text, array $userLookup): st
         return $m[0];
     }, $text);
 
-    // 2) HTML anchors: <a href="...">Label</a>
-    // inside replaceJiraUserLinksWithRedmineIds, replace the HTML anchor regex block with:
-    if (stripos($text, '<a') !== false) {
+    // 2) HTML anchors: <a href="...">Label</a> (autolinks hidden from the DOM, see B15)
+    $autolinks = [];
+    $text = protectMarkdownAutolinks($text, $autolinks);
+    if (textHasHtmlTag($text, ['a'])) {
         $doc = new DOMDocument();
         $prev = libxml_use_internal_errors(true);
         $payload = '<?xml encoding="utf-8"?>' . $text;
@@ -983,6 +1024,7 @@ function replaceJiraUserLinksWithRedmineIds(string $text, array $userLookup): st
             libxml_use_internal_errors($prev);
         }
     }
+    $text = restoreMarkdownAutolinks($text, $autolinks);
 
     // 3) Bare profile URLs (rare): replace direct URLs if possible
     $text = preg_replace_callback(
@@ -1051,8 +1093,10 @@ function normalizeAttachmentLinksInText(string $text, array $attachmentsMap): st
     // make Markdown-escaped underscores visible for our detection
     $text = str_replace('\\_', '_', $text);
 
-    // DOM pass for images/anchors when HTML is present
-    if (stripos($text, '<img') !== false || stripos($text, '<a') !== false || stripos($text, '<div') !== false) {
+    // DOM pass for images/anchors when HTML is present (autolinks hidden from the DOM, see B15)
+    $autolinks = [];
+    $text = protectMarkdownAutolinks($text, $autolinks);
+    if (textHasHtmlTag($text, ['img', 'a', 'div'])) {
         $doc = new DOMDocument();
         $prev = libxml_use_internal_errors(true);
         $options = 0;
@@ -1153,6 +1197,7 @@ function normalizeAttachmentLinksInText(string $text, array $attachmentsMap): st
         libxml_clear_errors();
         libxml_use_internal_errors($prev);
     }
+    $text = restoreMarkdownAutolinks($text, $autolinks);
 
     // Markdown-style replacements: ![alt](URL) and [label](URL)
     $text = preg_replace_callback(
