@@ -10,6 +10,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Redmine\Names;
 
 const MIGRATE_TRACKERS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -667,7 +668,14 @@ function runTrackerTransformationPhase(PDO $pdo, array $config): array
             continue;
         }
 
+        // Redmine allows 30 characters for a tracker name; match and create with the shortened name (B1).
         $defaultName = $jiraIssueTypeName !== null ? normalizeString($jiraIssueTypeName, 255) : null;
+        $shortenedNote = null;
+        if ($defaultName !== null && Names::tracker($defaultName) !== $defaultName) {
+            $shortenedNote = sprintf('Name shortened to %d characters for Redmine (Jira: "%s").', Names::TRACKER_MAX, $defaultName);
+            printf("  [info] Jira issue type %s: %s%s", $jiraIssueTypeId, $shortenedNote, PHP_EOL);
+            $defaultName = Names::tracker($defaultName);
+        }
         $defaultDescription = $jiraIssueTypeDescription !== null ? trim($jiraIssueTypeDescription) : null;
 
         $manualReason = null;
@@ -677,7 +685,7 @@ function runTrackerTransformationPhase(PDO $pdo, array $config): array
         $proposedName = $currentProposedName ?? $defaultName;
         $proposedDescription = $currentProposedDescription ?? $defaultDescription;
         $proposedDefaultStatusId = $currentProposedDefaultStatusId ?? $defaultStatusId;
-        $notes = $currentNotes;
+        $notes = $currentNotes ?? $shortenedNote;
 
         if ($proposedProjectIds === null) {
             $proposedProjectIds = [];
