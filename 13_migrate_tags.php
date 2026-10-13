@@ -9,6 +9,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Redmine\IssueTags;
 
 const MIGRATE_TAGS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -320,6 +321,7 @@ function runTagPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $isDr
         throw new RuntimeException('Failed to prepare tag update statement.');
     }
 
+    $tagEndpoint = null;
     foreach ($rows as $row) {
         $mappingId = (int)$row['mapping_id'];
         $redmineIssueId = $row['redmine_issue_id'] !== null ? (int)$row['redmine_issue_id'] : null;
@@ -335,10 +337,8 @@ function runTagPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $isDr
             continue;
         }
 
-        $payload = ['tags' => array_values($tags)];
-
         try {
-            $client->post(sprintf('/issues/%d/tags.json', $redmineIssueId), ['json' => $payload]);
+            $tagEndpoint = IssueTags::push($client, $redmineIssueId, array_values($tags), $tagEndpoint);
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
             $message = sprintf('Failed to apply tags to Redmine issue #%d', $redmineIssueId);

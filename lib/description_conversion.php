@@ -1084,7 +1084,7 @@ function inlineReplaceJiraIssueKeysWithHashes(string $text, array $jiraToRedmine
  * - First does a DOM pass for <img> and <a> tags if HTML present.
  * - Then does a markdown-style pass replacing inline links/images.
  *
- * @param array<string, array{unique: string, sharepoint: ?string}> $attachmentsMap keyed by attachment id
+ * @param array<int|string, array{unique: string, sharepoint: ?string, is_image?: bool}> $attachmentsMap keyed by attachment id
  */
 function normalizeAttachmentLinksInText(string $text, array $attachmentsMap): string
 {
