@@ -13,6 +13,7 @@ use Karvaka\AdfToGfm\Converter as AdfConverter;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Attachments\AttachmentNames;
+use Jira2Redmine\Journals\JournalStatus;
 const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.1';
 const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
 const JIRA_RATE_LIMIT_BASE_DELAY_MS = 1000;
@@ -638,20 +639,29 @@ function transformJournalMappings(PDO $pdo): array
         throw new RuntimeException('Failed to insert journal mapping rows: ' . $exception->getMessage(), 0, $exception);
     }
 
-    $updateSql = <<<SQL
-        UPDATE migration_mapping_journals map
-        LEFT JOIN migration_mapping_issues issue_map ON issue_map.jira_issue_id = map.jira_issue_id
-        SET
-            map.migration_status = CASE
-                WHEN issue_map.redmine_issue_id IS NULL THEN 'PENDING'
-                WHEN map.migration_status = 'FAILED' THEN 'FAILED'
-                ELSE 'READY_FOR_PUSH'
-            END,
-            map.last_updated_at = CURRENT_TIMESTAMP
-    SQL;
-
     try {
-        $pdo->exec($updateSql);
+        $rows = $pdo->query(<<<SQL
+            SELECT map.mapping_id, map.migration_status, map.redmine_journal_id, issue_map.redmine_issue_id
+            FROM migration_mapping_journals map
+            LEFT JOIN migration_mapping_issues issue_map ON issue_map.jira_issue_id = map.jira_issue_id
+        SQL);
+        $update = $pdo->prepare(
+            'UPDATE migration_mapping_journals SET migration_status = :migration_status, last_updated_at = CURRENT_TIMESTAMP
+             WHERE mapping_id = :mapping_id'
+        );
+        if ($rows === false || $update === false) {
+            throw new RuntimeException('Failed to read journal mapping statuses.');
+        }
+        foreach ($rows->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $next = JournalStatus::afterTransform(
+                (string)$row['migration_status'],
+                $row['redmine_journal_id'] !== null ? (int)$row['redmine_journal_id'] : null,
+                $row['redmine_issue_id'] !== null ? (int)$row['redmine_issue_id'] : null
+            );
+            if ($next !== $row['migration_status']) {
+                $update->execute(['migration_status' => $next, 'mapping_id' => $row['mapping_id']]);
+            }
+        }
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to update journal mapping statuses: ' . $exception->getMessage(), 0, $exception);
     }
