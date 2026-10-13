@@ -26,7 +26,7 @@ is left. Written 2026-10-13 from a reading of the code and Jan's answers in the 
 | | |
 |---|---|
 | Branch | `redmine70-migration` (from `main` at `1de1fc9`) |
-| Phase | 0, prerequisites: token set, test projects to choose (see work list) |
+| Phase | 2 and 3 done (session B, 2026-10-13); phase 4 waits for the test project keys |
 | Scripts | 16 scripts, ~39,000 lines of PHP, no shared library, no tests |
 | Targets | Redmine 5.1 and 7.0; the scripts stay dual-target (unlike the plugins, 5.1 is not dropped) |
 | Extended API | to be made compatible with Redmine 5.1, 6.1 and 7.0 (own repo, own branch) |
@@ -130,6 +130,14 @@ In this order. Each item records its result under "Results" when done.
 
 6. Jira gateway support (M4, M5): one place that builds Jira URLs, relative paths, attachment
    downloads through the gateway. Read-only probe (decision 1) recorded with its answer.
+   **DONE** 2026-10-13 (session B). Probe: `PUT /rest/api/3/issue/ZZPROBE-999999` and
+   `POST .../comment` through the gateway both answer `401 {"message":"Unauthorized; scope does not
+   match"}`; `GET /rest/api/3/myself` answers 200. Fix: `lib/jira_gateway.php`, one Guzzle
+   middleware on every Jira client, on when `jira.cloud_id` is set; puts `/ex/jira/{cloudId}` back on
+   leading-slash paths and moves absolute site URLs to the gateway. Proof: `01 --phases=jira`
+   extracts 15 projects through the gateway; an attachment download returns 200 with the exact
+   size (Jira redirects to `api.media.atlassian.com`). Tests: `tests/JiraGatewayTest.php`, 3 of 8
+   fail without the rewrite.
 
 **Phase 4, baseline**
 
@@ -266,10 +274,23 @@ On 5.1 and 7.0, with `attachment_max_size` raised (e.g. 4 GB) and SharePoint off
 - Staging database: stay on MySQL or move to PostgreSQL (decide after the baseline).
 - Worklogs to time entries: in scope or not.
 - Which manual steps to automate (decide after the baseline, per step).
+- Plugin set for 5.1 (work list 3): is the derived list right; do resources, drive, questions and
+  reporter run in production? (session B, sent to the coordinator)
+- `redmine_custom_workflows` on 5.1 production: which version (F2)? Test env uses v2.1.2.
 
 ## Findings
 
-(empty until the baseline run)
+Before the baseline (session B, 2026-10-13):
+
+| # | finding | effect | action |
+|---|---|---|---|
+| F1 | `5.1-stable-GEOxyz` sets `session_store :active_record_store` but its Gemfile lacks `activerecord-session_store` (7.0 has it) | 5.1 does not boot from the repo alone; production must have it in a Gemfile.local | test env adds it; Jan: commit it to the 5.1 branch? |
+| F2 | `redmine_custom_workflows` branch `5.x` is v3.1.1 and requires Redmine 6.0 | does not load on 5.1 | test env uses tag `v2.1.2` (last for 5.1); **open for Jan**: which version runs in production? |
+| F3 | `redmineup` >= 1.1.5 defines route `auto_complete_taggable_tags`, `redmine_contacts` master too | 5.1 does not boot with the newest gem | test env pins `redmineup` 1.1.4 in the lockfile |
+| F4 | `issue_recurring` loads models from its rake file | `rake db:migrate` fails on an empty database | setup moves it aside for the first migrate |
+| F5 | Jira client with a scoped token on the site URL (no gateway) | `01 --phases=jira` reports "0 project records processed" and exits 0, no error | phase 7: an empty or unauthorised extraction must fail loudly |
+| F6 | Redmine calls use leading-slash paths too (`/roles.json`, `/issues/%d.json`, ...) | a Redmine under a sub-path (`https://host/redmine/`) would lose the sub-path, same bug as M4 | phase 6 (shared Redmine client) |
+| F7 | Through the gateway Jira returns attachment `content` URLs on the gateway already | M5 only matters for staging rows extracted through the site URL; the rewrite covers both | none |
 
 ## Results
 
