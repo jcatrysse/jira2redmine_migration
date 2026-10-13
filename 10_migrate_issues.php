@@ -15,6 +15,7 @@ use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Redmine\IssueFinalUpdate;
 use Jira2Redmine\Redmine\IssueDates;
 use Jira2Redmine\Issues\AssigneeRule;
+use Jira2Redmine\Issues\OpenParentStatus;
 use Jira2Redmine\Jira\ProjectSelection;
 
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.1';
@@ -286,6 +287,12 @@ function main(array $config, array $cliOptions): void
         $subtaskOpenParentStatusId = isset($issueConfig['subtask_open_parent_status_id'])
             ? normalizeInteger($issueConfig['subtask_open_parent_status_id'], 1)
             : null;
+        if ($subtaskBehavior === 'open_parent' && $subtaskOpenParentStatusId === null) {
+            $subtaskOpenParentStatusId = OpenParentStatus::resolve(
+                fetchRedmineStatusesForLookup($pdo),
+                (string)($issueConfig['subtask_open_parent_status_name'] ?? 'Resolved')
+            );
+        }
 
         runIssuePushPhase(
             $pdo,
@@ -1105,10 +1112,20 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
     if ($subtaskBehavior === 'close_subtasks' && $subtaskCloseStatusId === null) {
         throw new RuntimeException('subtask_close_status_id must be configured when subtask_status_behavior=close_subtasks.');
     }
+    $subtaskOpenParentStatusName = (string)($issueConfig['subtask_open_parent_status_name'] ?? 'Resolved');
     if ($subtaskBehavior === 'open_parent' && $subtaskOpenParentStatusId === null) {
-        throw new RuntimeException('subtask_open_parent_status_id must be configured when subtask_status_behavior=open_parent.');
+        // Jan's rule: the parent of an open subtask gets the open status "Resolved"; stop if it is missing or closed.
+        $subtaskOpenParentStatusId = OpenParentStatus::resolve(fetchRedmineStatusesForLookup($pdo), $subtaskOpenParentStatusName);
     }
     $statusClosedIndex = $subtaskBehavior !== null ? fetchRedmineStatusClosedIndex($pdo) : [];
+    $jiraStatusNames = [];
+    $statusNameStatement = $pdo->query('SELECT jira_status_id, jira_status_name FROM migration_mapping_statuses');
+    if ($statusNameStatement !== false) {
+        foreach ($statusNameStatement->fetchAll(PDO::FETCH_ASSOC) ?: [] as $statusRow) {
+            $jiraStatusNames[(string)$statusRow['jira_status_id']] = (string)$statusRow['jira_status_name'];
+        }
+        $statusNameStatement->closeCursor();
+    }
     $attachmentMetadata = buildAttachmentMetadataIndex($pdo);
     $sharePointAttachmentIndex = buildSharePointAttachmentIndex($pdo);
     $jiraIssueBaseUrl = resolveJiraIssueBaseUrl($config);
@@ -1395,7 +1412,8 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
                 if ($subtaskBehavior === 'close_subtasks') {
                     $notes[] = 'Subtask status adjusted to closed status per configuration.';
                 } elseif ($subtaskBehavior === 'open_parent') {
-                    $notes[] = 'Parent status adjusted to open status per configuration.';
+                    $notes[] = OpenParentStatus::note($subtaskOpenParentStatusName, $jiraStatusNames[$jiraStatusId] ?? null);
+                    printf("  [open-parent] %s: Redmine status \"%s\" instead of the closed Jira status, because a subtask is open.%s", $row['jira_issue_key'], $subtaskOpenParentStatusName, PHP_EOL);
                 }
             }
 
@@ -4474,7 +4492,31 @@ function fetchRedmineStatusClosedIndex(PDO $pdo): array
         $index[(int)$row['id']] = !empty($row['is_closed']);
     }
 
+    // The snapshot is taken before 05 creates the Jira statuses; their closed flag is in the status mapping.
+    $mapped = $pdo->query('SELECT redmine_status_id, proposed_is_closed FROM migration_mapping_statuses WHERE redmine_status_id IS NOT NULL');
+    if ($mapped !== false) {
+        foreach ($mapped->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $index[(int)$row['redmine_status_id']] ??= !empty($row['proposed_is_closed']);
+        }
+        $mapped->closeCursor();
+    }
+
     return $index;
+}
+
+/**
+ * @return list<array{id: int|string, name: string, is_closed: bool|int|string|null}>
+ */
+function fetchRedmineStatusesForLookup(PDO $pdo): array
+{
+    $statement = $pdo->query('SELECT id, name, is_closed FROM staging_redmine_issue_statuses ORDER BY id');
+    if ($statement === false) {
+        throw new RuntimeException('Failed to read the Redmine status snapshot.');
+    }
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $statement->closeCursor();
+
+    return array_values(array_map(static fn (array $r): array => ['id' => $r['id'], 'name' => (string)$r['name'], 'is_closed' => $r['is_closed']], $rows));
 }
 
 /**

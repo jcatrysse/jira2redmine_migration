@@ -83,6 +83,8 @@ $maps = [
 $customFields = verifyMap($pdo, "SELECT jira_field_id, redmine_custom_field_id FROM migration_mapping_custom_fields
     WHERE migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')");
 $defaultAuthor = (string)($config['migration']['issues']['default_redmine_author_id'] ?? '');
+// Parents of an open subtask get an open status instead of their closed Jira status (Jan, 2026-10-13).
+$openParents = verifyMap($pdo, "SELECT jira_issue_id, proposed_status_id FROM migration_mapping_issues WHERE notes LIKE '%[open-parent]%'");
 
 /** @return array<string, mixed> */
 function verifyGetJson(Client $client, string $path, array $query = []): array
@@ -213,8 +215,9 @@ foreach ($projectKeys as $projectKey) {
         $record('fields: subject', trim((string)$rm['subject']) === trim((string)$fields['summary']), $issueKey, 'subject differs');
         $record('fields: tracker', (string)$rm['tracker']['id'] === ($maps['tracker'][(string)$fields['issuetype']['id']] ?? ''), $issueKey,
             sprintf('Redmine %s, expected %s', $rm['tracker']['name'], $fields['issuetype']['name']));
-        $record('fields: status', (string)$rm['status']['id'] === ($maps['status'][(string)$fields['status']['id']] ?? ''), $issueKey,
-            sprintf('Redmine %s, expected %s', $rm['status']['name'], $fields['status']['name']));
+        $expectedStatus = $openParents[$jiraId] ?? ($maps['status'][(string)$fields['status']['id']] ?? '');
+        $record('fields: status', (string)$rm['status']['id'] === $expectedStatus, $issueKey,
+            sprintf('Redmine %s, expected %s%s', $rm['status']['name'], $fields['status']['name'], isset($openParents[$jiraId]) ? ' (open parent: status #' . $expectedStatus . ')' : ''));
         if (isset($fields['priority']['id'])) {
             $expectedPriority = $maps['priority'][(string)$fields['priority']['id']] ?? '';
             $record('fields: priority', (string)$rm['priority']['id'] === $expectedPriority, $issueKey,

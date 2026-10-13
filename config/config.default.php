@@ -81,15 +81,16 @@ return [
             'default_redmine_assignee_id' => null,
             // When set, overrides the privacy flag proposed during the transform phase (true/false/null).
             'default_is_private' => null,
-            // Optional status behavior when linking subtasks to parents.
-            // null: ignore status conflicts (default).
+            // Status behaviour for an open subtask under a closed parent (Redmine refuses that link).
+            // open_parent (default, decided 2026-10-13): the parent gets subtask_open_parent_status_name.
             // close_subtasks: close open subtasks when the parent is closed.
-            // open_parent: reopen the parent when linking an open subtask.
-            'subtask_status_behavior' => null,
+            // null: leave it; the subtask is created without its parent.
+            'subtask_status_behavior' => 'open_parent',
             // Status ID to apply to subtasks when subtask_status_behavior = close_subtasks.
             'subtask_close_status_id' => null,
-            // Status ID to apply to parents when subtask_status_behavior = open_parent.
+            // Status for those parents: an id, or (when null) the open Redmine status with this name.
             'subtask_open_parent_status_id' => null,
+            'subtask_open_parent_status_name' => 'Resolved',
         ],
         'journals' => [
             // Optional Redmine user identifier used when a comment/changelog author cannot be mapped from Jira.
