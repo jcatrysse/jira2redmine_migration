@@ -22,5 +22,8 @@
     {
       "name": "Jan Catrysse"
     }
-  ]
+  ],
+  "require-dev": {
+    "phpunit/phpunit": "^11.5"
+  }
 }

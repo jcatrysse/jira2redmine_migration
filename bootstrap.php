@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/vendor/autoload.php';
+require_once __DIR__ . '/lib/jira_gateway.php';
 
 $defaultConfigPath = __DIR__ . '/config/config.default.php';
 $localConfigPath = __DIR__ . '/config/config.local.php';

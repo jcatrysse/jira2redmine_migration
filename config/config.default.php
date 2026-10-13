@@ -8,6 +8,10 @@ return [
         'username' => 'jira-user@example.com',
         // Jira API token generated for the user above.
         'api_token' => 'your-jira-api-token',
+        // Cloud id of the site (https://<site>/_edge/tenant_info). When set, every API call goes through
+        // the gateway https://api.atlassian.com/ex/jira/{cloud_id}, which scoped API tokens require.
+        // base_url stays the site URL (links back to Jira). Leave null for a classic (unscoped) token.
+        'cloud_id' => null,
     ],
     'redmine' => [
         // Base URL of the Redmine instance, e.g. https://redmine.example.com

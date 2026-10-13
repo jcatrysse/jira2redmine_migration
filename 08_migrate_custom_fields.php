@@ -6974,6 +6974,7 @@ function createJiraClient(array $jiraConfig): Client
 
     return new Client([
         'base_uri' => $baseUrl,
+        'handler' => jiraHandlerStack($jiraConfig),
         'headers' => [
             'Accept' => 'application/json',
         ],

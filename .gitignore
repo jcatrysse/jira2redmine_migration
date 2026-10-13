@@ -3,3 +3,4 @@ composer.phar
 /.idea/
 /composer.lock
 /config/config.local.php
+.phpunit.result.cache
