@@ -326,12 +326,17 @@ function verifyExpectedAssignee(?string $jiraAccountId, array $userMap, ?int $de
 
 /**
  * Whether a Jira field value holds anything. A rich text field can hold an ADF document without text
- * (one empty paragraph): Redmine rightly stores nothing, verify counted it as a missing value.
+ * (one empty paragraph), a label app field an empty label list: Redmine rightly stores nothing, verify
+ * counted them as missing values.
  */
 function verifyJiraValueIsEmpty(mixed $value): bool
 {
     if ($value === null || $value === '' || $value === []) {
         return true;
+    }
+    // a label app field (label manager) with no label: {"labels": [], "colors": [], ...}
+    if (is_array($value) && array_key_exists('labels', $value) && is_array($value['labels'])) {
+        return array_filter($value['labels'], static fn (mixed $label): bool => trim((string)$label) !== '') === [];
     }
     if (is_array($value) && ($value['type'] ?? null) === 'doc' && isset($value['content'])) {
         $text = '';

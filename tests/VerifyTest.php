@@ -156,5 +156,7 @@ final class VerifyTest extends TestCase
         ]]));
         self::assertTrue(verifyJiraValueIsEmpty(null));
         self::assertFalse(verifyJiraValueIsEmpty(['value' => 'Other']));
+        self::assertTrue(verifyJiraValueIsEmpty(['labels' => [], 'colors' => [], 'labelSource' => 'global']));
+        self::assertFalse(verifyJiraValueIsEmpty(['labels' => ['Vessel_A'], 'colors' => ['light-grey']]));
     }
 }
