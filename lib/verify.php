@@ -49,18 +49,24 @@ function verifyMarkdownToText(?string $markdown, ?callable $userName = null): st
     // Code is text: keep "<depth>" in a code block from being stripped as a tag.
     $text = preg_replace_callback(
         '/(```|~~~)[^\n]*\n(.*?)\1|`([^`\n]+)`/s',
-        static fn (array $m): string => ' ' . htmlspecialchars(($m[2] ?? '') !== '' ? $m[2] : ($m[3] ?? ''), ENT_QUOTES, 'UTF-8') . ' ',
-        $markdown
+        static fn (array $m): string => ' ' . htmlspecialchars((string)($m[2] ?? $m[3] ?? ''), ENT_QUOTES, 'UTF-8') . ' ',
+        $markdown,
+        -1,
+        $count,
+        PREG_UNMATCHED_AS_NULL
     ) ?? $markdown;
     if ($userName !== null) {
         $text = preg_replace_callback(
             '/\buser#(\d+)|(?<![\w@])@([A-Za-z0-9_.@-]*[A-Za-z0-9_])/u',
             static function (array $m) use ($userName): string {
-                $name = $userName(($m[1] ?? '') !== '' ? $m[1] : $m[2]);
+                $name = $userName((string)($m[1] ?? $m[2]));
 
-                return $name ?? $m[0];
+                return $name ?? (string)$m[0];
             },
-            $text
+            $text,
+            -1,
+            $count,
+            PREG_UNMATCHED_AS_NULL
         ) ?? $text;
     }
     // Images keep their alt text, links keep their label.

@@ -1,13 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
-use GuzzleHttp\HandlerStack;
-use GuzzleHttp\Middleware;
-use GuzzleHttp\Psr7\Uri;
-use Psr\Http\Message\RequestInterface;
-use Psr\Http\Message\UriInterface;
-
 /**
  * Jira Cloud scoped API tokens only work through the gateway https://api.atlassian.com/ex/jira/{cloudId}.
  * This file is the one place that turns the configured Jira site into the URL the scripts talk to.
@@ -16,6 +8,14 @@ use Psr\Http\Message\UriInterface;
  * jira.cloud_id switches the API calls to the gateway when it is set. The client keeps the site as
  * base_uri; the middleware below moves every request to the gateway.
  */
+
+declare(strict_types=1);
+
+use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Middleware;
+use GuzzleHttp\Psr7\Uri;
+use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\UriInterface;
 
 const JIRA_GATEWAY_BASE_URL = 'https://api.atlassian.com/ex/jira/';
 

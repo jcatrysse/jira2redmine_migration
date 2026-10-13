@@ -1,0 +1,12 @@
+# Static analysis for the new code. The 16 scripts join one by one as they move to src/ (phase 6).
+parameters:
+    level: 8
+    paths:
+        - src
+        - lib/jira_gateway.php
+        - lib/verify.php
+        - tests
+    bootstrapFiles:
+        - vendor/autoload.php
+        - lib/jira_gateway.php
+        - lib/verify.php

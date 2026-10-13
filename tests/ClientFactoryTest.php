@@ -23,7 +23,9 @@ final class ClientFactoryTest extends TestCase
 
     public function testJiraClientUsesTheGatewayHandlerWhenACloudIdIsSet(): void
     {
-        $client = ClientFactory::jira(['base_url' => 'https://example.atlassian.net', 'username' => 'u', 'api_token' => 't', 'cloud_id' => 'abc']);
+        $client = ClientFactory::jira([
+            'base_url' => 'https://example.atlassian.net', 'username' => 'u', 'api_token' => 't', 'cloud_id' => 'abc',
+        ]);
         self::assertSame(['u', 't'], $client->getConfig('auth'));
         self::assertStringContainsString('jira_gateway', (string)$client->getConfig('handler'));
     }

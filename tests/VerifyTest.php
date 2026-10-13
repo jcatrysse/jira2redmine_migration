@@ -14,7 +14,8 @@ final class VerifyTest extends TestCase
 
     public function testMarkdownToTextKeepsLinkLabelsAndAltText(): void
     {
-        $text = verifyMarkdownToText("## Title\n\nSee [the manual](https://example.com/m) and ![diagram](diagram.png)\n\n| a | b |\n|---|---|\n| c | d |");
+        $markdown = "## Title\n\nSee [the manual](https://example.com/m) and ![diagram](diagram.png)\n\n| a | b |\n|---|---|\n| c | d |";
+        $text = verifyMarkdownToText($markdown);
         self::assertSame(['title', 'see', 'the', 'manual', 'and', 'diagram', 'a', 'b', 'c', 'd'], verifyWords($text));
     }
 
@@ -26,7 +27,8 @@ final class VerifyTest extends TestCase
 
     public function testJiraBrowseUrlsAreLeftOutOnBothSides(): void
     {
-        $html = '<p>See <a href="https://x.atlassian.net/browse/OAC-42?focusedCommentId=1">https://x.atlassian.net/browse/OAC-42?focusedCommentId=1</a> now</p>';
+        $url = 'https://x.atlassian.net/browse/OAC-42?focusedCommentId=1';
+        $html = '<p>See <a href="' . $url . '">' . $url . '</a> now</p>';
         self::assertSame(['see', 'now'], verifyWords(verifyHtmlToText($html)));
         self::assertSame(['see', '42', 'now'], verifyWords(verifyMarkdownToText('See #42 now <https://x.atlassian.net/browse/OAC-42>')));
     }
@@ -34,7 +36,8 @@ final class VerifyTest extends TestCase
     public function testMarkdownAutolinksAreText(): void
     {
         $text = verifyMarkdownToText('Linked with <https://example.com/docs> and <mailto:a@b.example>');
-        self::assertSame(['linked', 'with', 'https', 'example', 'com', 'docs', 'and', 'mailto', 'a', 'b', 'example'], verifyWords($text));
+        $expected = ['linked', 'with', 'https', 'example', 'com', 'docs', 'and', 'mailto', 'a', 'b', 'example'];
+        self::assertSame($expected, verifyWords($text));
     }
 
     public function testMarkdownToTextRendersUserReferencesAsNames(): void
@@ -42,7 +45,8 @@ final class VerifyTest extends TestCase
         $names = ['126' => 'Jane Doe', 'jdoe' => 'Jane Doe'];
         $resolver = static fn (string $ref): ?string => $names[$ref] ?? null;
         self::assertSame(['jane', 'doe', 'will', 'do'], verifyWords(verifyMarkdownToText('user#126 will do', $resolver)));
-        self::assertSame(['hi', 'jane', 'doe', 'mail', 'a', 'b', 'c'], verifyWords(verifyMarkdownToText('hi @jdoe, mail a@b.c', $resolver)));
+        $words = verifyWords(verifyMarkdownToText('hi @jdoe, mail a@b.c', $resolver));
+        self::assertSame(['hi', 'jane', 'doe', 'mail', 'a', 'b', 'c'], $words);
         self::assertSame(['user', '999'], verifyWords(verifyMarkdownToText('user#999', $resolver)));
     }
 

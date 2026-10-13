@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<ruleset name="jira2redmine">
+    <description>PSR-12 for the new code; the scripts join as they move to src/.</description>
+    <file>src</file>
+    <file>tests</file>
+    <file>lib/jira_gateway.php</file>
+    <file>lib/verify.php</file>
+    <rule ref="PSR12">
+        <!-- Test classes and tools live in the global namespace, loaded by tests/bootstrap.php. -->
+        <exclude name="PSR1.Classes.ClassDeclaration.MissingNamespace"/>
+    </rule>
+    <rule ref="Generic.Files.LineLength">
+        <properties>
+            <property name="lineLimit" value="140"/>
+            <property name="absoluteLineLimit" value="200"/>
+        </properties>
+    </rule>
+</ruleset>
