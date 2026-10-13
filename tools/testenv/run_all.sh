@@ -2,6 +2,7 @@
 # Full test run against one target, from a clean Redmine and an empty staging database:
 #   tools/testenv/run_all.sh 51|70 LABEL
 # Logs per step go to $BASE/runs/<target>-<LABEL>/; the verify report is the last step.
+# STABILITY=1 reruns 08 to 15 after the run and reports whether Redmine's counts changed.
 # Expects tools/testenv/setup.sh to have run, and config/config.local.php to read the environment
 # (JIRA_*, JIRA_CLOUD_ID, REDMINE_URL, REDMINE_API_KEY, STAGING_DSN, J2R_TMP, J2R_JQL, J2R_PROJECTS).
 set -u
@@ -75,6 +76,30 @@ step 13 13_migrate_tags.php --confirm-push
 step 14 14_migrate_watchers.php --confirm-push
 step 15 15_migrate_checklists.php --confirm-push
 step 16 16_export_workflows.php
+if [ -n "${STABILITY:-}" ]; then
+  # Second pass of everything after the structure (plan, B35): it must change nothing in Redmine.
+  counts() {
+    PGPASSWORD=redmine psql -h 127.0.0.1 -U redmine -d redmine$v -Atc "SELECT 'issues '||(SELECT COUNT(*) FROM issues)
+      ||', journals '||(SELECT COUNT(*) FROM journals)||', details '||(SELECT COUNT(*) FROM journal_details)
+      ||', attachments '||(SELECT COUNT(*) FROM attachments)||', relations '||(SELECT COUNT(*) FROM issue_relations)
+      ||', watchers '||(SELECT COUNT(*) FROM watchers)||', custom values '||(SELECT COUNT(*) FROM custom_values WHERE value <> '')
+      ||', members '||(SELECT COUNT(*) FROM members)||', custom fields '||(SELECT COUNT(*) FROM custom_fields)"
+  }
+  before=$(counts)
+  step 08-again 08_migrate_custom_fields.php --phases=usage,redmine,transform
+  step 08-again-push 08_migrate_custom_fields.php --phases=push --confirm-push
+  step 09-again 09_migrate_attachments.php --phases=transform,push --confirm-push
+  step 10-again 10_migrate_issues.php --phases=transform,push --confirm-push
+  step 11-again 11_migrate_journals.php --confirm-push --use-extended-api
+  step 12-again 12_migrate_issue_relations.php --confirm-push
+  step 13-again 13_migrate_tags.php --confirm-push
+  step 14-again 14_migrate_watchers.php --confirm-push
+  step 15-again 15_migrate_checklists.php --confirm-push
+  after=$(counts)
+  echo "stability before: $before" | tee -a "$logdir/summary.txt"
+  echo "stability after:  $after" | tee -a "$logdir/summary.txt"
+  [ "$before" = "$after" ] && echo "stability: unchanged" | tee -a "$logdir/summary.txt" || echo "stability: CHANGED" | tee -a "$logdir/summary.txt"
+fi
 mysql -N "$db" -e "SELECT 'issues', migration_status, COUNT(*) FROM migration_mapping_issues GROUP BY 2
   UNION ALL SELECT 'journals', migration_status, COUNT(*) FROM migration_mapping_journals GROUP BY 2
   UNION ALL SELECT 'attachments', migration_status, COUNT(*) FROM migration_mapping_attachments GROUP BY 2
