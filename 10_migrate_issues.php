@@ -16,6 +16,7 @@ use Jira2Redmine\Redmine\IssueFinalUpdate;
 use Jira2Redmine\Redmine\IssueDates;
 use Jira2Redmine\Issues\AssigneeRule;
 use Jira2Redmine\Issues\OpenParentStatus;
+use Jira2Redmine\Attachments\AttachmentNames;
 use Jira2Redmine\Jira\ProjectSelection;
 
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.1';
@@ -1426,6 +1427,14 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
 
         $notesMessage = $notes !== [] ? implode(' ', $notes) : null;
 
+        // Last step: attachment tokens become their Redmine file names (B14).
+        if ($proposedDescription !== null) {
+            $proposedDescription = AttachmentNames::rewrite(
+                $proposedDescription,
+                attachmentOriginalNamesByIssue($pdo)[(string)$row['jira_issue_id']] ?? []
+            );
+        }
+
         $newAutomationHash = computeIssueAutomationStateHash(
             $row['redmine_issue_id'],
             $redmineProjectId,
@@ -1840,7 +1849,10 @@ function runIssuePushPhase(
             'estimated_hours' => $candidate['proposed_estimated_hours'] !== null ? (float)$candidate['proposed_estimated_hours'] : null,
             'is_private' => $candidate['proposed_is_private'] !== null ? ($candidate['proposed_is_private'] ? 1 : 0) : null,
             'custom_fields' => $customFieldPayload,
-            'uploads' => buildIssueUploadPayload($redmineUploads),
+            'uploads' => buildIssueUploadPayload(
+                $redmineUploads,
+                AttachmentNames::assign(attachmentOriginalNamesByIssue($pdo)[$jiraIssueId] ?? [])
+            ),
         ], static fn($value) => $value !== null);
 
         if ($useExtendedApi) {
@@ -2525,7 +2537,7 @@ function countAssociationCandidates(PDO $pdo, string $jiraIssueId): int
  * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string}> $attachments
  * @return array<int, array<string, mixed>>
  */
-function buildIssueUploadPayload(array $attachments): array
+function buildIssueUploadPayload(array $attachments, array $finalNames = []): array
 {
     $uploads = [];
     foreach ($attachments as $attachment) {
@@ -2533,7 +2545,9 @@ function buildIssueUploadPayload(array $attachments): array
             continue;
         }
 
-        $filename = buildUploadUniqueName($attachment['jira_attachment_id'], $attachment['filename']);
+        // The Redmine file name: original, prefixed only when the issue has the name twice (B14).
+        $filename = $finalNames[(string)$attachment['jira_attachment_id']]
+            ?? buildUploadUniqueName($attachment['jira_attachment_id'], $attachment['filename']);
         $description = $attachment['filename'] !== ''
             ? $attachment['filename']
             : sprintf('Jira attachment %s', $attachment['jira_attachment_id']);

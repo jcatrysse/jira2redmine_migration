@@ -1345,3 +1345,29 @@ function normalizeAttachmentLinksInText(string $text, array $attachmentsMap): st
 
     return normalizeRedmineReferenceSpacing($text);
 }
+
+/**
+ * Jira attachment id => original file name, per Jira issue id, from staging (read once per run). Feeds
+ * Jira2Redmine\Attachments\AttachmentNames (B14).
+ *
+ * @return array<string, array<string, string>>
+ */
+function attachmentOriginalNamesByIssue(PDO $pdo): array
+{
+    static $cache = [];
+    $key = spl_object_id($pdo);
+    if (isset($cache[$key])) {
+        return $cache[$key];
+    }
+    $index = [];
+    $statement = $pdo->query('SELECT id, issue_id, filename FROM staging_jira_attachments');
+    if ($statement !== false) {
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $index[(string)$row['issue_id']][(string)$row['id']] = (string)$row['filename'];
+        }
+        $statement->closeCursor();
+    }
+
+    return $cache[$key] = $index;
+}
+

@@ -284,9 +284,21 @@ foreach ($projectKeys as $projectKey) {
         $diff = verifyCompareFiles(array_map($normalise, $expectedFiles), array_map($normalise, $actualFiles));
         $record('attachments: name and size', $diff['missing'] === [] && $diff['unexpected'] === [], $issueKey,
             'missing: ' . implode(', ', $diff['missing']) . '; unexpected: ' . implode(', ', $diff['unexpected']));
-        $exact = verifyCompareFiles($expectedFiles, $actualFiles);
-        $record('attachments: original filename', $exact['missing'] === [], $issueKey,
-            count($exact['missing']) . ' of ' . count($expectedFiles) . ' stored under another name, e.g. ' . ($exact['unexpected'][0] ?? '-'));
+        // Redmine file names: the original, "{jiraId}__" only for a name the issue has twice (B14).
+        $originals = [];
+        $sizes = [];
+        foreach ($fields['attachment'] ?? [] as $attachment) {
+            $originals[(string)$attachment['id']] = (string)$attachment['filename'];
+            $sizes[(string)$attachment['id']] = (int)$attachment['size'];
+        }
+        $expectedNames = [];
+        foreach (\Jira2Redmine\Attachments\AttachmentNames::assign($originals) as $id => $name) {
+            $expectedNames[] = [$name, $sizes[(string)$id]];
+        }
+        $exact = verifyCompareFiles($expectedNames, $actualFiles);
+        $record('attachments: file name rule', $exact['missing'] === [], $issueKey,
+            count($exact['missing']) . ' of ' . count($expectedNames) . ' under another name, e.g. expected '
+            . ($exact['missing'][0] ?? '-') . ', found ' . ($exact['unexpected'][0] ?? '-'));
         foreach ($fields['attachment'] ?? [] as $attachment) {
             if ((int)$attachment['size'] > $checksumMax) {
                 continue;

@@ -12,6 +12,7 @@ use Psr\Http\Message\ResponseInterface;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Attachments\AttachmentNames;
 const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.1';
 const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
 const JIRA_RATE_LIMIT_BASE_DELAY_MS = 1000;
@@ -859,6 +860,8 @@ function populateProposedJournalNotes(PDO $pdo): array
 
         if ($note !== '') {
             $note = replaceJiraUserLinksWithRedmineIds($note, $userLookup);
+            // Last step: attachment tokens become their Redmine file names (B14).
+            $note = AttachmentNames::rewrite($note, attachmentOriginalNamesByIssue($pdo)[(string)$jiraIssueId] ?? []);
         }
 
         $note = trim($note);
