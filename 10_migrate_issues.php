@@ -12,6 +12,7 @@ use Psr\Http\Message\ResponseInterface;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Redmine\IssueFinalUpdate;
 
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -65,6 +66,7 @@ function buildIssueCreationPayloadForPreview(
         'status_id' => $candidate['proposed_status_id'] !== null ? (int)$candidate['proposed_status_id'] : null,
         'priority_id' => $candidate['proposed_priority_id'] !== null ? (int)$candidate['proposed_priority_id'] : null,
         'subject' => isset($candidate['proposed_subject']) ? (string)$candidate['proposed_subject'] : null,
+        'description' => isset($candidate['proposed_description']) ? (string)$candidate['proposed_description'] : null,
         'start_date' => $candidate['proposed_start_date'] !== null ? (string)$candidate['proposed_start_date'] : null,
         'due_date' => $candidate['proposed_due_date'] !== null ? (string)$candidate['proposed_due_date'] : null,
         'assigned_to_id' => $candidate['proposed_assigned_to_id'] !== null ? (int)$candidate['proposed_assigned_to_id'] : null,
@@ -1800,6 +1802,8 @@ function runIssuePushPhase(
             'status_id' => $statusId,
             'priority_id' => $candidate['proposed_priority_id'] !== null ? (int)$candidate['proposed_priority_id'] : null,
             'subject' => isset($candidate['proposed_subject']) ? (string)$candidate['proposed_subject'] : null,
+            // The description goes in at creation (B10); the final update only sends what changed later.
+            'description' => isset($candidate['proposed_description']) ? (string)$candidate['proposed_description'] : null,
             'start_date' => $candidate['proposed_start_date'] !== null ? (string)$candidate['proposed_start_date'] : null,
             'due_date' => $candidate['proposed_due_date'] !== null ? (string)$candidate['proposed_due_date'] : null,
             'assigned_to_id' => $candidate['proposed_assigned_to_id'] !== null ? (int)$candidate['proposed_assigned_to_id'] : null,
@@ -1899,7 +1903,9 @@ function runIssuePushPhase(
         ]);
     }
 
-    if ($rewriteCandidates !== []) {
+    // Issues created above wait for the link rewrite too, so ask again instead of reusing the list
+    // fetched before the creations (otherwise a second run of the script was needed, B10).
+    if (fetchIssueRewriteCandidates($pdo) !== []) {
         runIssueLinkRewritePhase($pdo);
     }
 
@@ -1958,10 +1964,26 @@ function runIssuePushPhase(
             continue;
         }
 
-        $issuePayload = array_filter([
-            'description' => $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null,
-            'parent_issue_id' => $parentRedmineId,
-        ], static fn($value) => $value !== null);
+        // Send only what differs from the issue in Redmine now (B11: no journal for an unchanged description).
+        try {
+            $currentIssue = decodeJsonResponse($client->get(sprintf('issues/%d.json', $redmineIssueId)))['issue'] ?? [];
+        } catch (GuzzleException $exception) {
+            $message = sprintf('Failed to read Redmine issue #%d before the final update: %s', $redmineIssueId, $exception->getMessage());
+            $updateStatement->execute([
+                'mapping_id' => $mappingId,
+                'redmine_parent_issue_id' => null,
+                'proposed_parent_issue_id' => null,
+                'migration_status' => 'UPDATE_FAILED',
+                'notes' => $message,
+            ]);
+            printf("  [error] %s%s", $message, PHP_EOL);
+            continue;
+        }
+        $issuePayload = IssueFinalUpdate::changes(
+            $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null,
+            $parentRedmineId,
+            is_array($currentIssue) ? $currentIssue : []
+        );
 
         if ($issuePayload === []) {
             $updateStatement->execute([
@@ -1971,7 +1993,7 @@ function runIssuePushPhase(
                 'migration_status' => 'CREATION_SUCCESS',
                 'notes' => null,
             ]);
-            printf("  [skip] Jira issue %s has no description or parent to update.%s", $jiraIssueKey, PHP_EOL);
+            printf("  [skip] Jira issue %s: description and parent already up to date.%s", $jiraIssueKey, PHP_EOL);
             continue;
         }
 
@@ -2036,6 +2058,19 @@ function runIssuePushPhase(
                     }
                 } else {
                     $message .= ' (parent reopen attempt failed)';
+                }
+            }
+
+            // Redmine refused the parent (e.g. an open issue under a closed parent, B22): keep the
+            // description, report the parent.
+            if (isset($issuePayload['parent_issue_id'], $issuePayload['description'])) {
+                $withoutParent = $options;
+                unset($withoutParent['json']['issue']['parent_issue_id']);
+                try {
+                    $client->request($method, $endpoint, $withoutParent);
+                    $message = sprintf('Description updated; parent #%d not set. %s', $parentRedmineId, $message);
+                } catch (Throwable $descriptionException) {
+                    $message .= sprintf('; description update without the parent failed too: %s', $descriptionException->getMessage());
                 }
             }
 
