@@ -7,6 +7,8 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
+use Jira2Redmine\Http\ClientFactory;
+use Jira2Redmine\Database\ConnectionFactory;
 
 const MIGRATE_CHECKLISTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -543,16 +545,7 @@ function extractChecklistItems(array $issue, string $primaryRenderedField, strin
  */
 function createDatabaseConnection(array $config): PDO
 {
-    $dsn = isset($config['dsn']) ? (string)$config['dsn'] : '';
-    $username = isset($config['username']) ? (string)$config['username'] : '';
-    $password = isset($config['password']) ? (string)$config['password'] : '';
-    $options = isset($config['options']) && is_array($config['options']) ? $config['options'] : [];
-
-    $pdo = new PDO($dsn, $username, $password, $options);
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-
-    return $pdo;
+    return ConnectionFactory::connect($config, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 }
 
 /**
@@ -561,20 +554,7 @@ function createDatabaseConnection(array $config): PDO
  */
 function createRedmineClient(array $config): Client
 {
-    $baseUrl = isset($config['base_url']) ? rtrim((string)$config['base_url'], '/') : '';
-    $apiKey = isset($config['api_key']) ? (string)$config['api_key'] : '';
-
-    if ($baseUrl === '' || $apiKey === '') {
-        throw new RuntimeException('Incomplete Redmine configuration.');
-    }
-
-    return new Client([
-        'base_uri' => $baseUrl,
-        'headers' => [
-            'Accept' => 'application/json',
-            'X-Redmine-API-Key' => $apiKey,
-        ],
-    ]);
+    return ClientFactory::redmine($config);
 }
 
 /**

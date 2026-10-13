@@ -7,6 +7,8 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
+use Jira2Redmine\Http\ClientFactory;
+use Jira2Redmine\Database\ConnectionFactory;
 
 const EXPORT_WORKFLOWS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -1109,16 +1111,7 @@ function calculateRateLimitDelayMs(int $attempt, ?int $retryAfterSeconds): int
  */
 function createDatabaseConnection(array $config): PDO
 {
-    $dsn = isset($config['dsn']) ? (string)$config['dsn'] : '';
-    $username = isset($config['username']) ? (string)$config['username'] : '';
-    $password = isset($config['password']) ? (string)$config['password'] : '';
-    $options = isset($config['options']) && is_array($config['options']) ? $config['options'] : [];
-
-    $pdo = new PDO($dsn, $username, $password, $options);
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-
-    return $pdo;
+    return ConnectionFactory::connect($config, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 }
 
 /**
@@ -1127,22 +1120,7 @@ function createDatabaseConnection(array $config): PDO
  */
 function createJiraClient(array $config): Client
 {
-    $baseUrl = isset($config['base_url']) ? rtrim((string)$config['base_url'], '/') : '';
-    $username = isset($config['username']) ? (string)$config['username'] : '';
-    $apiToken = isset($config['api_token']) ? (string)$config['api_token'] : '';
-
-    if ($baseUrl === '' || $username === '' || $apiToken === '') {
-        throw new RuntimeException('Incomplete Jira configuration.');
-    }
-
-    return new Client([
-        'base_uri' => $baseUrl,
-        'handler' => jiraHandlerStack($config),
-        'headers' => [
-            'Accept' => 'application/json',
-        ],
-        'auth' => [$username, $apiToken],
-    ]);
+    return ClientFactory::jira($config);
 }
 
 /**

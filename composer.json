@@ -4,6 +4,7 @@
   "type": "project",
   "autoload": {
     "psr-4": {
+      "Jira2Redmine\\": "src/",
       "Karvaka\\AdfToGfm\\": "Karvaka/AdfToGfm/src/"
     }
   },

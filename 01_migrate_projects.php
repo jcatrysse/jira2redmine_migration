@@ -8,6 +8,8 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
+use Jira2Redmine\Http\ClientFactory;
+use Jira2Redmine\Database\ConnectionFactory;
 
 const MIGRATE_PROJECTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -1645,30 +1647,7 @@ function extractArrayConfig(array $config, string $key): array
  */
 function createDatabaseConnection(array $databaseConfig): PDO
 {
-    $dsn = trim((string)($databaseConfig['dsn'] ?? ''));
-    $username = (string)($databaseConfig['username'] ?? '');
-    $password = (string)($databaseConfig['password'] ?? '');
-
-    if ($dsn === '') {
-        throw new RuntimeException('Database DSN is not configured.');
-    }
-
-    $options = $databaseConfig['options'] ?? [];
-    if (!is_array($options)) {
-        throw new RuntimeException('Database options configuration must be an array.');
-    }
-
-    $options[PDO::ATTR_ERRMODE] = PDO::ERRMODE_EXCEPTION;
-    $options[PDO::ATTR_DEFAULT_FETCH_MODE] = PDO::FETCH_ASSOC;
-    $options[PDO::ATTR_EMULATE_PREPARES] = false;
-
-    try {
-        $pdo = new PDO($dsn, $username, $password, $options);
-    } catch (PDOException $exception) {
-        throw new RuntimeException('Unable to connect to the database: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    return $pdo;
+    return ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false]);
 }
 
 /**
@@ -1676,23 +1655,7 @@ function createDatabaseConnection(array $databaseConfig): PDO
  */
 function createJiraClient(array $jiraConfig): Client
 {
-    $baseUrl = trim((string)($jiraConfig['base_url'] ?? ''));
-    $username = (string)($jiraConfig['username'] ?? '');
-    $apiToken = (string)($jiraConfig['api_token'] ?? '');
-
-    if ($baseUrl === '' || $username === '' || $apiToken === '') {
-        throw new RuntimeException('Jira configuration must include base_url, username, and api_token.');
-    }
-
-    return new Client([
-        'base_uri' => rtrim($baseUrl, '/') . '/',
-        'handler' => jiraHandlerStack($jiraConfig),
-        'auth' => [$username, $apiToken],
-        'headers' => [
-            'Accept' => 'application/json',
-        ],
-        'timeout' => 30,
-    ]);
+    return ClientFactory::jira($jiraConfig, 30.0);
 }
 
 /**
@@ -1700,21 +1663,7 @@ function createJiraClient(array $jiraConfig): Client
  */
 function createRedmineClient(array $redmineConfig): Client
 {
-    $baseUrl = trim((string)($redmineConfig['base_url'] ?? ''));
-    $apiKey = (string)($redmineConfig['api_key'] ?? '');
-
-    if ($baseUrl === '' || $apiKey === '') {
-        throw new RuntimeException('Redmine configuration must include base_url and api_key.');
-    }
-
-    return new Client([
-        'base_uri' => rtrim($baseUrl, '/') . '/',
-        'headers' => [
-            'X-Redmine-API-Key' => $apiKey,
-            'Accept' => 'application/json',
-        ],
-        'timeout' => 30,
-    ]);
+    return ClientFactory::redmine($redmineConfig, 30.0);
 }
 
 function formatCurrentTimestamp(?string $format = null): string

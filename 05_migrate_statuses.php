@@ -8,6 +8,8 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
+use Jira2Redmine\Http\ClientFactory;
+use Jira2Redmine\Database\ConnectionFactory;
 
 const MIGRATE_STATUSES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -1083,59 +1085,17 @@ function extractArrayConfig(array $config, string $key): array
 
 function createDatabaseConnection(array $databaseConfig): PDO
 {
-    $dsn = (string)($databaseConfig['dsn'] ?? '');
-    $username = (string)($databaseConfig['username'] ?? '');
-    $password = (string)($databaseConfig['password'] ?? '');
-    $options = isset($databaseConfig['options']) && is_array($databaseConfig['options']) ? $databaseConfig['options'] : [];
-
-    if ($dsn === '') {
-        throw new RuntimeException('Database configuration must include a DSN.');
-    }
-
-    $pdo = new PDO($dsn, $username, $password, $options);
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-
-    return $pdo;
+    return ConnectionFactory::connect($databaseConfig, []);
 }
 
 function createJiraClient(array $jiraConfig): Client
 {
-    $baseUrl = trim((string)($jiraConfig['base_url'] ?? ''));
-    $username = (string)($jiraConfig['username'] ?? '');
-    $apiToken = (string)($jiraConfig['api_token'] ?? '');
-
-    if ($baseUrl === '' || $username === '' || $apiToken === '') {
-        throw new RuntimeException('Jira configuration must include base_url, username, and api_token.');
-    }
-
-    return new Client([
-        'base_uri' => rtrim($baseUrl, '/') . '/',
-        'handler' => jiraHandlerStack($jiraConfig),
-        'auth' => [$username, $apiToken],
-        'headers' => [
-            'Accept' => 'application/json',
-        ],
-        'timeout' => 30,
-    ]);
+    return ClientFactory::jira($jiraConfig, 30.0);
 }
 
 function createRedmineClient(array $redmineConfig): Client
 {
-    $baseUrl = trim((string)($redmineConfig['base_url'] ?? ''));
-    $apiKey = (string)($redmineConfig['api_key'] ?? '');
-
-    if ($baseUrl === '' || $apiKey === '') {
-        throw new RuntimeException('Redmine configuration must include base_url and api_key.');
-    }
-
-    return new Client([
-        'base_uri' => rtrim($baseUrl, '/') . '/',
-        'headers' => [
-            'X-Redmine-API-Key' => $apiKey,
-            'Accept' => 'application/json',
-        ],
-        'timeout' => 30,
-    ]);
+    return ClientFactory::redmine($redmineConfig, 30.0);
 }
 
 function decodeJsonResponse(ResponseInterface $response): mixed

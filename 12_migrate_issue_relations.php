@@ -8,6 +8,8 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
+use Jira2Redmine\Http\ClientFactory;
+use Jira2Redmine\Database\ConnectionFactory;
 
 const MIGRATE_RELATIONS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -849,53 +851,12 @@ function extractArrayConfig(array $config, string $key): array
 
 function createDatabaseConnection(array $databaseConfig): PDO
 {
-    $dsn = isset($databaseConfig['dsn']) ? (string)$databaseConfig['dsn'] : '';
-    if ($dsn === '') {
-        $host = (string)($databaseConfig['host'] ?? 'localhost');
-        $port = (int)($databaseConfig['port'] ?? 3306);
-        $dbname = (string)($databaseConfig['dbname'] ?? 'migration');
-        $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $host, $port, $dbname);
-    }
-    $user = (string)($databaseConfig['username'] ?? ($databaseConfig['user'] ?? ''));
-    $password = (string)($databaseConfig['password'] ?? '');
-    $options = isset($databaseConfig['options']) && is_array($databaseConfig['options'])
-        ? $databaseConfig['options']
-        : [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        ];
-
-    try {
-        $pdo = new PDO($dsn, $user, $password, $options);
-        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-    } catch (PDOException $exception) {
-        throw new RuntimeException('Unable to connect to the database: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    return $pdo;
+    return ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 }
 
 function createRedmineClient(array $redmineConfig): Client
 {
-    $baseUri = (string)($redmineConfig['base_url'] ?? $redmineConfig['base_uri'] ?? '');
-    $baseUri = rtrim($baseUri, '/');
-    if ($baseUri === '') {
-        throw new RuntimeException('Redmine base_url is required.');
-    }
-
-    $apiKey = (string)($redmineConfig['api_key'] ?? '');
-    if ($apiKey === '') {
-        throw new RuntimeException('Redmine API key is required.');
-    }
-
-    return new Client([
-        'base_uri' => $baseUri,
-        'headers' => [
-            'X-Redmine-API-Key' => $apiKey,
-            'Accept' => 'application/json',
-        ],
-    ]);
+    return ClientFactory::redmine($redmineConfig);
 }
 
 function formatCurrentTimestamp(string $format = 'Y-m-d H:i:s'): string

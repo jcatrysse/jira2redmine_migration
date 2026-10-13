@@ -10,6 +10,8 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
+use Jira2Redmine\Http\ClientFactory;
+use Jira2Redmine\Database\ConnectionFactory;
 const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.1';
 const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
 const JIRA_RATE_LIMIT_BASE_DELAY_MS = 1000;
@@ -2022,16 +2024,7 @@ function normalizeJiraTimestamp(mixed $value): ?string
  */
 function createDatabaseConnection(array $config): PDO
 {
-    $dsn = isset($config['dsn']) ? (string)$config['dsn'] : '';
-    $username = isset($config['username']) ? (string)$config['username'] : '';
-    $password = isset($config['password']) ? (string)$config['password'] : '';
-    $options = isset($config['options']) && is_array($config['options']) ? $config['options'] : [];
-
-    $pdo = new PDO($dsn, $username, $password, $options);
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-
-    return $pdo;
+    return ConnectionFactory::connect($config, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 }
 
 /**
@@ -2040,22 +2033,7 @@ function createDatabaseConnection(array $config): PDO
  */
 function createJiraClient(array $config): Client
 {
-    $baseUrl = isset($config['base_url']) ? rtrim((string)$config['base_url'], '/') : '';
-    $username = isset($config['username']) ? (string)$config['username'] : '';
-    $apiToken = isset($config['api_token']) ? (string)$config['api_token'] : '';
-
-    if ($baseUrl === '' || $username === '' || $apiToken === '') {
-        throw new RuntimeException('Incomplete Jira configuration.');
-    }
-
-    return new Client([
-        'base_uri' => $baseUrl,
-        'handler' => jiraHandlerStack($config),
-        'headers' => [
-            'Accept' => 'application/json',
-        ],
-        'auth' => [$username, $apiToken],
-    ]);
+    return ClientFactory::jira($config);
 }
 
 /**
@@ -2064,20 +2042,7 @@ function createJiraClient(array $config): Client
  */
 function createRedmineClient(array $config): Client
 {
-    $baseUrl = isset($config['base_url']) ? rtrim((string)$config['base_url'], '/') : '';
-    $apiKey = isset($config['api_key']) ? (string)$config['api_key'] : '';
-
-    if ($baseUrl === '' || $apiKey === '') {
-        throw new RuntimeException('Incomplete Redmine configuration.');
-    }
-
-    return new Client([
-        'base_uri' => $baseUrl,
-        'headers' => [
-            'Accept' => 'application/json',
-            'X-Redmine-API-Key' => $apiKey,
-        ],
-    ]);
+    return ClientFactory::redmine($config);
 }
 
 /**
