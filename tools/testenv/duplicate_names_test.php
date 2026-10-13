@@ -29,20 +29,24 @@ function upload(Client $client, string $name, string $content): string
 }
 
 $files = ['A' => png(255, 0, 0), 'B' => png(0, 255, 0), 'C' => png(0, 0, 255), 'D' => png(255, 255, 0)];
+// --rule: name the attachments as the migration does (B14): the second of a pair gets the Jira id prefix.
+$rule = in_array('--rule', $argv, true);
+$names = \Jira2Redmine\Attachments\AttachmentNames::assign(['1' => 'image.png', '2' => 'image.png', '3' => 'shot.png', '4' => 'shot.png']);
+$n = static fn (string $id, string $name): string => $rule ? $names[$id] : $name;
 $issue = json_decode((string)$client->post('issues.json', ['json' => ['issue' => [
     'project_id' => $project,
     'subject' => 'B14 duplicate attachment names',
-    'description' => "First image.png (uploaded first, red):\n\n![](image.png)",
+    'description' => "First image.png (red):\n\n![](image.png)\n\nSecond (green):\n\n![](" . rawurlencode($n('2', 'image.png')) . ")",
     'uploads' => [
-        ['token' => upload($client, 'image.png', $files['A']), 'filename' => 'image.png', 'description' => 'A red, first'],
-        ['token' => upload($client, 'image.png', $files['B']), 'filename' => 'image.png', 'description' => 'B green, second'],
+        ['token' => upload($client, 'image.png', $files['A']), 'filename' => $n('1', 'image.png'), 'description' => 'A red, first'],
+        ['token' => upload($client, 'image.png', $files['B']), 'filename' => $n('2', 'image.png'), 'description' => 'B green, second'],
     ],
 ]]])->getBody(), true)['issue'];
 $client->put(sprintf('issues/%d.json', $issue['id']), ['json' => ['issue' => [
-    'notes' => "Comment with shot.png:\n\n![](shot.png)",
+    'notes' => "Comment, first shot.png (blue):\n\n![](shot.png)\n\nsecond (yellow):\n\n![](" . rawurlencode($n('4', 'shot.png')) . ")",
     'uploads' => [
-        ['token' => upload($client, 'shot.png', $files['C']), 'filename' => 'shot.png', 'description' => 'C blue, first'],
-        ['token' => upload($client, 'shot.png', $files['D']), 'filename' => 'shot.png', 'description' => 'D yellow, second'],
+        ['token' => upload($client, 'shot.png', $files['C']), 'filename' => $n('3', 'shot.png'), 'description' => 'C blue, first'],
+        ['token' => upload($client, 'shot.png', $files['D']), 'filename' => $n('4', 'shot.png'), 'description' => 'D yellow, second'],
     ],
 ]]]);
 $detail = json_decode((string)$client->get(sprintf('issues/%d.json', $issue['id']), ['query' => ['include' => 'attachments,journals']])->getBody(), true)['issue'];
