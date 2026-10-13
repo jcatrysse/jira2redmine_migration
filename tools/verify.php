@@ -117,17 +117,20 @@ function verifyDownloadHash(Client $client, string $url): string
 }
 
 // Redmine users, to render user#id and @login as Redmine does.
+// Per status (active, registered, locked): "status=" means all on 5.1 but is refused on 7.0.
 $userNames = [];
-$offset = 0;
-do {
-    $page = verifyGetJson($redmine, 'users.json', ['status' => '', 'limit' => 100, 'offset' => $offset]);
-    foreach ($page['users'] ?? [] as $user) {
-        $name = trim($user['firstname'] . ' ' . $user['lastname']);
-        $userNames[(string)$user['id']] = $name;
-        $userNames[(string)$user['login']] = $name;
-    }
-    $offset += 100;
-} while ($offset < (int)($page['total_count'] ?? 0));
+foreach ([1, 2, 3] as $status) {
+    $offset = 0;
+    do {
+        $page = verifyGetJson($redmine, 'users.json', ['status' => $status, 'limit' => 100, 'offset' => $offset]);
+        foreach ($page['users'] ?? [] as $user) {
+            $name = trim($user['firstname'] . ' ' . $user['lastname']);
+            $userNames[(string)$user['id']] = $name;
+            $userNames[(string)$user['login']] = $name;
+        }
+        $offset += 100;
+    } while ($offset < (int)($page['total_count'] ?? 0));
+}
 $userName = static fn (string $ref): ?string => $userNames[$ref] ?? null;
 
 $results = [];
@@ -252,11 +255,15 @@ foreach ($projectKeys as $projectKey) {
             $page = verifyGetJson($jira, sprintf('/rest/api/3/issue/%s/comment', $jiraId), ['expand' => 'renderedBody', 'startAt' => $startAt, 'maxResults' => 100]);
             foreach ($page['comments'] ?? [] as $comment) {
                 $words = verifyWords(verifyHtmlToText((string)($comment['renderedBody'] ?? '')));
-                $best = 0.0;
+                $best = ['coverage' => 0.0, 'missing' => $words];
                 foreach ($notes as $noteWords) {
-                    $best = max($best, verifyWordCoverage($words, $noteWords)['coverage']);
+                    $match = verifyWordCoverage($words, $noteWords);
+                    if ($match['coverage'] > $best['coverage']) {
+                        $best = $match;
+                    }
                 }
-                $record('comments', $best >= 0.95, $issueKey . ' comment ' . $comment['id'], sprintf('best journal match %.1f%%', 100 * $best));
+                $record('comments', $best['coverage'] >= 0.95, $issueKey . ' comment ' . $comment['id'],
+                    sprintf('best journal match %.1f%%; missing: %s', 100 * $best['coverage'], implode(' ', array_slice($best['missing'], 0, 12))));
             }
             $startAt += count($page['comments'] ?? []);
         } while ($startAt < (int)($page['total'] ?? 0) && ($page['comments'] ?? []) !== []);

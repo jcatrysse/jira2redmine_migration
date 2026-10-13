@@ -18,10 +18,23 @@ final class VerifyTest extends TestCase
         self::assertSame(['title', 'see', 'the', 'manual', 'and', 'diagram', 'a', 'b', 'c', 'd'], verifyWords($text));
     }
 
+    public function testCodeKeepsAngleBrackets(): void
+    {
+        $text = verifyMarkdownToText("```\n=ATAN(<depth>/<distance>)\n```\nand `<b>` too");
+        self::assertSame(['atan', 'depth', 'distance', 'and', 'b', 'too'], verifyWords($text));
+    }
+
+    public function testJiraBrowseUrlsAreLeftOutOnBothSides(): void
+    {
+        $html = '<p>See <a href="https://x.atlassian.net/browse/OAC-42?focusedCommentId=1">https://x.atlassian.net/browse/OAC-42?focusedCommentId=1</a> now</p>';
+        self::assertSame(['see', 'now'], verifyWords(verifyHtmlToText($html)));
+        self::assertSame(['see', '42', 'now'], verifyWords(verifyMarkdownToText('See #42 now <https://x.atlassian.net/browse/OAC-42>')));
+    }
+
     public function testMarkdownAutolinksAreText(): void
     {
-        $text = verifyMarkdownToText('Linked with <https://example.atlassian.net/browse/ABC-18> and <mailto:a@b.example>');
-        self::assertSame(['linked', 'with', 'https', 'example', 'atlassian', 'net', 'browse', 'abc', '18', 'and', 'mailto', 'a', 'b', 'example'], verifyWords($text));
+        $text = verifyMarkdownToText('Linked with <https://example.com/docs> and <mailto:a@b.example>');
+        self::assertSame(['linked', 'with', 'https', 'example', 'com', 'docs', 'and', 'mailto', 'a', 'b', 'example'], verifyWords($text));
     }
 
     public function testMarkdownToTextRendersUserReferencesAsNames(): void

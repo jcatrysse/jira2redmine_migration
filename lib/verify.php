@@ -19,9 +19,18 @@ function verifyHtmlToText(?string $html): string
     $html = preg_replace('#<(script|style)\b[^>]*>.*?</\1>#is', ' ', $html) ?? $html;
     // Block elements and line breaks separate words.
     $html = preg_replace('#<(br|/p|/div|/li|/tr|/td|/th|/h[1-6]|/pre|/blockquote)\b[^>]*>#i', ' ', $html) ?? $html;
-    $text = strip_tags($html);
+    $text = html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
-    return html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    return verifyDropJiraBrowseUrls($text);
+}
+
+/**
+ * Links to Jira issues (".../browse/ABC-12...") are rewritten to Redmine issue links (#123) by design;
+ * they are left out of the word comparison on both sides.
+ */
+function verifyDropJiraBrowseUrls(string $text): string
+{
+    return preg_replace('#https?://[^\s"<>()\[\]]+/browse/[A-Z][A-Z0-9_]*-\d+[^\s"<>()\[\]]*#', ' ', $text) ?? $text;
 }
 
 /**
@@ -37,7 +46,12 @@ function verifyMarkdownToText(?string $markdown, ?callable $userName = null): st
         return '';
     }
 
-    $text = $markdown;
+    // Code is text: keep "<depth>" in a code block from being stripped as a tag.
+    $text = preg_replace_callback(
+        '/(```|~~~)[^\n]*\n(.*?)\1|`([^`\n]+)`/s',
+        static fn (array $m): string => ' ' . htmlspecialchars(($m[2] ?? '') !== '' ? $m[2] : ($m[3] ?? ''), ENT_QUOTES, 'UTF-8') . ' ',
+        $markdown
+    ) ?? $markdown;
     if ($userName !== null) {
         $text = preg_replace_callback(
             '/\buser#(\d+)|(?<![\w@])@([A-Za-z0-9_.@-]*[A-Za-z0-9_])/u',
@@ -57,7 +71,7 @@ function verifyMarkdownToText(?string $markdown, ?callable $userName = null): st
     $text = strip_tags($text);
     $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
-    return $text;
+    return verifyDropJiraBrowseUrls($text);
 }
 
 /**
