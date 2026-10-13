@@ -11,6 +11,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\CustomFields\MappingKeys;
 use Jira2Redmine\CustomFields\UsedValues;
 use Jira2Redmine\CustomFields\DependingValueDependencies;
 use Jira2Redmine\CustomFields\UsageScopes;
@@ -2507,15 +2508,24 @@ function parseCascadingAllowedValues(array $allowedValues): ?array
 
 function purgeOrphanedCustomFieldMappings(PDO $pdo): void
 {
-    $sql = <<<SQL
-        DELETE map
-        FROM migration_mapping_custom_fields map
-        LEFT JOIN staging_jira_fields jf ON jf.id = map.jira_field_id AND jf.is_custom = 1
-        WHERE jf.id IS NULL
-    SQL;
-
     try {
-        $pdo->exec($sql);
+        $mappings = $pdo->query('SELECT mapping_id, jira_field_id FROM migration_mapping_custom_fields');
+        $fields = $pdo->query('SELECT id FROM staging_jira_fields WHERE is_custom = 1');
+        if ($mappings === false || $fields === false) {
+            throw new RuntimeException('Failed to read custom field mappings for the purge.');
+        }
+        /** @var array<int|string, string> $mappingKeys */
+        $mappingKeys = $mappings->fetchAll(PDO::FETCH_KEY_PAIR);
+        $jiraFieldIds = array_fill_keys(array_map('strval', $fields->fetchAll(PDO::FETCH_COLUMN)), true);
+
+        $delete = $pdo->prepare('DELETE FROM migration_mapping_custom_fields WHERE mapping_id = :mapping_id');
+        if ($delete === false) {
+            throw new RuntimeException('Failed to prepare the custom field mapping purge.');
+        }
+        // A cascading parent row stays while its Jira field exists (B43).
+        foreach (MappingKeys::orphans($mappingKeys, $jiraFieldIds) as $mappingId) {
+            $delete->execute(['mapping_id' => $mappingId]);
+        }
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to purge orphaned custom field mappings: ' . $exception->getMessage(), 0, $exception);
     }
