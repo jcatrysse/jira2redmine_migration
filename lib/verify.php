@@ -260,7 +260,7 @@ function verifySample(array $ids, int $size): array
  *
  * @param iterable<array{jira_issue_id: string|int, jira_status_id: string|int, proposed_status_id: string|int|null,
  *     notes: ?string, is_parent: string|int|bool}> $rows migration_mapping_issues rows
- * @param array<string, string> $statusMap Jira status id => Redmine status id
+ * @param array<int|string, string> $statusMap Jira status id => Redmine status id
  * @return array<string, string> Jira issue id => expected Redmine status id
  */
 function verifyOpenParents(iterable $rows, array $statusMap): array

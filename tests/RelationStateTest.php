@@ -20,7 +20,8 @@ final class RelationStateTest extends TestCase
     {
         $ready = self::READY + ['automation_hash' => RelationState::hash(18, 15, null, 'relates_to_wiki', 'READY_FOR_CREATION', null)];
 
-        $failed = array_merge($ready, RelationState::failed($ready, 'Failed to create Redmine relation (HTTP 422): Relation type is not included in the list'));
+        $message = 'Failed to create Redmine relation (HTTP 422): Relation type is not included in the list';
+        $failed = array_merge($ready, RelationState::failed($ready, $message));
 
         self::assertFalse(RelationState::isHandEdited($failed));
     }

@@ -118,7 +118,7 @@ final class VerifyTest extends TestCase
             // not a parent: a different status is a defect, not a rule
             ['jira_issue_id' => '102', 'jira_status_id' => '6', 'proposed_status_id' => '3', 'notes' => null, 'is_parent' => 0],
             // still noted (before the push)
-            ['jira_issue_id' => '103', 'jira_status_id' => '1', 'proposed_status_id' => '3', 'notes' => '[open-parent] x', 'is_parent' => 1],
+            ['jira_issue_id' => '103', 'jira_status_id' => '1', 'proposed_status_id' => '3', 'notes' => '[open-parent]', 'is_parent' => 1],
         ];
 
         self::assertSame(['100' => '3', '103' => '3'], verifyOpenParents($rows, ['6' => '5', '1' => '1']));
