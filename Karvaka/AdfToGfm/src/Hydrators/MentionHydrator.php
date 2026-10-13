@@ -19,6 +19,9 @@ class MentionHydrator implements HydratorInterface
         if (isset($schema->attrs->text)) {
             $node->setText((string)$schema->attrs->text);
         }
+        if (isset($schema->attrs->id)) {
+            $node->setAccountId((string)$schema->attrs->id);
+        }
 
         return $node;
     }

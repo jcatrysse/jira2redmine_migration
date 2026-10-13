@@ -920,6 +920,45 @@ function replaceIssueLinksWithRedmineIds(
  */
 function replaceJiraUserLinksWithRedmineIds(string $text, array $userLookup): string
 {
+    return rewriteUserIdsAsMentions(replaceJiraUserLinksWithRedmineIdsOnly($text, $userLookup), $userLookup);
+}
+
+/**
+ * Decision 4: a mention becomes "@login", Redmine's own mention syntax (rendered as a link, notifies the
+ * user, found by mention search), instead of the plain user link "user#id". Users whose login is not
+ * known keep "user#id".
+ *
+ * @param array<string, array<string, mixed>> $userLookup Jira account id => row with redmine_user_id, redmine_login
+ */
+function rewriteUserIdsAsMentions(string $text, array $userLookup): string
+{
+    $logins = [];
+    foreach ($userLookup as $row) {
+        $id = isset($row['redmine_user_id']) ? (int)$row['redmine_user_id'] : 0;
+        $login = isset($row['redmine_login']) ? trim((string)$row['redmine_login']) : '';
+        if ($id > 0 && $login !== '' && preg_match('/^[A-Za-z0-9_\-@.]+$/', $login) === 1) {
+            $logins[$id] = $login;
+        }
+    }
+    if ($logins === []) {
+        return $text;
+    }
+
+    return preg_replace_callback(
+        '/(?<![\w#@\/])user#(\d+)(?!\d)(?: (?=[,;:!?.)]))?(?=(\w?))/',
+        static function (array $m) use ($logins): string {
+            if (!isset($logins[(int)$m[1]])) {
+                return $m[0];
+            }
+            // Redmine needs a boundary after the login: a space before a letter, none before punctuation.
+            return '@' . $logins[(int)$m[1]] . ($m[2] !== '' ? ' ' : '');
+        },
+        $text
+    ) ?? $text;
+}
+
+function replaceJiraUserLinksWithRedmineIdsOnly(string $text, array $userLookup): string
+{
     if (trim($text) === '') return $text;
 
     $text = preg_replace('/user#(\d+)\s+class=/i', 'user#$1', $text) ?? $text;
@@ -948,7 +987,8 @@ function replaceJiraUserLinksWithRedmineIds(string $text, array $userLookup): st
     };
 
     // 1) Markdown links: [Name](https://...ViewProfile.jspa?accountId=...)
-    $text = preg_replace_callback('/\[(.*?)]\(\s*(https?:\/\/[^)\s]+)\s*\)/mi', function ($m) use ($replaceAccountId) {
+    // (also the relative profile link that the ADF path writes for a mention)
+    $text = preg_replace_callback('/\[(.*?)]\(\s*(https?:\/\/[^)\s]+|\/secure\/ViewProfile\.jspa\?[^)\s]+)\s*\)/mi', function ($m) use ($replaceAccountId) {
         $label = $m[1];
         $url = $m[2];
         $repl = $replaceAccountId($url);

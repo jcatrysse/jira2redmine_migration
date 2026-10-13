@@ -1860,7 +1860,11 @@ function normalizeStoredAutomationHash(mixed $value): ?string
  */
 function buildRedmineUserLookup(PDO $pdo): array
 {
-    $statement = $pdo->query('SELECT jira_account_id, redmine_user_id, migration_status FROM migration_mapping_users');
+    // The login turns mentions into @login (decision 4).
+    $statement = $pdo->query(
+        'SELECT m.jira_account_id, m.redmine_user_id, m.migration_status, COALESCE(r.login, m.proposed_redmine_login) AS redmine_login'
+        . ' FROM migration_mapping_users m LEFT JOIN staging_redmine_users r ON r.id = m.redmine_user_id'
+    );
     if ($statement === false) {
         throw new RuntimeException('Failed to load user mappings.');
     }
