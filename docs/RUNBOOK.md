@@ -1,22 +1,41 @@
 # Runbook: a Jira Cloud to Redmine migration
 
-The order, the commands and what to check after each step, as tested on Redmine 5.1 and 7.0 with
-GEOS, SIS and OAC (see docs/MIGRATION-PLAN.md for the numbers and the findings behind every step).
-`tools/testenv/run_all.sh` runs the same sequence against the test environment.
+The order, the commands and what to check after each step. Tested on Redmine 5.1 and 7.0 with GEOS,
+SIS and OAC (426 issues, 1,101 comments, 576 attachments); the numbers and the findings behind each
+step are in docs/MIGRATION-PLAN.md. `tools/testenv/run_all.sh 51|70 LABEL` runs this sequence against
+the test environment, verify included.
 
 Every script has the phases `jira` (extract), `redmine` (snapshot), `transform` (mapping) and `push`
-(write). Nothing is written to Redmine without `--confirm-push`; preview with `--dry-run` first.
-Every script can be rerun: rows already migrated are skipped, failed rows are tried again.
+(write). Nothing is written to Redmine without `--confirm-push`; preview with `--dry-run` first. Every
+script can be rerun: migrated rows are skipped, failed and manual rows are judged again, rows edited by
+hand in the mapping tables keep their edits (automation hash).
 
 ## 0. Before the run
 
 | what | how | check |
 |---|---|---|
-| Jira token | scoped API token, read scopes only (decision 1); `jira.base_url` the site, `jira.cloud_id` from `https://<site>/_edge/tenant_info` | write probe: `PUT /rest/api/3/issue/<NONEXIST-1>` through the gateway answers 401 "scope does not match" |
-| Redmine | REST API on, CommonMark, an admin API key, `redmine_extended_api` installed | `GET /extended_api/...` answers with header `X-Redmine-Extended-API` |
-| Config | `config/config.local.php`: Jira, Redmine, staging DSN, `migration.issues.projects`, `default_redmine_author_id` (for app accounts and people without e-mail) | `php 01_migrate_projects.php --phases=jira` extracts the projects (0 projects stops with the causes) |
-| Staging | empty database from `database/schema.sql` | |
-| Redmine, manual (decide per item, plan work list 15) | open workflows for the new trackers (otherwise every issue is created in the default status); switch off attachment prune, LDAP sync, stealth mode; give the roles that watch issues `view_watched_issues` (redmine_view_issue_description) | |
+| Jira token | scoped API token with read scopes only (decision 1, plan): `read:jira-work`, `read:jira-user` and the granular read scopes for groups, roles, workflows, schemes, screens and field configurations | write probe through the gateway, `PUT /rest/api/3/issue/NONEXIST-1`: 401 "scope does not match" (a 404 means the token can write) |
+| Jira config | `jira.base_url` the site (`https://<site>.atlassian.net`, used for links back), `jira.cloud_id` from `https://<site>/_edge/tenant_info` (all API calls then go through the gateway) | `php 01_migrate_projects.php --phases=jira` lists the projects; 0 projects stops with the likely causes |
+| Redmine | REST API on, text formatting CommonMark, an admin API key, `redmine_extended_api` installed, `attachment_max_size` above the largest attachment | `curl -H "X-Redmine-API-Key: ..." <redmine>/extended_api/issues.json` answers with header `X-Redmine-Extended-API` |
+| Redmine settings | parent priority independent (Administration, Settings, Issue tracking: parent attributes); GEOxyz relation types in `redmine_issue_view_columns.local.rb` (`tools/testenv/redmine_issue_view_columns.local.rb` is generated from `migration.relations.custom_mappings`) | |
+| Config | `config/config.local.php`: staging DSN, `migration.issues.projects` (the projects of this run), `migration.issues.default_redmine_author_id` and `migration.journals.default_redmine_author_id` (content of Jira app accounts and of people without a visible e-mail), `attachments.download_concurrency` (6 is safe) | |
+| Staging | an empty MySQL database from `database/schema.sql` | |
+| Web server | see the appendix: X-Sendfile, `LimitRequestBody` above the largest attachment, `TimeOut` 600; `SetEnv RACK_QUERY_PARSER_PARAMS_LIMIT 12000` (large custom field forms) | |
+
+### Manual steps around the run (each a choice, see "Choices for Jan" below)
+
+`tools/testenv/manual_steps.rb` does the first three on the test instances:
+
+1. **Open the workflows** (`J2R_STEP=workflows`): every transition for the roles that create issues, new
+   issues included. Without it every issue is created in its tracker's default status (B12). The step
+   records what it adds; `J2R_STEP=restore` removes exactly that after the run.
+2. **Activate locked users and add them to the projects** (`J2R_STEP=members`): Redmine refuses a locked
+   user or a non-member as assignee (B5). Activated users are flagged and locked again by `restore`.
+   With the new token, 04_migrate_roles.php adds the project memberships itself.
+3. **Watch permission**: roles need `view_watched_issues` (redmine_view_issue_description), otherwise
+   Redmine drops watchers silently (14 now reports them as FAILED with the reason).
+4. Switch off for the duration: attachment prune (uploads wait for their issue; prune deletes unattached
+   uploads after 24 h), LDAP sync, stealth mode if used.
 
 ## 1. Structure
 
@@ -30,9 +49,11 @@ php 06_migrate_priorities.php && php 06_migrate_priorities.php --phases=push --c
 php 07_migrate_trackers.php && php 07_migrate_trackers.php --phases=push --confirm-push
 ```
 
-Check after each: the summary line `Matched / Ready / Manual`. Users: app accounts are IGNORED, people
-without a visible e-mail are MANUAL (their content uses the default author). Trackers longer than 30
-characters are shortened (note on the mapping row).
+Check the summary line of each (`Matched / Ready / Manual`):
+- users: Jira app accounts are IGNORED; people without a visible e-mail stay MANUAL (their content uses
+  the default author); new users are created LOCKED unless `default_redmine_user_status` says otherwise;
+- trackers: names longer than 30 characters are shortened (note on the mapping row);
+- 03, 04, 16 need the granular read scopes; without them they stop at the first 401.
 
 ## 2. Custom fields, issues and attachments
 
@@ -47,9 +68,15 @@ php 09_migrate_attachments.php --phases=transform,push --confirm-push
 php 10_migrate_issues.php --phases=transform,push --confirm-push
 ```
 
-- `attachments.download_concurrency` speeds up the pull; downloads are latency bound per file.
-- One run of 10 creates the issues with their description and then sets parents and rewritten Jira
-  links. Check `migration_mapping_issues`: no READY_FOR_REWRITE except issues whose parent failed.
+- 08 enables each field for the projects and trackers where Jira issues hold values, not only where
+  Jira shows the field today; cascading fields get their dependencies as option ids.
+- 10 creates every issue with its description, then sets parents and rewrites Jira links to `#id`
+  in the same run. Check `migration_mapping_issues`: READY_FOR_REWRITE only for issues whose parent is
+  in a project outside the run.
+- A parent with an open subtask but a closed Jira status gets the open status "Resolved" (Jan's rule;
+  the run stops if that status is missing or closed); the transform prints each `[open-parent]`.
+- Attachments keep their Jira name; a second attachment with the same name on the issue gets the
+  prefix `{jiraId}__`, so inline images show the right file.
 
 ## 3. History and links
 
@@ -62,10 +89,10 @@ php 15_migrate_checklists.php --confirm-push
 php 16_export_workflows.php
 ```
 
-- 12 needs the GEOxyz relation types configured in `redmine_issue_view_columns.local.rb` on the
-  Redmine server (see `tools/testenv/redmine_issue_view_columns.local.rb`).
-- 14 reads back each issue's watchers: a FAILED row names a missing permission.
-- 13 uses `POST /issues/:id/tags.json` on 5.1 and the issue update on 7.0 (detected).
+- Mentions become `@login` (Redmine's mention syntax).
+- 13 uses `POST /issues/:id/tags.json` where redmine_tags has it (5.1) and the issue update elsewhere
+  (7.0), detected on the first call.
+- 14 reads back each issue's watchers; a FAILED row names the reason.
 
 ## 4. Verify
 
@@ -73,12 +100,23 @@ php 16_export_workflows.php
 php tools/verify.php --projects=GEOS,SIS,OAC --sample=25
 ```
 
-Green means every check passes. The report holds issue keys: keep it out of the repository.
+Green means every check passes. The report holds issue keys and short Jira texts: keep it out of the
+repository. On 7.0 with all fixes the baseline projects gave 6 failures, all explained and since
+handled in the tool (plan, Results).
 
 ## 5. After the run
 
-Reset the workflows, lock the users that were activated for the migration, switch prune, LDAP sync
-and stealth mode back on (only the steps done in 0).
+`J2R_STEP=restore` (or by hand): remove the opened workflow transitions, lock the activated users
+again; switch prune, LDAP sync and stealth mode back on.
+
+## Choices for Jan (plan work list 15)
+
+| manual step today | options | recommendation |
+|---|---|---|
+| open workflows, reset after | (a) script it (done: `workflows` / `restore`); (b) Extended API import mode that skips the workflow and initial-status checks (session A) | (a) now; (b) if the reset is a risk in production |
+| activate locked users, lock after | (a) script it (done: `members` / `restore`); (b) Extended API import mode that accepts locked users as author and assignee | (a) |
+| attachment prune off | (a) prune off during the run; (b) upload each attachment in 10 right before its issue is created, so nothing waits 24 h | (a) for runs within a day; (b) for long volume runs |
+| LDAP sync and stealth mode off | runbook step | runbook step |
 
 ## Appendix: Apache for the new server (large attachments)
 
