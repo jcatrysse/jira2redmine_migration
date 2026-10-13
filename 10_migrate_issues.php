@@ -17,6 +17,7 @@ use Jira2Redmine\Redmine\IssueDates;
 use Jira2Redmine\Issues\AssigneeRule;
 use Jira2Redmine\Issues\OpenParentStatus;
 use Jira2Redmine\Attachments\AttachmentNames;
+use Jira2Redmine\Attachments\IssueAttachmentState;
 use Jira2Redmine\Jira\ProjectSelection;
 
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.1';
@@ -2477,18 +2478,7 @@ function fetchPreparedAttachmentUploads(PDO $pdo, string $jiraIssueId): array
 function summarizeAttachmentStatusesForIssue(PDO $pdo, string $jiraIssueId): array
 {
     $sql = <<<SQL
-        SELECT
-            SUM(
-                IF(
-                    migration_status = 'PENDING_ASSOCIATION'
-                    AND (
-                        (redmine_upload_token IS NOT NULL AND redmine_upload_token <> '')
-                        OR (sharepoint_url IS NOT NULL AND sharepoint_url <> '')
-                    ),
-                    1, 0
-                )
-            ) AS ready_count,
-            SUM(IF(migration_status IN ('PENDING_DOWNLOAD', 'PENDING_UPLOAD'), 1, 0)) AS blocked_count
+        SELECT migration_status, download_enabled, upload_enabled, redmine_upload_token, sharepoint_url
         FROM migration_mapping_attachments
         WHERE jira_issue_id = :issue_id
     SQL;
@@ -2499,13 +2489,11 @@ function summarizeAttachmentStatusesForIssue(PDO $pdo, string $jiraIssueId): arr
     }
 
     $statement->execute(['issue_id' => $jiraIssueId]);
-    $row = $statement->fetch(PDO::FETCH_ASSOC) ?: ['ready_count' => 0, 'blocked_count' => 0];
+    /** @var list<array{migration_status: string, download_enabled: int|string, upload_enabled: int|string, redmine_upload_token: ?string, sharepoint_url: ?string}> $rows */
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $statement->closeCursor();
 
-    return [
-        'ready' => (int)($row['ready_count'] ?? 0),
-        'blocked' => (int)($row['blocked_count'] ?? 0),
-    ];
+    return IssueAttachmentState::summarize($rows);
 }
 
 function countAssociationCandidates(PDO $pdo, string $jiraIssueId): int
