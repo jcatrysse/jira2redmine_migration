@@ -526,6 +526,27 @@ function restoreLiteralMarkupLinks(string $text): string
 }
 
 /**
+ * Jira user avatars (images served by Jira's REST API) inside a link keep the link and its label;
+ * standalone ones are dropped. Used for descriptions (10) and comments (11): avatars reached Redmine in
+ * 3 issues and 3 journals of the WIKI run.
+ */
+function removeJiraAvatarImages(string $text): string
+{
+    // [![image](...rest/api/universal_avatar... ) label](real_url)  => [label](real_url)
+    $text = (string)preg_replace_callback(
+        '/\[\s*!\[[^]]*]\(\s*https?:\/\/[^)]+\/rest\/api\/[^)]+\)\s*([^]]*)]\((https?:\/\/[^)]+)\)/i',
+        static function (array $m): string {
+            $visible = trim($m[1]);
+
+            return '[' . ($visible !== '' ? $visible : $m[2]) . '](' . $m[2] . ')';
+        },
+        $text
+    );
+
+    return (string)preg_replace('/!\[[^]]*]\(\s*https?:\/\/[^)]+\/rest\/api\/[^)]+\)/i', '', $text);
+}
+
+/**
  * Lower-level worker used in transform phase.
  * - preserves lines "Original Jira issue:" (placeholder/restore)
  * - removes avatar images
@@ -568,14 +589,7 @@ function transform_text_in_transform_phase(string $text, array $userMap): string
     );
 
     // 2) Remove avatar images inside links or standalone
-    // [![image](...rest/api/universal_avatar... ) ](real_url)  => [ label ](real_url)
-    $text = preg_replace_callback(
-        '/\[\s*!\[[^]]*]\(\s*https?:\/\/[^)]+\/rest\/api\/[^)]+\)\s*([^]]*)]\((https?:\/\/[^)]+)\)/i',
-        function($m){ $visible = trim($m[1]); return '[' . ($visible ?: $m[2]) . '](' . $m[2] . ')'; },
-        $text
-    );
-    // remove standalone avatar images
-    $text = preg_replace('/!\[[^]]*]\(\s*https?:\/\/[^)]+\/rest\/api\/[^)]+\)/i', '', $text);
+    $text = removeJiraAvatarImages($text);
 
     // helper closures
     $unwrapSafelink = function($url) {

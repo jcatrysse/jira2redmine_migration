@@ -1689,8 +1689,8 @@ function convertJournalBodyToMarkdown(?string $bodyHtml, ?string $bodyAdf, array
     }
 
     if ($bodyText !== null) {
-        // Link markup Jira showed as text becomes a link (B42).
-        $bodyText = restoreLiteralMarkupLinks($bodyText);
+        // Link markup Jira showed as text becomes a link (B42); user avatars out, as in descriptions.
+        $bodyText = removeJiraAvatarImages(restoreLiteralMarkupLinks($bodyText));
     }
 
     if ($bodyText !== null && $issueAttachments !== []) {

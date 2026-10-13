@@ -36,4 +36,13 @@ final class DescriptionOwnershipTest extends TestCase
 
         self::assertTrue(str_contains($ten, 'transform_text_in_transform_phase($proposedDescription'));
     }
+
+    public function testCommentsLoseAvatarsToo(): void
+    {
+        $eleven = (string)file_get_contents(__DIR__ . '/../11_migrate_journals.php');
+        self::assertTrue(str_contains($eleven, 'removeJiraAvatarImages('), '11 pushes avatar images in comments');
+
+        $text = 'Thanks ![a](https://example.atlassian.net/rest/api/3/universal_avatar/view/type/user/avatar/9) all';
+        self::assertSame('Thanks  all', removeJiraAvatarImages($text));
+    }
 }
