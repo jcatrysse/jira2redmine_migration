@@ -3,7 +3,7 @@
 #   J2R_STEP=workflows|members J2R_PROJECTS=geos,sis,oac bundle exec rails runner manual_steps.rb
 # workflows: every transition open for Manager and Developer on every tracker, new issues included
 #            ("open the workflows", reset after the migration); watchers need view_watched_issues
-#            (redmine_view_issue_description), given to both roles.
+#            (redmine_view_issue_description), given to both roles; parent priority independent (B13).
 # members:   activate locked users, flagged with preference j2r_relock ("activate locked users"), and add
 #            every user to the test projects as Developer (stands in for 04_migrate_roles.php).
 step = ENV.fetch('J2R_STEP')
@@ -27,6 +27,8 @@ when 'workflows'
   end
   rows.each_slice(5000) { |slice| WorkflowRule.insert_all(slice) }
   created = rows.size
+  # Decided by Jan (B13): a parent keeps its own priority, as in Jira.
+  Setting.parent_issue_priority = 'independent'
   perms = Redmine::AccessControl.permissions.map(&:name) & %i[view_watched_issues view_issue_description]
   roles.each { |role| perms.each { |p| role.add_permission!(p) } }
   puts "workflow transitions created=#{created} permissions=#{perms.inspect}"

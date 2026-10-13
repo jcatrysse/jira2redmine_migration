@@ -78,7 +78,7 @@ for v in 51 70; do
   bundle exec rake redmine:plugins:migrate
   bundle exec rails runner '
     Setting.rest_api_enabled = "1"; Setting.text_formatting = "common_mark"
-    Setting.attachment_max_size = 4194304; Setting.login_required = "1"
+    Setting.attachment_max_size = 4194304; Setting.login_required = "1"; Setting.parent_issue_priority = "independent"
     u = User.find_by_login("admin"); u.password = u.password_confirmation = "Admin-Test-2026"
     u.must_change_passwd = false; u.save!
     Token.find_or_create_by!(user_id: u.id, action: "api")'
