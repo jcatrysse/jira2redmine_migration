@@ -5,6 +5,8 @@ Start a Claude Code session on this repository, branch `redmine70-migration`, wi
 > Read CLAUDE.md and docs/MIGRATION-PLAN.md, then carry on with the first open item of the work
 > list on branch redmine70-migration. Report to me in Dutch at the end.
 
+With several sessions in parallel, the session Jan starts is the coordinator; see "Sessions".
+
 This file is the plan and the memory of that work. Update it as you go: results, findings, what
 is left. Written 2026-10-13 from a reading of the code and Jan's answers in the planning session.
 
@@ -24,7 +26,7 @@ is left. Written 2026-10-13 from a reading of the code and Jan's answers in the 
 | | |
 |---|---|
 | Branch | `redmine70-migration` (from `main` at `1de1fc9`) |
-| Phase | 0, prerequisites (see work list) |
+| Phase | 0, prerequisites: token set, test projects to choose (see work list) |
 | Scripts | 16 scripts, ~39,000 lines of PHP, no shared library, no tests |
 | Targets | Redmine 5.1 and 7.0; the scripts stay dual-target (unlike the plugins, 5.1 is not dropped) |
 | Extended API | to be made compatible with Redmine 5.1, 6.1 and 7.0 (own repo, own branch) |
@@ -86,9 +88,29 @@ In this order. Each item records its result under "Results" when done.
    scopes", app Jira, read scopes only) and put it in the cloud environment's settings as
    `JIRA_SITE` (e.g. `geoxyz.atlassian.net`), `JIRA_EMAIL`, `JIRA_API_TOKEN`. Never in the chat or
    the repo. A new session picks it up.
-2. Pick 2 or 3 small Jira projects for the tests, varied: one with rich formatting, one with
-   attachments including a large video, one with many custom fields. Write their keys here.
-3. Confirm the 5.1 plugin set: which plugins, and which branch of each, production runs today.
+   **DONE** 2026-10-13 (Jan set the variables in the environment; prove read-only per decision 1).
+2. Test projects. Jan (2026-10-13): **Survey Support Desk** has the most tickets. The coordinator
+   sizes every Jira project first (issues, comments, attachments and their total size) and puts the
+   choice to Jan: 2 or 3 small, varied projects for the baseline (rich formatting, large video,
+   many custom fields), and Survey Support Desk as the volume run once the baseline is clean.
+   Write the keys here.
+3. 5.1 plugin set. Jan (2026-10-13): production runs each plugin's default branch, **except**:
+
+   | plugin | branch on 5.1 |
+   |---|---|
+   | `redmine_custom_workflows` | `5.x` |
+   | `bless-this-redmine-sso` | `feature_version_2.0.0` |
+   | `redmine_issue_templates` | `master-geoxyz` |
+   | `redmine_subtask` | `develop` |
+   | `redmine_ai_summary` | `main-GEOxyz` |
+   | `redmine_mermaid_macro` | `mermaid10` |
+   | `redmine_wiki_extensions` | `Redmine-5.1` |
+   | `redmine_user_specific_theme` | `compatible-with-redmine-5` |
+   | `redmine_issue_view_columns` | `2.0.0` |
+
+   Which plugins make up the set: the Redmine plugins in Jan's GitHub account (public and
+   private). Show Jan the derived list once before building the 5.1 instance; on 7.0 every
+   plugin uses its `redmine70-migration` branch.
 
 **Phase 1, Extended API on 5.1, 6.1 and 7.0** (repo `redmine_extended_api`, branch
 `redmine70-migration`, under that repo's CLAUDE.md and plan)
@@ -150,6 +172,52 @@ In this order. Each item records its result under "Results" when done.
 
 17. Full test run on both targets with the final code; verify report green; numbers in "Results".
 
+## Sessions
+
+The work runs in parallel sessions that write **disjoint repositories**, so they never conflict.
+Exactly one session writes this file: session B.
+
+**Coordinator** (the session Jan starts; it has the Jira variables). It does not build. It:
+
+1. Checks that `JIRA_SITE`, `JIRA_EMAIL` and `JIRA_API_TOKEN` exist (names only, never print a
+   value), looks up the cloudId (`https://$JIRA_SITE/_edge/tenant_info`) and proves the token
+   read-only with the write probe of decision 1. A token that is not refused: stop and tell Jan.
+2. Sizes every Jira project (issues, comments, attachments, total attachment size) through the
+   gateway, and puts the test project choice to Jan (work list 2).
+3. Starts sessions A and B with `create_session`: same environment (so they inherit the Jira
+   variables), the prompts below with its own session id filled in, tag `jira-migration`.
+4. Follows them (`get_session`, `list_events`). Puts every question a session sends to Jan as a
+   clickable multiple choice: the options, a plain explanation of each, and a recommended option.
+   Sends Jan's answers back with `send_message`. Sends B the chosen test project keys.
+5. Tells Jan, in Dutch and briefly, when a session finishes a phase, is blocked, or fails; never
+   does a session's work itself.
+
+| session | repository, branch | writes | starts |
+|---|---|---|---|
+| A | `jcatrysse/redmine_extended_api`, `redmine70-migration` | that repository only | at once |
+| B | `jcatrysse/jira2redmine_migration`, `redmine70-migration` | this repository only | at once; phase 4 waits for the test project keys |
+
+Prompt A:
+
+> Read CLAUDE.md and docs/REDMINE7-MIGRATION.md. New decision by Jan (2026-10-13), revising the
+> 2026-10-07 "Redmine 7 only" for this plugin: make it compatible with Redmine 5.1, 6.1 and 7.0.
+> Apply the webhook patch only when ::Webhook is defined, lower requires_redmine to 5.1, restore
+> the 5.1 test paths removed in d6013b3, keep the Ruby syntax valid on the oldest supported Ruby.
+> Tests and e2e on 5.1-stable, 6.1-stable and 7.0-stable-GEOxyz with PostgreSQL. Record the
+> decision and the results in docs/REDMINE7-MIGRATION.md. Context: jcatrysse/jira2redmine_migration,
+> branch redmine70-migration, docs/MIGRATION-PLAN.md, work list 4. Questions for Jan go to the
+> coordinator session <id> with send_message; meanwhile pick the option most likely right, log it
+> as open, and carry on. Report in Dutch at the end, also to the coordinator.
+
+Prompt B:
+
+> Read CLAUDE.md and docs/MIGRATION-PLAN.md, then carry out the work list from phase 2 on
+> (phase 0 and 1 belong to the coordinator and session A). For the 5.1 baseline use
+> redmine_extended_api `main` (what production runs); rerun on its redmine70-migration branch
+> once session A is done. Questions for Jan go to the coordinator session <id> with send_message;
+> meanwhile pick the option most likely right, log it as open, and carry on. Report in Dutch at
+> the end of each phase, also to the coordinator.
+
 ## Text conversion protocol
 
 1. Curated set: real issues chosen per construct (tables, code blocks, panels, nested lists,
@@ -193,7 +261,7 @@ On 5.1 and 7.0, with `attachment_max_size` raised (e.g. 4 GB) and SharePoint off
 
 ## Open questions for Jan
 
-- Test projects (work list 2) and the 5.1 plugin set (work list 3).
+- Test projects (work list 2).
 - PHP version on the machine where the scripts will run in production.
 - Staging database: stay on MySQL or move to PostgreSQL (decide after the baseline).
 - Worklogs to time entries: in scope or not.
