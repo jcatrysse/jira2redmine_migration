@@ -10,6 +10,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Users\JiraAccount;
 
 const MIGRATE_USERS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -1070,7 +1071,8 @@ function runUserTransformationPhase(PDO $pdo, string $defaultRedmineUserStatus):
         throw new RuntimeException('Failed to prepare update statement for migration_mapping_users.');
     }
 
-    $allowedStatuses = ['PENDING_ANALYSIS', 'READY_FOR_CREATION', 'MATCH_FOUND'];
+    // MANUAL rows are judged again (B6); hand edits stay protected by the automation hash.
+    $allowedStatuses = ['PENDING_ANALYSIS', 'READY_FOR_CREATION', 'MATCH_FOUND', 'MANUAL_INTERVENTION_REQUIRED'];
 
     $summary = [
         'matched' => 0,
@@ -1112,6 +1114,8 @@ function runUserTransformationPhase(PDO $pdo, string $defaultRedmineUserStatus):
 
         if (!$hasStagingData) {
             $manualReason = 'No staging data available for this Jira account. Re-run the extraction phase.';
+        } elseif ($jiraEmail === null && JiraAccount::isApp($row['staging_account_type'] ?? null)) {
+            // Handled below: a Jira app gets no Redmine account (B3).
         } elseif ($jiraEmail === null) {
             $manualReason = 'Missing Jira email address; unable to auto-match or propose a Redmine login.';
         } else {
@@ -1208,7 +1212,11 @@ function runUserTransformationPhase(PDO $pdo, string $defaultRedmineUserStatus):
             $newMatchType = 'NONE';
             $proposedStatus = $defaultRedmineUserStatus;
 
-            if ($jiraEmail === null) {
+            if ($jiraEmail === null && JiraAccount::isApp($row['staging_account_type'] ?? null)) {
+                // A Jira app (automation, integration) is not a person: no Redmine account (B3).
+                $newStatus = 'IGNORED';
+                $notes = 'Jira app account (automation or integration): no Redmine user; its content uses the default author.';
+            } elseif ($jiraEmail === null) {
                 $newStatus = 'MANUAL_INTERVENTION_REQUIRED';
                 $notes = 'Missing Jira email address; unable to create a Redmine user automatically.';
                 printf("  [manual] Jira account %s: %s%s", $jiraAccountId, $notes, PHP_EOL);
@@ -1223,7 +1231,7 @@ function runUserTransformationPhase(PDO $pdo, string $defaultRedmineUserStatus):
             }
         }
 
-        if ($newStatus !== 'MANUAL_INTERVENTION_REQUIRED') {
+        if (!in_array($newStatus, ['MANUAL_INTERVENTION_REQUIRED', 'IGNORED'], true)) {
             $notes = null;
         }
 
@@ -1363,7 +1371,8 @@ function fetchUserMappingsForTransform(PDO $pdo): array
             mm.jira_email_address,
             sj.account_id AS staging_account_id,
             sj.display_name AS staging_display_name,
-            sj.email_address AS staging_email_address
+            sj.email_address AS staging_email_address,
+            sj.account_type AS staging_account_type
         FROM migration_mapping_users mm
         LEFT JOIN staging_jira_users sj ON sj.account_id = mm.jira_account_id
         ORDER BY mm.mapping_id
