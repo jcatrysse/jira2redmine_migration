@@ -137,4 +137,14 @@ final class VerifyTest extends TestCase
         self::assertSame(['journal #20 duplicates #10'], verifyDuplicateJournals($journals));
         self::assertSame([], verifyDuplicateJournals(array_slice($journals, 0, 3)));
     }
+
+    public function testAnUnmappedAssigneeIsExpectedEmptyOrTheDefault(): void
+    {
+        $users = ['acc-mapped' => '12'];
+
+        self::assertSame('12', verifyExpectedAssignee('acc-mapped', $users, null));
+        self::assertSame('', verifyExpectedAssignee('acc-app', $users, null));
+        self::assertSame('5', verifyExpectedAssignee('acc-app', $users, 5));
+        self::assertSame('', verifyExpectedAssignee(null, $users, 5));
+    }
 }

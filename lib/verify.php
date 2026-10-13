@@ -309,3 +309,17 @@ function verifyDuplicateJournals(array $journals): array
 
     return $duplicates;
 }
+
+/**
+ * The Redmine assignee to expect: the mapped user, or for a Jira assignee without a Redmine account what
+ * the B9 rule gives (the default assignee, else none). verify expected "unmapped" and failed such issues.
+ *
+ * @param array<int|string, string> $userMap Jira account id => Redmine user id
+ */
+function verifyExpectedAssignee(?string $jiraAccountId, array $userMap, ?int $defaultAssigneeId): string
+{
+    $mapped = $jiraAccountId !== null && isset($userMap[$jiraAccountId]) ? (int)$userMap[$jiraAccountId] : null;
+    $resolved = \Jira2Redmine\Issues\AssigneeRule::resolve($jiraAccountId, $mapped, $defaultAssigneeId)['assignee'];
+
+    return $resolved === null ? '' : (string)$resolved;
+}

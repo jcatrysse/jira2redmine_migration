@@ -229,7 +229,11 @@ foreach ($projectKeys as $projectKey) {
         $expectedAuthor = $maps['user'][(string)($fields['reporter']['accountId'] ?? '')] ?? $defaultAuthor;
         $record('fields: author', (string)$rm['author']['id'] === $expectedAuthor, $issueKey,
             sprintf('Redmine %s, expected %s', $rm['author']['id'], $expectedAuthor));
-        $expectedAssignee = isset($fields['assignee']['accountId']) ? ($maps['user'][(string)$fields['assignee']['accountId']] ?? 'unmapped') : '';
+        $expectedAssignee = verifyExpectedAssignee(
+            isset($fields['assignee']['accountId']) ? (string)$fields['assignee']['accountId'] : null,
+            $maps['user'],
+            isset($config['migration']['issues']['default_redmine_assignee_id']) ? (int)$config['migration']['issues']['default_redmine_assignee_id'] : null
+        );
         $record('fields: assignee', (string)($rm['assigned_to']['id'] ?? '') === $expectedAssignee, $issueKey,
             sprintf('Redmine %s, expected %s', $rm['assigned_to']['id'] ?? '-', $expectedAssignee ?: '-'));
         $expectedParent = isset($fields['parent']['id']) ? ($maps['issue'][(string)$fields['parent']['id']] ?? 'unmapped') : '';
