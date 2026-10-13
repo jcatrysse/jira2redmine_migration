@@ -330,8 +330,15 @@ foreach ($projectKeys as $projectKey) {
             $rmValues[(string)$customField['id']] = $customField['value'] ?? null;
         }
         foreach ($customFields as $jiraFieldId => $redmineFieldId) {
-            $value = $fields[$jiraFieldId] ?? null;
+            // Cascading selects map to two Redmine fields: "cascading_parent:<id>" holds the parent value,
+            // "<id>" the child, which Jira may leave empty.
+            $isParentPart = str_starts_with((string)$jiraFieldId, 'cascading_parent:');
+            $sourceFieldId = $isParentPart ? substr((string)$jiraFieldId, strlen('cascading_parent:')) : (string)$jiraFieldId;
+            $value = $fields[$sourceFieldId] ?? null;
             if ($value === null || $value === '' || $value === []) {
+                continue;
+            }
+            if (!$isParentPart && isset($customFields['cascading_parent:' . $sourceFieldId]) && is_array($value) && !isset($value['child'])) {
                 continue;
             }
             $rmValue = $rmValues[$redmineFieldId] ?? null;
