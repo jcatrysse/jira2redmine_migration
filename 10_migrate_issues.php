@@ -14,6 +14,7 @@ use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Redmine\IssueFinalUpdate;
 use Jira2Redmine\Redmine\IssueDates;
+use Jira2Redmine\Issues\AssigneeRule;
 
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -1376,11 +1377,10 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
                 $notes[] = 'Reporter not mapped to a Redmine user (and no default configured).';
                 $blockingNotes[] = 'Reporter not mapped to a Redmine user (and no default configured).';
             }
-            if ($jiraAssigneeId !== null && $redmineAssigneeId === null) {
-                $notes[] = 'Assignee not mapped to a Redmine user; default assignment applied if configured.';
-                if ($defaultAssigneeId === null) {
-                    $blockingNotes[] = 'Assignee not mapped to a Redmine user; default assignment applied if configured.';
-                }
+            // Not blocking: unassigned or the default assignee (B9).
+            $assigneeNote = AssigneeRule::resolve($jiraAssigneeId, $redmineAssigneeId, $defaultAssigneeId)['note'];
+            if ($assigneeNote !== null) {
+                $notes[] = $assigneeNote;
             }
             if ($statusOverride !== null) {
                 if ($subtaskBehavior === 'close_subtasks') {
