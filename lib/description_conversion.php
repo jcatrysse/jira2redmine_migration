@@ -845,8 +845,9 @@ function replaceIssueLinksWithRedmineIds(
         return $urlOrLink;
     };
 
-    // 1) Update migration_mapping_issues.proposed_description
-    $sel = $pdo->query("SELECT mapping_id, proposed_description, redmine_issue_id FROM migration_mapping_issues");
+    // 1) Update migration_mapping_issues.proposed_description, of created issues only: rewriting rows that
+    // still wait for creation broke their automation hash, so every retry saw them as manual overrides (B6).
+    $sel = $pdo->query("SELECT mapping_id, proposed_description, redmine_issue_id FROM migration_mapping_issues WHERE redmine_issue_id IS NOT NULL");
     $upd = $pdo->prepare("UPDATE migration_mapping_issues SET proposed_description = :desc, last_updated_at = CURRENT_TIMESTAMP WHERE mapping_id = :mid");
 
     while ($r = $sel->fetch(PDO::FETCH_ASSOC)) {
