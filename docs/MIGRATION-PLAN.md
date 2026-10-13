@@ -350,6 +350,10 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
 - Worklogs to time entries: in scope or not.
 - Which manual steps to automate (decide after the baseline, per step).
 - `redmine_custom_workflows` on 5.1 production: which commit (F2)? `main` does not exist.
+- Attachment names in Redmine: keep `{jiraId}__name` (unique inline references) or the original
+  Jira name (B14)?
+- Redmine setting "parent priority/dates/done ratio derived from subtasks" or independent (B13)?
+- 5.1 production: is X-Sendfile on, and what is Apache's `LimitRequestBody` (large attachments)?
 - Granular read scopes (approved by Jan 2026-10-13: read:group:jira, read:user:jira,
   read:project-role:jira, read:workflow:jira, read:workflow-scheme:jira, read:issue-type-scheme:jira,
   read:issue-type-screen-scheme:jira, read:screen:jira, read:screen-scheme:jira, read:screen-tab:jira,

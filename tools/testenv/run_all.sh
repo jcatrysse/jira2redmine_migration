@@ -27,6 +27,15 @@ manual() { # manual workflows|members
 
 : > "$logdir/summary.txt"
 "$BASE/reset.sh" "$v" > /dev/null
+if [ -n "${RECORD:-}" ]; then
+  # Record every Redmine request (phase 6 proof): the scripts talk to a proxy on port 31xx.
+  : > "$RECORD"
+  LISTEN=31$v TARGET=$REDMINE_URL LOG=$RECORD node "$REPO/tools/testenv/record_proxy.mjs" &
+  proxy=$!
+  trap 'kill $proxy 2>/dev/null' EXIT
+  export REDMINE_URL=http://127.0.0.1:31$v
+  sleep 1
+fi
 db=jira2redmine_$v
 mysql -e "DROP DATABASE IF EXISTS $db; CREATE DATABASE $db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL ON $db.* TO 'jira2redmine'@'localhost';"
 mysql "$db" < "$REPO/database/schema.sql"
