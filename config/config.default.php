@@ -54,6 +54,13 @@ return [
             // Optional Redmine role identifier to fall back to when no automatic match is found for a Jira project role.
             // Leave as null to require manual selection of the target Redmine role per assignment.
             'default_redmine_role_id' => null,
+            // Jira project role name => Redmine role name; null ignores the role (no membership).
+            // Jira Cloud's own role names never match Redmine's; roles not listed are matched by their own name.
+            'mappings' => [
+                'Administrators' => 'Manager',
+                // holds only app accounts (Jira apps), which are not migrated
+                'atlassian-addons-project-access' => null,
+            ],
         ],
         'trackers' => [
             // Optional Redmine status identifier to propose when creating new trackers via the extended API.

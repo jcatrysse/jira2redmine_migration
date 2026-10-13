@@ -204,10 +204,11 @@ CREATE TABLE `migration_mapping_project_role_groups` (
                                                          `jira_project_name` VARCHAR(255) NULL,
                                                          `jira_role_id` BIGINT NOT NULL,
                                                          `jira_role_name` VARCHAR(255) NULL,
-                                                         `jira_group_id` VARCHAR(255) NOT NULL,
+                                                         `jira_group_id` VARCHAR(255) NOT NULL COMMENT 'Jira group id, or account id when principal_type is user',
                                                          `jira_group_name` VARCHAR(255) NULL,
+                                                         `principal_type` ENUM('group', 'user') NOT NULL DEFAULT 'group',
                                                          `redmine_project_id` INT NULL,
-                                                         `redmine_group_id` INT NULL,
+                                                         `redmine_group_id` INT NULL COMMENT 'Redmine group id, or user id when principal_type is user',
                                                          `redmine_role_id` INT NULL,
                                                          `proposed_redmine_role_id` INT NULL,
                                                          `proposed_redmine_role_name` VARCHAR(255) NULL,
@@ -216,8 +217,8 @@ CREATE TABLE `migration_mapping_project_role_groups` (
                                                          `automation_hash` CHAR(64) NULL,
                                                          `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                                          `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                                                         UNIQUE KEY `uk_project_role_group` (`jira_project_id`, `jira_role_id`, `jira_group_id`)
-) COMMENT='Mapping Jira project role group assignments to Redmine projects/groups/roles.';
+                                                         UNIQUE KEY `uk_project_role_group` (`jira_project_id`, `jira_role_id`, `principal_type`, `jira_group_id`)
+) COMMENT='Mapping Jira project role actors (groups and users) to Redmine project memberships.';
 
 -- ================================================================
 -- Table Set 4: Issue Statuses
