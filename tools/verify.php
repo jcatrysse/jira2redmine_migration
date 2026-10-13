@@ -324,6 +324,11 @@ foreach ($projectKeys as $projectKey) {
                 if (verifyNormaliseFilename((string)$rmAttachment['filename']) === verifyNormaliseFilename((string)$attachment['filename'])
                     && (int)$rmAttachment['filesize'] === (int)$attachment['size']) {
                     $same = verifyDownloadHash($jira, (string)$attachment['content']) === verifyDownloadHash($redmine, (string)$rmAttachment['content_url']);
+                    if (!$same) {
+                        // one more download of both before calling it a mismatch: a transfer can break off
+                        // without an error (SURV-1559, equal on three later reads)
+                        $same = verifyDownloadHash($jira, (string)$attachment['content']) === verifyDownloadHash($redmine, (string)$rmAttachment['content_url']);
+                    }
                     $record('attachments: sha256', $same, $issueKey . ' ' . $attachment['filename']);
                     break;
                 }
@@ -371,7 +376,7 @@ foreach ($projectKeys as $projectKey) {
             $isParentPart = str_starts_with((string)$jiraFieldId, 'cascading_parent:');
             $sourceFieldId = $isParentPart ? substr((string)$jiraFieldId, strlen('cascading_parent:')) : (string)$jiraFieldId;
             $value = $fields[$sourceFieldId] ?? null;
-            if ($value === null || $value === '' || $value === []) {
+            if (verifyJiraValueIsEmpty($value)) {
                 continue;
             }
             if (!$isParentPart && isset($customFields['cascading_parent:' . $sourceFieldId]) && is_array($value) && !isset($value['child'])) {

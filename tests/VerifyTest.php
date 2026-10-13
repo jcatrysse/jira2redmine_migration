@@ -147,4 +147,14 @@ final class VerifyTest extends TestCase
         self::assertSame('5', verifyExpectedAssignee('acc-app', $users, 5));
         self::assertSame('', verifyExpectedAssignee(null, $users, 5));
     }
+
+    public function testARichTextFieldWithoutTextIsEmpty(): void
+    {
+        self::assertTrue(verifyJiraValueIsEmpty(['type' => 'doc', 'version' => 1, 'content' => [['type' => 'paragraph']]]));
+        self::assertFalse(verifyJiraValueIsEmpty(['type' => 'doc', 'version' => 1, 'content' => [
+            ['type' => 'paragraph', 'content' => [['type' => 'text', 'text' => 'Replaced the cable']]],
+        ]]));
+        self::assertTrue(verifyJiraValueIsEmpty(null));
+        self::assertFalse(verifyJiraValueIsEmpty(['value' => 'Other']));
+    }
 }

@@ -323,3 +323,26 @@ function verifyExpectedAssignee(?string $jiraAccountId, array $userMap, ?int $de
 
     return $resolved === null ? '' : (string)$resolved;
 }
+
+/**
+ * Whether a Jira field value holds anything. A rich text field can hold an ADF document without text
+ * (one empty paragraph): Redmine rightly stores nothing, verify counted it as a missing value.
+ */
+function verifyJiraValueIsEmpty(mixed $value): bool
+{
+    if ($value === null || $value === '' || $value === []) {
+        return true;
+    }
+    if (is_array($value) && ($value['type'] ?? null) === 'doc' && isset($value['content'])) {
+        $text = '';
+        array_walk_recursive($value, static function (mixed $item, int|string $key) use (&$text): void {
+            if ($key === 'text' && is_string($item)) {
+                $text .= $item;
+            }
+        });
+
+        return trim($text) === '';
+    }
+
+    return false;
+}
