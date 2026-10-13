@@ -47,6 +47,11 @@ while IFS=$'\t' read -r repo branch; do
   done
 done < "$HERE/plugins-5.1.tsv"
 
+# GEOxyz relation types (production config of redmine_issue_view_columns, B18), from custom_mappings
+for v in 51 70; do
+  cp "$HERE/redmine_issue_view_columns.local.rb" "$BASE/redmine$v/plugins/redmine_issue_view_columns/config/"
+done
+
 for v in 51 70; do
   cat > "$BASE/redmine$v/config/database.yml" <<YML
 production:
