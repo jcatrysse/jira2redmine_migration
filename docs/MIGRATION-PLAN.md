@@ -368,7 +368,8 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
   correctly, but an inline image resolves to the latest attachment of that name (description showed
   #578 instead of #577). **Jan: original names, `{jiraId}__` only for a name the issue already has.**
   Implemented; with that rule all four inline references of the test issue resolve to the right file
-  on 7.0. 5.1: to check after the gate run.
+  on 7.0 and on 5.1 (`tools/testenv/duplicate_names_test.php --rule`); without it both Redmines show
+  the second file for both references.
 - Open subtask under a closed parent, **Jan:** link it and give the parent the open status "Resolved"
   (exists and is open on 5.1 and 7.0, id 3). Implemented as the default rule; parents noted
   `[open-parent]` with their Jira status; the verify tool expects Resolved for them. In the baseline
@@ -450,7 +451,14 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B22 | An open subtask under a closed parent: 422 "An open issue cannot be attached to a closed parent task" on the final update, and the description in that same update is lost | OAC-44, OAC-47: no parent, empty description | 10 final update, `subtask_status_behavior` |
 | B23 | Uploads happen before the issue exists (M9); for issues that fail, the upload stays orphaned | 208 orphans | 09, 10 |
 
-**Gate for redmine_extended_api on 5.1 (2026-10-13): RED.** Jan merges `redmine70-migration` into
+**Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
+no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
+update failed, 6 waiting; journals 939; relations 60/60; watchers 777; attachments 367). Parent fields:
+373 created issues, 11 of them parents, author_id and created_on equal to Jira for all. The verify
+step itself stopped halfway: the Jira token was revoked during the run (401 Unauthorized on every read
+since about 18:40).
+
+**Gate for redmine_extended_api on 5.1 (2026-10-13, first run): RED.** Jan merges `redmine70-migration` into
 `main` once the 5.1 rerun is green; `main` was already at ae192d4 (code = 8bb01dc) when tested. Same
 full run as run 2, 5.1 with ae192d4 instead of 132fff5: **0 of 426 issues created**, 422 times HTTP
 500, verify FAIL (presence 0/75). Cause: `SystemStackError` between the Extended API's
