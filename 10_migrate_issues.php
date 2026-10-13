@@ -1093,6 +1093,12 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
     $statusLookup = buildStatusLookup($pdo);
     $priorityLookup = buildPriorityLookup($pdo);
     $userLookup = buildUserLookup($pdo);
+    $redmineUserIds = [];
+    foreach ($userLookup as $accountId => $user) {
+        if (isset($user['redmine_user_id']) && $user['redmine_user_id'] !== null) {
+            $redmineUserIds[(string)$accountId] = (int)$user['redmine_user_id'];
+        }
+    }
     $customFieldMappingIndex = buildCustomFieldMappingIndex($pdo);
     $cascadingFieldIndex = buildCascadingFieldIndex($pdo);
 
@@ -1322,6 +1328,10 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
 
         // Replace Jira user profile links by user#redmine_id (transform-time)
         if ($proposedDescription !== null && trim($proposedDescription) !== '') {
+            // Avatars out, profile links and Jira issue URLs canonical, before the hash is taken and the issue
+            // pushed. 11 did this afterwards on this table: too late for Redmine, and it broke the hash of
+            // issues not created yet, which then stayed "manual overrides" (B41).
+            $proposedDescription = transform_text_in_transform_phase($proposedDescription, $redmineUserIds);
             $proposedDescription = replaceJiraUserLinksWithRedmineIds($proposedDescription, $userLookup);
         }
 
@@ -3224,16 +3234,22 @@ function buildCustomFieldMappingIndex(PDO $pdo): array
 {
     $sql = <<<SQL
         SELECT
-            jira_field_id,
-            jira_field_name,
-            proposed_field_format,
-            proposed_text_formatting,
-            proposed_is_multiple,
-            redmine_custom_field_id,
-            redmine_custom_field_enumerations
-        FROM migration_mapping_custom_fields
-        WHERE migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')
-          AND redmine_custom_field_id IS NOT NULL
+            m.jira_field_id,
+            m.jira_field_name,
+            m.proposed_field_format,
+            m.proposed_text_formatting,
+            m.proposed_is_multiple,
+            m.redmine_custom_field_id,
+            -- Redmine's options as 08 last read them (a value added in Redmine after the field was
+            -- created, B37); the list written at creation when the snapshot predates the field.
+            COALESCE(
+                JSON_EXTRACT(r.raw_payload, '$.custom_field.enumerations'),
+                m.redmine_custom_field_enumerations
+            ) AS redmine_custom_field_enumerations
+        FROM migration_mapping_custom_fields m
+        LEFT JOIN staging_redmine_custom_fields r ON r.id = m.redmine_custom_field_id
+        WHERE m.migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')
+          AND m.redmine_custom_field_id IS NOT NULL
     SQL;
 
     try {

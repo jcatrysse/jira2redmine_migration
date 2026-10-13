@@ -41,5 +41,15 @@ final class UsedValuesTest extends TestCase
         $script = (string)file_get_contents(__DIR__ . '/../08_migrate_custom_fields.php');
 
         self::assertTrue(str_contains($script, 'UsedValues::missing('), '08 keeps only the values Jira offers today');
+        $usagePhase = substr($script, (int)strpos($script, 'function runCustomFieldUsagePhase('), 1200);
+        self::assertTrue(
+            str_contains($usagePhase, 'backfillProjectIssueTypeFieldsFromIssues('),
+            'the backfill runs only in the jira phase, before 10 staged the issues'
+        );
+        $ten = (string)file_get_contents(__DIR__ . '/../10_migrate_issues.php');
+        self::assertTrue(
+            str_contains($ten, "JSON_EXTRACT(r.raw_payload, '\$.custom_field.enumerations')"),
+            '10 reads the options written at field creation only'
+        );
     }
 }
