@@ -147,7 +147,17 @@ function verifyHtmlLinkCounts(?string $html): array
         }
     }
 
-    return ['links' => $links, 'images' => preg_match_all('/<img\b/i', $html) ?: 0];
+    // Jira's link icons and emoticons are not images of the text.
+    $images = 0;
+    if (preg_match_all('/<img\b[^>]*>/i', $html, $tags) !== false) {
+        foreach ($tags[0] as $tag) {
+            if (preg_match('#rendericon|emoticon|/images/icons/#i', $tag) !== 1) {
+                $images++;
+            }
+        }
+    }
+
+    return ['links' => $links, 'images' => $images];
 }
 
 /**

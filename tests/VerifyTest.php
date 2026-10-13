@@ -74,7 +74,8 @@ final class VerifyTest extends TestCase
     public function testHtmlLinkCountsSkipAttachmentsAndAnchors(): void
     {
         $html = '<a href="https://example.com">x</a><a href="#top">t</a>'
-            . '<a href="https://site/secure/attachment/1/f.png">f</a><img src="a.png"><img src="b.png">';
+            . '<a href="https://site/secure/attachment/1/f.png">f</a><img src="a.png"><img src="b.png">'
+            . '<img class="rendericon" src="/images/icons/link_attachment_7.gif"><img class="emoticon" src="smile.png">';
         self::assertSame(['links' => 1, 'images' => 2], verifyHtmlLinkCounts($html));
     }
 
