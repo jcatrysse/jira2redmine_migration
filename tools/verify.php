@@ -85,7 +85,11 @@ $customFields = verifyMap($pdo, "SELECT jira_field_id, redmine_custom_field_id F
     WHERE migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')");
 $defaultAuthor = (string)($config['migration']['issues']['default_redmine_author_id'] ?? '');
 // Parents of an open subtask get an open status instead of their closed Jira status (Jan, 2026-10-13).
-$openParents = verifyMap($pdo, "SELECT jira_issue_id, proposed_status_id FROM migration_mapping_issues WHERE notes LIKE '%[open-parent]%'");
+$openParents = verifyOpenParents($pdo->query(
+    'SELECT m.jira_issue_id, m.jira_status_id, m.proposed_status_id, m.notes,
+        EXISTS (SELECT 1 FROM staging_jira_issues c WHERE c.parent_issue_id = m.jira_issue_id) AS is_parent
+     FROM migration_mapping_issues m'
+), $maps['status']);
 // Attachments left out by the test option attachments.test_sample are expected to be absent.
 $skippedBySample = verifyMap($pdo, sprintf(
     "SELECT jira_attachment_id, notes FROM migration_mapping_attachments WHERE notes = '%s'",

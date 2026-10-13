@@ -107,4 +107,20 @@ final class VerifyTest extends TestCase
         self::assertSame([1, 2], verifySample([2, 1], 5));
         self::assertSame([], verifySample([1, 2], 0));
     }
+
+    public function testOpenParentIsFoundWithoutItsNote(): void
+    {
+        $rows = [
+            // pushed: the note is gone, the status override stays
+            ['jira_issue_id' => '100', 'jira_status_id' => '6', 'proposed_status_id' => '3', 'notes' => null, 'is_parent' => 1],
+            // a parent in its mapped status
+            ['jira_issue_id' => '101', 'jira_status_id' => '6', 'proposed_status_id' => '5', 'notes' => null, 'is_parent' => 1],
+            // not a parent: a different status is a defect, not a rule
+            ['jira_issue_id' => '102', 'jira_status_id' => '6', 'proposed_status_id' => '3', 'notes' => null, 'is_parent' => 0],
+            // still noted (before the push)
+            ['jira_issue_id' => '103', 'jira_status_id' => '1', 'proposed_status_id' => '3', 'notes' => '[open-parent] x', 'is_parent' => 1],
+        ];
+
+        self::assertSame(['100' => '3', '103' => '3'], verifyOpenParents($rows, ['6' => '5', '1' => '1']));
+    }
 }

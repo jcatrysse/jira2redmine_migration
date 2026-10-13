@@ -38,4 +38,48 @@ final class RelationState
 
         return hash('sha256', $encoded);
     }
+
+    /**
+     * A row edited by hand since the script last wrote it: its stored hash no longer matches its state.
+     *
+     * @param array<string, mixed> $row
+     */
+    public static function isHandEdited(array $row): bool
+    {
+        $stored = trim((string)($row['automation_hash'] ?? ''));
+
+        return $stored !== '' && $stored !== self::hash(
+            $row['redmine_issue_from_id'] ?? null,
+            $row['redmine_issue_to_id'] ?? null,
+            $row['redmine_relation_id'] ?? null,
+            $row['proposed_relation_type'] ?? null,
+            $row['migration_status'] ?? null,
+            $row['notes'] ?? null
+        );
+    }
+
+    /**
+     * What the push writes when Redmine refuses a relation. The hash is written with it: before, the push
+     * set CREATION_FAILED and its message without the hash, so every later transform took the row for a
+     * hand edit ("preserved manual overrides") and never tried it again (17 relations after a missing
+     * relation type was added to Redmine).
+     *
+     * @param array<string, mixed> $row the row as the push read it
+     * @return array{migration_status: string, notes: string, automation_hash: string}
+     */
+    public static function failed(array $row, string $message): array
+    {
+        return [
+            'migration_status' => 'CREATION_FAILED',
+            'notes' => $message,
+            'automation_hash' => self::hash(
+                $row['redmine_issue_from_id'] ?? null,
+                $row['redmine_issue_to_id'] ?? null,
+                null,
+                $row['proposed_relation_type'] ?? null,
+                'CREATION_FAILED',
+                $message
+            ),
+        ];
+    }
 }

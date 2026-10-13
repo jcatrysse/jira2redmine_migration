@@ -342,7 +342,8 @@ function runRelationPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $
 
     $failureStatement = $pdo->prepare(<<<SQL
         UPDATE migration_mapping_issue_relations
-        SET migration_status = 'CREATION_FAILED', notes = :notes, last_updated_at = CURRENT_TIMESTAMP
+        SET migration_status = :migration_status, notes = :notes, automation_hash = :automation_hash,
+            last_updated_at = CURRENT_TIMESTAMP
         WHERE mapping_id = :mapping_id
     SQL);
     if ($failureStatement === false) {
@@ -368,18 +369,12 @@ function runRelationPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $
                 $message .= ': ' . extractErrorBody($response);
             }
 
-            $failureStatement->execute([
-                'mapping_id' => $mappingId,
-                'notes' => $message,
-            ]);
+            $failureStatement->execute(['mapping_id' => $mappingId] + RelationState::failed($row, $message));
             printf("  [error] %s for Jira link %s.%s", $message, (string)$row['jira_link_id'], PHP_EOL);
             continue;
         } catch (GuzzleException $exception) {
             $message = 'Failed to create Redmine relation: ' . $exception->getMessage();
-            $failureStatement->execute([
-                'mapping_id' => $mappingId,
-                'notes' => $message,
-            ]);
+            $failureStatement->execute(['mapping_id' => $mappingId] + RelationState::failed($row, $message));
             printf("  [error] %s%s", $message, PHP_EOL);
             continue;
         }
@@ -388,10 +383,7 @@ function runRelationPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $
         $redmineRelationId = isset($body['relation']['id']) ? (int)$body['relation']['id'] : null;
         if ($redmineRelationId === null) {
             $message = 'Redmine did not return a relation identifier.';
-            $failureStatement->execute([
-                'mapping_id' => $mappingId,
-                'notes' => $message,
-            ]);
+            $failureStatement->execute(['mapping_id' => $mappingId] + RelationState::failed($row, $message));
             printf("  [error] %s%s", $message, PHP_EOL);
             continue;
         }

@@ -251,3 +251,33 @@ function verifySample(array $ids, int $size): array
 
     return $sample;
 }
+
+/**
+ * Parents whose Redmine status is expected to differ from their Jira status: an open subtask under a
+ * closed parent gives the parent the open status "Resolved" (Jan, 2026-10-13). Found from the mapping
+ * itself, a parent whose proposed status is not its mapped Jira status, because the push clears the
+ * "[open-parent]" note once the issue exists (the two OAC parents failed the counts after a full run).
+ *
+ * @param iterable<array{jira_issue_id: string|int, jira_status_id: string|int, proposed_status_id: string|int|null,
+ *     notes: ?string, is_parent: string|int|bool}> $rows migration_mapping_issues rows
+ * @param array<string, string> $statusMap Jira status id => Redmine status id
+ * @return array<string, string> Jira issue id => expected Redmine status id
+ */
+function verifyOpenParents(iterable $rows, array $statusMap): array
+{
+    $result = [];
+    foreach ($rows as $row) {
+        $proposed = $row['proposed_status_id'];
+        if ($proposed === null || $proposed === '') {
+            continue;
+        }
+        $marked = str_contains((string)($row['notes'] ?? ''), '[open-parent]');
+        $mapped = $statusMap[(string)$row['jira_status_id']] ?? null;
+        $overridden = (bool)(int)$row['is_parent'] && $mapped !== null && $mapped !== (string)$proposed;
+        if ($marked || $overridden) {
+            $result[(string)$row['jira_issue_id']] = (string)$proposed;
+        }
+    }
+
+    return $result;
+}
