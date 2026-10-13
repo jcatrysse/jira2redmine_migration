@@ -326,6 +326,11 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
 - Only production can show: `LimitRequestBody` (1 GiB default since Apache 2.4.53, so the 1.8 GB
   upload fails behind a default Apache), proxy and Passenger timeouts for a 20 to 30 s upload,
   X-Sendfile, backup size.
+- **Jan 2026-10-13:** production 5.1 runs Apache with defaults: no X-Sendfile, `LimitRequestBody`
+  1 GiB, so a migration onto 5.1 cannot upload the 1.8 GB file (and 5.1 holds every download in
+  memory, see above). The new server is configured optimally: Apache in front of the 7.0 test instance
+  with X-Sendfile and a `LimitRequestBody` sized for the largest attachment is measured next, and the
+  recommended configuration goes into the runbook. To do.
 
 ## Rules
 
@@ -349,10 +354,9 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
 - Staging database: stay on MySQL or move to PostgreSQL (decide after the baseline).
 - Worklogs to time entries: in scope or not.
 - Which manual steps to automate (decide after the baseline, per step).
-- Attachment names in Redmine: keep `{jiraId}__name` (unique inline references) or the original
-  Jira name (B14)?
-- Redmine setting "parent priority/dates/done ratio derived from subtasks" or independent (B13)?
-- 5.1 production: is X-Sendfile on, and what is Apache's `LimitRequestBody` (large attachments)?
+- Attachment names (B14), Jan 2026-10-13: test how 5.1 and 7.0 handle two attachments with the same
+  name on one issue and in one journal (list, downloads by checksum, inline image in description and
+  comment, API); original names if Redmine handles it correctly, otherwise keep `{jiraId}__`. To do.
 - Granular read scopes (approved by Jan 2026-10-13: read:group:jira, read:user:jira,
   read:project-role:jira, read:workflow:jira, read:workflow-scheme:jira, read:issue-type-scheme:jira,
   read:issue-type-screen-scheme:jira, read:screen:jira, read:screen-scheme:jira, read:screen-tab:jira,
@@ -418,7 +422,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B10 | Description and parent are written in a second "final update"; until then the description is empty. One run of 10 leaves 373 issues READY_FOR_REWRITE; a second run is needed; issues whose parent failed keep an empty description | empty descriptions (GEOS-87: 0% of words) | 10 push |
 | B11 | The final update writes the description as an update | every issue gets a journal "Description changed" by its author at the creation time | 10 push |
 | B12 | Issues are created in the default status: new trackers have no workflow | 61 of 62 sampled issues "New" (run 1); fixed by opening workflows (a manual step) | 10, M8 |
-| B13 | Redmine derives a parent's priority (and dates, done ratio) from its subtasks by default | OAC-6, OAC-52 differ from Jira | Redmine setting; choice for Jan |
+| B13 | Redmine derives a parent's priority (and dates, done ratio) from its subtasks by default | OAC-6, OAC-52 differ from Jira | **Jan 2026-10-13: parent priority independent** on both targets (Redmine setting); verify expects Jira's priority |
 | B14 | Attachments are stored as `{jiraId}__{name}` with spaces and special characters replaced | 25 of 62 sampled issues show other file names than Jira; keeps inline references unique | 09, 10; choice for Jan |
 | B15 | `mailto:` links become `<local-part>` (domain lost); an HTML block (`<p>...`) around Markdown leaves `**` visible | GEOS-41, OAC-24, OAC-39, SIS-211 | conversion pipeline (not the HTML converter, see bench) |
 | B16 | Mentions become `user#id`; ADF mentions inline code (M7); image alt text dropped | as planned for phase 7 | conversion |
