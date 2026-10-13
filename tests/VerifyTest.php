@@ -123,4 +123,18 @@ final class VerifyTest extends TestCase
 
         self::assertSame(['100' => '3', '103' => '3'], verifyOpenParents($rows, ['6' => '5', '1' => '1']));
     }
+
+    public function testDuplicateJournalsAreFound(): void
+    {
+        $comment = ['user' => ['id' => 7], 'created_on' => '2026-09-16T14:12:49Z', 'notes' => 'Looks good', 'details' => []];
+        $journals = [
+            ['id' => 10] + $comment,
+            ['id' => 11, 'user' => ['id' => 7], 'created_on' => '2026-09-16T14:13:00Z', 'notes' => 'Looks good', 'details' => []],
+            ['id' => 12, 'user' => ['id' => 1], 'created_on' => '2026-09-17T08:00:00Z', 'notes' => '', 'details' => []],
+            ['id' => 20] + $comment,
+        ];
+
+        self::assertSame(['journal #20 duplicates #10'], verifyDuplicateJournals($journals));
+        self::assertSame([], verifyDuplicateJournals(array_slice($journals, 0, 3)));
+    }
 }

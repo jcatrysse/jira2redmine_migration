@@ -281,3 +281,31 @@ function verifyOpenParents(iterable $rows, array $statusMap): array
 
     return $result;
 }
+
+/**
+ * Journals that exist twice on one issue: same author, same time, same text. A rerun of 11 used to push
+ * every comment again (B35); the comment check still passed because each Jira comment was found.
+ *
+ * @param list<array<string, mixed>> $journals Redmine journals of one issue (REST include=journals)
+ * @return list<string> one entry per extra copy: "journal #id duplicates #id"
+ */
+function verifyDuplicateJournals(array $journals): array
+{
+    $seen = [];
+    $duplicates = [];
+    foreach ($journals as $journal) {
+        $notes = trim((string)($journal['notes'] ?? ''));
+        $details = json_encode($journal['details'] ?? []);
+        if ($notes === '' && ($journal['details'] ?? []) === []) {
+            continue;
+        }
+        $key = implode('|', [(string)($journal['user']['id'] ?? ''), (string)($journal['created_on'] ?? ''), $notes, $details]);
+        if (isset($seen[$key])) {
+            $duplicates[] = sprintf('journal #%s duplicates #%s', (string)($journal['id'] ?? '?'), $seen[$key]);
+            continue;
+        }
+        $seen[$key] = (string)($journal['id'] ?? '?');
+    }
+
+    return $duplicates;
+}

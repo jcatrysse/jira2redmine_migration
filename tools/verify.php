@@ -12,7 +12,7 @@ declare(strict_types=1);
  *   presence     every sampled Jira issue has a Redmine issue
  *   fields       subject, tracker, status, priority, author, assignee, parent, created date
  *   description  words of Jira's rendered description found in the Redmine Markdown (>= 98%), links, images
- *   comments     every Jira comment found in a Redmine journal note (>= 95% of its words)
+ *   comments     every Jira comment found in a Redmine journal note (>= 95% of its words); no journal twice
  *   attachments  name and size as a multiset; sha256 of both downloads up to --checksum-max-bytes;
  *                files "skipped by sample" (attachments.test_sample) are expected absent
  *   watchers     Jira watchers (mapped users) are Redmine watchers
@@ -41,19 +41,11 @@ $sampleSize = (int)($options['sample'] ?? 25);
 $checksumMax = (int)($options['checksum-max-bytes'] ?? 5 * 1024 * 1024);
 $reportPath = (string)($options['report'] ?? (rtrim((string)$config['paths']['tmp'], '/') . '/verify-' . date('Ymd-His') . '.md'));
 
-$jira = new Client([
-    'base_uri' => rtrim((string)$config['jira']['base_url'], '/'),
-    'handler' => jiraHandlerStack($config['jira']),
-    'auth' => [(string)$config['jira']['username'], (string)$config['jira']['api_token']],
-    'headers' => ['Accept' => 'application/json'],
-    'timeout' => 120,
-]);
+// The scripts' clients: gateway rewrite and the central retry (a dropped connection while hashing a
+// download stopped a whole verify run).
+$jira = \Jira2Redmine\Http\ClientFactory::jira($config['jira'], 120);
+$redmine = \Jira2Redmine\Http\ClientFactory::redmine($config['redmine'], 120);
 $redmineBase = rtrim((string)$config['redmine']['base_url'], '/');
-$redmine = new Client([
-    'base_uri' => $redmineBase . '/',
-    'headers' => ['Accept' => 'application/json', 'X-Redmine-API-Key' => (string)$config['redmine']['api_key']],
-    'timeout' => 120,
-]);
 $pdo = new PDO((string)$config['database']['dsn'], (string)$config['database']['username'], (string)$config['database']['password'], [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
@@ -333,6 +325,10 @@ foreach ($projectKeys as $projectKey) {
                 }
             }
         }
+
+        // Journals: none twice.
+        $duplicateJournals = verifyDuplicateJournals($rm['journals'] ?? []);
+        $record('journals: no duplicates', $duplicateJournals === [], $issueKey, implode(', ', array_slice($duplicateJournals, 0, 5)));
 
         // Watchers.
         $watchers = verifyGetJson($jira, sprintf('/rest/api/3/issue/%s/watchers', $jiraId));
