@@ -1,0 +1,54 @@
+# Stand-in, for the test runs only, for the manual steps of today's workflow (CHANGELOG, plan M8) and for
+# 04_migrate_roles.php while the token lacks the scope it needs. Run with
+#   J2R_STEP=workflows|members J2R_PROJECTS=geos,sis,oac bundle exec rails runner manual_steps.rb
+# workflows: every transition open for Manager and Developer on every tracker, new issues included
+#            ("open the workflows", reset after the migration); watchers need view_watched_issues
+#            (redmine_view_issue_description), given to both roles.
+# members:   activate locked users, flagged with preference j2r_relock ("activate locked users"), and add
+#            every user to the test projects as Developer (stands in for 04_migrate_roles.php).
+step = ENV.fetch('J2R_STEP')
+roles = Role.where(name: %w[Manager Developer]).to_a
+
+case step
+when 'workflows'
+  statuses = IssueStatus.pluck(:id)
+  existing = WorkflowTransition.pluck(:tracker_id, :role_id, :old_status_id, :new_status_id).to_set
+  rows = []
+  Tracker.pluck(:id).each do |tracker_id|
+    roles.each do |role|
+      ([0] + statuses).each do |from|
+        statuses.each do |to|
+          next if from == to || existing.include?([tracker_id, role.id, from, to])
+          rows << { type: 'WorkflowTransition', tracker_id: tracker_id, role_id: role.id, old_status_id: from,
+                    new_status_id: to, assignee: false, author: false }
+        end
+      end
+    end
+  end
+  rows.each_slice(5000) { |slice| WorkflowRule.insert_all(slice) }
+  created = rows.size
+  perms = Redmine::AccessControl.permissions.map(&:name) & %i[view_watched_issues view_issue_description]
+  roles.each { |role| perms.each { |p| role.add_permission!(p) } }
+  puts "workflow transitions created=#{created} permissions=#{perms.inspect}"
+when 'members'
+  role = Role.find_by!(name: 'Developer')
+  projects = Project.where(identifier: ENV.fetch('J2R_PROJECTS').split(',')).to_a
+  activated = 0
+  added = 0
+  User.where(type: 'User').where.not(id: 1).find_each do |user|
+    if user.locked?
+      user.pref[:j2r_relock] = '1'
+      user.pref.save!
+      user.update_column(:status, User::STATUS_ACTIVE)
+      activated += 1
+    end
+    projects.each do |project|
+      next if Member.where(user_id: user.id, project_id: project.id).exists?
+      member = Member.new(user: user, project: project)
+      member.role_ids = [role.id]
+      member.save!
+      added += 1
+    end
+  end
+  puts "activated=#{activated} memberships=#{added}"
+end

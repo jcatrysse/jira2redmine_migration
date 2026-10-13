@@ -93,19 +93,31 @@ In this order. Each item records its result under "Results" when done.
    sizes every Jira project first (issues, comments, attachments and their total size) and puts the
    choice to Jan: 2 or 3 small, varied projects for the baseline (rich formatting, large video,
    many custom fields), and Survey Support Desk as the volume run once the baseline is clean.
-   Write the keys here.
+   **Chosen by Jan (2026-10-13, through the coordinator):**
+   - baseline: **GEOS** (97 issues, 547 comments, 320 attachments, 1.0 GB, 29 custom fields),
+     **SIS** (265, 477, 199, 0.2 GB, 18 custom fields, a 67 MB video), **OAC** (64, 77, 57, 0.25 GB,
+     61 links, 22 subtasks);
+   - conversion bench: **WIKI** added (1,457 issues; the only project with panels and most code blocks);
+   - volume run: **SURV** (1,494 issues, 7,344 comments, 6,317 attachments, 98.7 GB) with an
+     attachment sample: every attachment up to 512 KB, plus per file extension the largest file up to
+     20 MB (about 4,305 files, about 1 GB); the rest stays in staging as metadata, is not downloaded or
+     pushed, is reported as "skipped by sample" and counted as expected-absent by the verify tool. It is
+     a test option, off by default, a fixed rule;
+   - large attachments: LABO-562 attachment 33685 (mp4, 431 MB, the largest video in Jira) and
+     SURV-267 attachment 11838 (tif, 1,811 MB). No video in Jira is larger than 431 MB.
+   Jira as a whole: 15 projects, 4,911 issues, 13,677 comments, 10,095 attachments, about 116 GB.
 3. 5.1 plugin set. Jan (2026-10-13): production runs each plugin's default branch, **except**:
 
    | plugin | branch on 5.1 |
    |---|---|
-   | `redmine_custom_workflows` | `5.x` |
+   | `redmine_custom_workflows` | `main` per Jan; no such branch exists, `master` and `5.x` are v3.1.1 and need Redmine 6 (F2); test uses tag `v2.1.2` |
    | `bless-this-redmine-sso` | `feature_version_2.0.0` |
    | `redmine_issue_templates` | `master-geoxyz` |
    | `redmine_subtask` | `develop` |
    | `redmine_ai_summary` | `main-GEOxyz` |
    | `redmine_mermaid_macro` | `mermaid10` |
    | `redmine_wiki_extensions` | `Redmine-5.1` |
-   | `redmine_user_specific_theme` | `compatible-with-redmine-5` |
+   | `redmine_user_specific_theme` | `compatibility-with-redmine-5` |
    | `redmine_issue_view_columns` | `2.0.0` |
 
    Which plugins make up the set: the Redmine plugins in Jan's GitHub account (public and
@@ -143,6 +155,8 @@ In this order. Each item records its result under "Results" when done.
 
 7. Run every script, otherwise unchanged, on the test projects, to 5.1 and to 7.0. Record every
    failure, warning and manual intervention in "Findings". Fix nothing yet.
+   **DONE** 2026-10-13 (session B): two runs per target, see Findings B1 to B23 and the verify table
+   there. `tools/testenv/run_all.sh 51|70 LABEL` repeats a full run from a clean Redmine and staging.
 
 **Phase 5, measuring tools**
 
@@ -150,7 +164,13 @@ In this order. Each item records its result under "Results" when done.
    for a sample of issues the description, journals, attachments (name, size, checksum),
    watchers, relations and custom field values. Output a pass/fail report. From here on "green"
    means this report.
+   **DONE** 2026-10-13: `tools/verify.php --projects=GEOS,SIS,OAC [--sample=25]`, rules in
+   `lib/verify.php` (21 PHPUnit tests). Live Jira against live Redmine; staging only maps ids.
+   Renders `user#id`/`@login` as names and ignores Jira browse URLs (rewritten to `#id` by design),
+   as Redmine shows them. A run of 3 projects takes about 2 minutes.
 9. Text conversion bench (decision 7), see "Text conversion protocol".
+   **Steps 1, 2 and 4 DONE** 2026-10-13: `tools/conversion_bench.php`, results under that protocol.
+   Step 3 (visual check with Jan) and 5 (PHPUnit cases) follow in phase 7.
 10. Large attachment test (decision 3), see "Large attachment protocol".
 
 **Phase 6, code quality without behaviour change**
@@ -239,6 +259,36 @@ Prompt B:
 4. Both paths (HTML and ADF) are measured; the plan records which one is better per construct.
 5. Every defect found becomes a PHPUnit case with an anonymised input and the expected Markdown.
 
+**Results 2026-10-13 (session B).** Every staged description and comment, rendered by Redmine 5.1's
+own CommonMark formatter, against Jira's rendered HTML. "Without loss": at least 99% of Jira's words,
+no fewer links or images, the element of each construct present (table, pre, heading, blockquote,
+nested list, mailto, img), and no visible Markdown syntax (`**`, `\|`, `](`, `|---`, HTML tags).
+
+| set | path | items | without loss |
+|---|---|---:|---:|
+| GEOS, SIS, OAC, WIKI (bench staging) | html (main) | 4,648 | 4,630 (99.6%) |
+| | adf (fallback) | 4,648 | 2,098 (45.1%) |
+| GEOS, SIS, OAC (run 2 staging) | html | 1,444 | 1,440 (99.7%) |
+| | adf | 1,444 | 747 (51.7%) |
+| | pipeline (what is pushed) | 1,139 | 1,057 (92.8%) |
+
+- **Which path:** the HTML path is better for every construct; ADF loses links (2,313 items), code
+  blocks (31 of 33), images and mentions. Keep HTML as the main path; ADF only where Jira gives no HTML.
+- **The losses are in the pipeline after the converter** (phase 7): inline images in comments become
+  plain attachment links (46 of 54 items with attachment links), mentions glued to the next word
+  ("user#12thanks"), `mailto:` domains lost (B15), Markdown links that do not render (`](` visible, 11),
+  a heading and quote lost in one comment, `**` visible inside raw HTML blocks.
+- HTML path defects (18 of 4,648): WIKI tables written in MediaWiki syntax and `<nowiki>`/`<pre>` text
+  that Jira itself shows as text (WIKI-280, -282, -294, -295, -843), raw HTML left in 6 items.
+- Constructs absent from these projects: task lists, dates, expand. Present (issue counts): mention
+  664, image 311, issue link 205, attachment link 111, nested list 61, panel 39, code block 30,
+  table 28, email link 24, emoji 23, heading 16, status lozenge 14, colour 11, quote 10.
+- Curated set (step 1), two or three per construct: table GEOS-10, OAC-39, SIS-12; code block SIS-249,
+  WIKI-66, WIKI-843; panel WIKI-161, WIKI-185; nested list GEOS-15, OAC-19; image GEOS-87, OAC-47;
+  attachment link GEOS-8, GEOS-23; mention GEOS-10, SIS-162; issue link GEOS-65, OAC-16; heading
+  GEOS-102, WIKI-254; quote GEOS-10, OAC-17; colour WIKI-185, WIKI-406; emoji GEOS-22, SIS-151; status
+  lozenge SIS-85, WIKI-13; email link GEOS-41, SIS-211; MediaWiki text WIKI-280, WIKI-294.
+
 ## Large attachment protocol
 
 On 5.1 and 7.0, with `attachment_max_size` raised (e.g. 4 GB) and SharePoint off:
@@ -274,9 +324,12 @@ On 5.1 and 7.0, with `attachment_max_size` raised (e.g. 4 GB) and SharePoint off
 - Staging database: stay on MySQL or move to PostgreSQL (decide after the baseline).
 - Worklogs to time entries: in scope or not.
 - Which manual steps to automate (decide after the baseline, per step).
-- Plugin set for 5.1 (work list 3): is the derived list right; do resources, drive, questions and
-  reporter run in production? (session B, sent to the coordinator)
-- `redmine_custom_workflows` on 5.1 production: which version (F2)? Test env uses v2.1.2.
+- `redmine_custom_workflows` on 5.1 production: which commit (F2)? `main` does not exist.
+- Granular read scopes (approved by Jan 2026-10-13: read:group:jira, read:user:jira,
+  read:project-role:jira, read:workflow:jira, read:workflow-scheme:jira, read:issue-type-scheme:jira,
+  read:issue-type-screen-scheme:jira, read:screen:jira, read:screen-scheme:jira, read:screen-tab:jira,
+  read:screenable-field:jira, read:field-configuration:jira, read:field-configuration-scheme:jira,
+  read:avatar:jira): waiting for the new token; then write probe again and rerun 03, 04, 16.
 
 ## Findings
 
@@ -284,13 +337,70 @@ Before the baseline (session B, 2026-10-13):
 
 | # | finding | effect | action |
 |---|---|---|---|
-| F1 | `5.1-stable-GEOxyz` sets `session_store :active_record_store` but its Gemfile lacks `activerecord-session_store` (7.0 has it) | 5.1 does not boot from the repo alone; production must have it in a Gemfile.local | test env adds it; Jan: commit it to the 5.1 branch? |
-| F2 | `redmine_custom_workflows` branch `5.x` is v3.1.1 and requires Redmine 6.0 | does not load on 5.1 | test env uses tag `v2.1.2` (last for 5.1); **open for Jan**: which version runs in production? |
+| F1 | `5.1-stable-GEOxyz` sets `session_store :active_record_store` but its Gemfile lacks `activerecord-session_store` (7.0 has it) | 5.1 does not boot from the repo alone | Jan: Gemfile.local through the test setup, nothing committed to the Redmine fork (done in `setup.sh`) |
+| F2 | `redmine_custom_workflows`: Jan says production 5.1 runs `main`; the repo has no `main`, and `master` (2aacc23) and `5.x` (38d6a53) are v3.1.1 with `requires_redmine 6.0.0`: "PluginRequirementError ... requires Redmine 6.0.0 or higher but current is 5.1.13.stable" | does not load on 5.1 | test env uses tag `v2.1.2`; **open for Jan**: the commit on the 5.1 server |
 | F3 | `redmineup` >= 1.1.5 defines route `auto_complete_taggable_tags`, `redmine_contacts` master too | 5.1 does not boot with the newest gem | test env pins `redmineup` 1.1.4 in the lockfile |
 | F4 | `issue_recurring` loads models from its rake file | `rake db:migrate` fails on an empty database | setup moves it aside for the first migrate |
 | F5 | Jira client with a scoped token on the site URL (no gateway) | `01 --phases=jira` reports "0 project records processed" and exits 0, no error | phase 7: an empty or unauthorised extraction must fail loudly |
 | F6 | Redmine calls use leading-slash paths too (`/roles.json`, `/issues/%d.json`, ...) | a Redmine under a sub-path (`https://host/redmine/`) would lose the sub-path, same bug as M4 | phase 6 (shared Redmine client) |
 | F7 | Through the gateway Jira returns attachment `content` URLs on the gateway already | M5 only matters for staging rows extracted through the site URL; the rewrite covers both | none |
+
+**Baseline (phase 4), session B, 2026-10-13.** GEOS, SIS, OAC (426 issues, 1,101 comments, 576
+attachments) to Redmine 5.1 (Extended API `main` @ 132fff5) and 7.0, scripts unchanged apart from the
+gateway. Run 1 followed the scripts and their defaults; run 2 applied today's documented manual steps
+up front (`tools/testenv/manual_steps.rb`: open workflows, activate users and add them to the projects
+as a stand-in for 04, which the token cannot run yet; `view_watched_issues` for watchers) and the
+documented config option `default_redmine_author_id`. Logs, staging and reports stay in the session
+(real data). **5.1 and 7.0 give the same numbers, except B19.**
+
+Verify, 25 sampled issues per project (75; 62 exist in Redmine):
+
+| check | run 1 | run 2 | cause in run 2 |
+|---|---|---|---|
+| presence | 62/75 | 62/75 | B7, B8 (issues not created) |
+| counts total / per tracker+status | 0/3, 0/37 | 0/3, 18/29 | issues not created |
+| status | 1/62 | 62/62 | run 1: B12 |
+| watchers | 2/62 | 62/62 | run 1: B20 |
+| subject, tracker, author, assignee, created | 62/62 | 62/62 | |
+| parent | 60/62 | 58/62 | B10, B22 |
+| priority | 61/62 | 60/62 | B13 (derived from subtasks) |
+| description words / links / images | 58, 60, 61 of 62 | 58, 59, 60 of 62 | B10, B15, B22 |
+| comments (journal holds >= 95% of the words) | 142/145 | 142/145 | B15 |
+| attachments name+size / sha256 | 62/62, 95/95 | 62/62, 95/95 | |
+| attachments original filename | 37/62 | 37/62 | B14 |
+| relations | 27/32 | 27/32 | B18 |
+| custom fields (value present) | 66/97 | 66/97 | B7 |
+
+Run 2 totals per target: issues 365 created + 6 waiting for a parent + 2 update failed, 48 failed,
+5 manual; journals 939 pushed (749 belong to issues not created); attachments 367 attached, 208
+uploaded but never attached (issues not created; Redmine's prune removes them); relations 60 created,
+60 manual; watchers 777. Verify on both targets: **FAIL, 106 failures**.
+
+| # | finding | effect | where |
+|---|---|---|---|
+| B1 | Tracker name longer than 30 characters ("Automated Feedback from Jira tickets") | 422 on create; custom field "Department" then MANUAL (missing tracker) | 07 transform |
+| B2 | Scope gaps: `group/member`, `role`, `workflow*`, `issuetypescheme*`, `screens`, `fieldconfiguration` answer 401 | 03 and 04 stop at the first 401 (exit 1); no group members, no project roles, no workflow export | token (Jan approved read scopes), 03, 04, 16 |
+| B3 | 143 of 587 Jira accounts MANUAL: 111 app accounts, 32 people without a visible e-mail | their issues need `default_redmine_author_id`; app accounts should be ignored | 02 transform |
+| B4 | No project selection: 01 creates every project, 10 stamps `issues_extracted_at` on every project although the JQL keeps 3 | adding a project later needs a manual reset of that column | 01, 10 |
+| B5 | New users are LOCKED by default and 04 cannot add members | 283 issues "Assignee is invalid" (run 1) | 02 default, 04 |
+| B6 | Retry needs SQL: rows in MANUAL or CREATION_FAILED are skipped on rerun, failed rows show as "[preserved] manual overrides" (25) though nobody edited them; same in 12 | every retry after a fix means `automation_hash = NULL` by hand | 10, 12 transform |
+| B7 | Cascading fields (depending_enumeration): 08 stores value dependencies as labels, 10 sends enumeration ids | 44 issues 422 "is not included in the list"; on created issues the child value is empty (31 of 97 sampled values) | 08 push, 10 transform |
+| B8 | Jira due date before the start date (start = created date) | 5 issues 422 | 10 transform |
+| B9 | Unmapped assignee makes the issue MANUAL instead of unassigned | 4 issues not created | 10 transform |
+| B10 | Description and parent are written in a second "final update"; until then the description is empty. One run of 10 leaves 373 issues READY_FOR_REWRITE; a second run is needed; issues whose parent failed keep an empty description | empty descriptions (GEOS-87: 0% of words) | 10 push |
+| B11 | The final update writes the description as an update | every issue gets a journal "Description changed" by its author at the creation time | 10 push |
+| B12 | Issues are created in the default status: new trackers have no workflow | 61 of 62 sampled issues "New" (run 1); fixed by opening workflows (a manual step) | 10, M8 |
+| B13 | Redmine derives a parent's priority (and dates, done ratio) from its subtasks by default | OAC-6, OAC-52 differ from Jira | Redmine setting; choice for Jan |
+| B14 | Attachments are stored as `{jiraId}__{name}` with spaces and special characters replaced | 25 of 62 sampled issues show other file names than Jira; keeps inline references unique | 09, 10; choice for Jan |
+| B15 | `mailto:` links become `<local-part>` (domain lost); an HTML block (`<p>...`) around Markdown leaves `**` visible | GEOS-41, OAC-24, OAC-39, SIS-211 | conversion pipeline (not the HTML converter, see bench) |
+| B16 | Mentions become `user#id`; ADF mentions inline code (M7); image alt text dropped | as planned for phase 7 | conversion |
+| B17 | Journals of issues not created stay PENDING without a note; 31 warnings "changelog mentions attachments but none were mapped" (attachments deleted in Jira) | noise, no reason recorded | 11 |
+| B18 | GEOxyz relation types need `redmine_issue_view_columns.local.rb` (production config, not in a repo); 9 "blocks" relations MANUAL ("blocked issue already closed"), 51 MANUAL because an issue is missing | 15 relations 422 without that config (test env now generates it from `custom_mappings`) | 12, test env |
+| B19 | **7.0 only:** `redmine_tags` `redmine70-migration` dropped `POST /issues/:id/tags.json`; tags go through `issue[tag_list]` | all 32 tag updates 404 on 7.0 | 13 (detect, do not configure) |
+| B20 | `redmine_view_issue_description` only accepts watchers with `view_watched_issues`; Redmine still answers 204 | 14 reports 777 SUCCESS while no watcher is stored (run 1) | 14 must read back |
+| B21 | Downloads: 09 pulls 1.5 GB in about 800 s (about 1.9 MB/s); curl on the same gateway 17 MB/s | the SURV volume run is slow | 09 pull |
+| B22 | An open subtask under a closed parent: 422 "An open issue cannot be attached to a closed parent task" on the final update, and the description in that same update is lost | OAC-44, OAC-47: no parent, empty description | 10 final update, `subtask_status_behavior` |
+| B23 | Uploads happen before the issue exists (M9); for issues that fail, the upload stays orphaned | 208 orphans | 09, 10 |
 
 ## Results
 
