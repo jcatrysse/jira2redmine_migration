@@ -402,6 +402,16 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B22 | An open subtask under a closed parent: 422 "An open issue cannot be attached to a closed parent task" on the final update, and the description in that same update is lost | OAC-44, OAC-47: no parent, empty description | 10 final update, `subtask_status_behavior` |
 | B23 | Uploads happen before the issue exists (M9); for issues that fail, the upload stays orphaned | 208 orphans | 09, 10 |
 
+**Gate for redmine_extended_api on 5.1 (2026-10-13): RED.** Jan merges `redmine70-migration` into
+`main` once the 5.1 rerun is green; `main` was already at ae192d4 (code = 8bb01dc) when tested. Same
+full run as run 2, 5.1 with ae192d4 instead of 132fff5: **0 of 426 issues created**, 422 times HTTP
+500, verify FAIL (presence 0/75). Cause: `SystemStackError` between the Extended API's
+`Issue.prepend` of `safe_attributes=` (issue_patch.rb:26, calls `super`) and `redmine_tags` `master`
+(the 5.1 production branch), which chains the same method with `alias_method` (issue_patch.rb:33-34,
+133); plugins load alphabetically, so the alias captures the prepended method and `super` loops. 7.0
+is not affected (`redmine_tags` `redmine70-migration` prepends too). Reported to the coordinator for
+session A; rerun the gate on the next commit.
+
 ## Results
 
 (empty)
