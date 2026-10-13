@@ -206,6 +206,11 @@ In this order. Each item records its result under "Results" when done.
     import mode that skips workflow and initial-status checks and accepts locked users, admin
     only, `/extended_api` only).
 16. README rewritten from the runbook; CHANGELOG back to a changelog.
+    Status 2026-10-13: done. Runbook in `docs/RUNBOOK.md` (sequence, checks, manual steps with
+    `manual_steps.rb` workflows/members/restore, choices for Jan, Apache appendix). README is a short
+    overview; the per-script detail moved to `docs/SCRIPTS.md` (subtask, watcher and attachment name
+    notes brought up to date); CHANGELOG lists the changes of this branch, its manual steps (M8) are
+    in the runbook. Open: the Extended API import mode (choice for Jan, session A).
 
 **Phase 9, final runs**
 

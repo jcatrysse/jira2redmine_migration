@@ -53,6 +53,8 @@ Check the summary line of each (`Matched / Ready / Manual`):
 - users: Jira app accounts are IGNORED; people without a visible e-mail stay MANUAL (their content uses
   the default author); new users are created LOCKED unless `default_redmine_user_status` says otherwise;
 - trackers: names longer than 30 characters are shortened (note on the mapping row);
+- statuses and trackers: names in the language of the Redmine instance; Jira `Done` maps to a closed
+  status, `To Do` to New;
 - 03, 04, 16 need the granular read scopes; without them they stop at the first 401.
 
 ## 2. Custom fields, issues and attachments
@@ -107,7 +109,7 @@ handled in the tool (plan, Results).
 ## 5. After the run
 
 `J2R_STEP=restore` (or by hand): remove the opened workflow transitions, lock the activated users
-again; switch prune, LDAP sync and stealth mode back on.
+again; check the group memberships; switch prune, LDAP sync and stealth mode back on.
 
 ## Choices for Jan (plan work list 15)
 
