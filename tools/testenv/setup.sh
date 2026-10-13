@@ -11,8 +11,10 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 BASE=${1:-/home/user/src}
 export RBENV_ROOT=/opt/rbenv PATH=/opt/rbenv/shims:/opt/rbenv/bin:$PATH RAILS_ENV=production
 mkdir -p "$BASE/dumps"
-cp "$HERE/start.sh" "$HERE/reset.sh" "$BASE/"
+cp "$HERE/start.sh" "$HERE/reset.sh" "$HERE/env.sh" "$BASE/"
 
+# a fresh container has an empty package index
+apt-get update -q >/dev/null
 apt-get install -y -q libpq-dev libmysqlclient-dev mariadb-server >/dev/null
 service postgresql start
 service mariadb start
@@ -68,9 +70,9 @@ done
 
 for v in 51 70; do
   cd "$BASE/redmine$v"
-  bundle exec rake generate_secret_token
-  # issue_recurring loads models from its rake file, which fails on an empty database
+  # issue_recurring loads models from its rake file, which fails on an empty database (any rake task)
   mv plugins/issue_recurring ../issue_recurring.tmp
+  bundle exec rake generate_secret_token
   bundle exec rake db:migrate
   REDMINE_LANG=en bundle exec rake redmine:load_default_data
   bundle exec rake redmine:plugins:migrate
@@ -81,8 +83,8 @@ for v in 51 70; do
     Setting.attachment_max_size = 4194304; Setting.login_required = "1"; Setting.parent_issue_priority = "independent"
     u = User.find_by_login("admin"); u.password = u.password_confirmation = "Admin-Test-2026"
     u.must_change_passwd = false; u.save!
-    Token.find_or_create_by!(user_id: u.id, action: "api")'
+    puts "KEY=#{Token.find_or_create_by!(user_id: u.id, action: "api").value}"' | grep '^KEY=' > "$BASE/setup$v.out"
   PGPASSWORD=redmine pg_dump -h 127.0.0.1 -U redmine -Fc redmine$v > "$BASE/dumps/redmine$v-baseline.dump"
   "$BASE/start.sh" $v
 done
-echo "API keys: bundle exec rails runner 'puts Token.find_by(action: \"api\", user_id: 1).value' in each instance"
+echo "Admin API keys in $BASE/setup51.out and setup70.out (read by env.sh)"
