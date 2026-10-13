@@ -1036,3 +1036,226 @@ function inlineReplaceJiraIssueKeysWithHashes(string $text, array $jiraToRedmine
 
     return normalizeRedmineReferenceSpacing($text);
 }
+
+/**
+ * Normalize attachment links in a text blob (markdown or HTML).
+ * - First does a DOM pass for <img> and <a> tags if HTML present.
+ * - Then does a markdown-style pass replacing inline links/images.
+ *
+ * @param array<string, array{unique: string, sharepoint: ?string}> $attachmentsMap keyed by attachment id
+ */
+function normalizeAttachmentLinksInText(string $text, array $attachmentsMap): string
+{
+    if (trim($text) === '') return $text;
+
+    // make Markdown-escaped underscores visible for our detection
+    $text = str_replace('\\_', '_', $text);
+
+    // DOM pass for images/anchors when HTML is present
+    if (stripos($text, '<img') !== false || stripos($text, '<a') !== false || stripos($text, '<div') !== false) {
+        $doc = new DOMDocument();
+        $prev = libxml_use_internal_errors(true);
+        $options = 0;
+        if (defined('LIBXML_HTML_NOIMPLIED')) $options |= LIBXML_HTML_NOIMPLIED;
+        if (defined('LIBXML_HTML_NODEFDTD')) $options |= LIBXML_HTML_NODEFDTD;
+        $payload = '<?xml encoding="utf-8"?>' . $text;
+        if (@$doc->loadHTML($payload, $options)) {
+            // process <img>
+            foreach (iterator_to_array($doc->getElementsByTagName('img')) as $img) {
+                if (!$img instanceof DOMElement) continue;
+                $src = (string)$img->getAttribute('src');
+                if ($src === '') continue;
+
+                $new = mapAttachmentUrlToTarget($src, $attachmentsMap);
+                $img->setAttribute('src', $new);
+
+                // remove noisy attributes
+                foreach (['title', 'alt', 'data-attachment-name', 'data-attachment-type', 'data-media-services-id', 'data-media-services-type'] as $attr) {
+                    if ($img->hasAttribute($attr)) $img->removeAttribute($attr);
+                }
+
+                // remove tiny rendericons
+                $cls = strtolower((string)$img->getAttribute('class'));
+                if (str_contains($cls, 'rendericon') || str_contains($src, '/images/icons/')) {
+                    $parent = $img->parentNode;
+                    $parent?->removeChild($img);
+                }
+            }
+
+            // process <a>
+            foreach (iterator_to_array($doc->getElementsByTagName('a')) as $a) {
+                if (!$a instanceof DOMElement) continue;
+                $href = (string)$a->getAttribute('href');
+                if ($href === '') continue;
+
+                // remove preview/title attributes
+                foreach (['title','file-preview-title','file-preview-id','file-preview-type','data-linked-resource-id','data-attachment-name','data-attachment-type'] as $attr) {
+                    if ($a->hasAttribute($attr)) $a->removeAttribute($attr);
+                }
+
+                $new = mapAttachmentUrlToTarget($href, $attachmentsMap);
+
+                // if anchor wraps an <img>, handle embedded images as images (replace <a><img/></a> with <img/>)
+                $imgs = $a->getElementsByTagName('img');
+                if ($imgs->length > 0) {
+                    $firstImg = $imgs->item(0);
+                    if ($firstImg instanceof DOMElement) {
+                        $imgSrc = (string)$firstImg->getAttribute('src');
+                        $resolved = mapAttachmentUrlToTarget($imgSrc, $attachmentsMap);
+                        if (preg_match('/^(\d+)__.+$/', $resolved, $m)) {
+                            $aidImg = $m[1];
+                            $isImgAttachment = $attachmentsMap[$aidImg]['is_image'] ?? true;
+                        } else {
+                            $isImgAttachment = false;
+                        }
+
+                        if ($isImgAttachment) {
+                            $parent = $a->parentNode;
+                            $parent?->replaceChild($firstImg, $a);
+                            continue;
+                        }
+                    }
+                }
+
+                // treat anchor
+                if (preg_match('/^(\d+)__(.+)$/', $new, $mNew)) {
+                    $aid = $mNew[1];
+                    $isImage = $attachmentsMap[$aid]['is_image'] ?? false;
+                    if (!$isImage) {
+                        $textNode = $doc->createTextNode('attachment:' . $new);
+                        $parent = $a->parentNode;
+                        $parent?->replaceChild($textNode, $a);
+                    } else {
+                        $a->setAttribute('href', $new);
+                        if (trim((string)$a->textContent) === '') $a->textContent = $new;
+                    }
+                } else {
+                    // external/SharePoint or unchanged
+                    $a->setAttribute('href', $new);
+                    if (trim((string)$a->textContent) === '') {
+                        $parts = parse_url($new);
+                        if (isset($parts['path'])) {
+                            $basename = basename($parts['path']);
+                            $a->textContent = $basename !== '' ? $basename : $new;
+                        } else {
+                            $a->textContent = $new;
+                        }
+                    }
+                }
+            }
+
+            $converted = $doc->saveHTML();
+            if ($converted !== false) {
+                $converted = preg_replace('/^\s*<\?xml[^>]+\?>\s*/i', '', $converted);
+                $text = $converted;
+            }
+        }
+        libxml_clear_errors();
+        libxml_use_internal_errors($prev);
+    }
+
+    // Markdown-style replacements: ![alt](URL) and [label](URL)
+    $text = preg_replace_callback(
+        '/(!?\[[^]]*])\(\s*([^\s)]+)(?:\s+"([^"]*)")?\s*\)/m',
+        function ($m) use ($attachmentsMap) {
+            $label = $m[1];
+            $url   = trim($m[2]);
+            $isImageLabel = str_starts_with($label, '!');
+
+            // explicit attachment:attachment:token
+            if (str_starts_with($url, 'attachment:')) {
+                $unique = substr($url, strlen('attachment:'));
+                $mapped = mapAttachmentUrlToTarget($unique, $attachmentsMap);
+                if (preg_match('#^https?://#i', $mapped)) {
+                    return $label . '(' . $mapped . ')';
+                }
+                if (!$isImageLabel && preg_match('/^\d+__.+$/', $mapped)) {
+                    return $label . '(attachment:' . $mapped . ')';
+                }
+                return $label . '(' . $mapped . ')';
+            }
+
+            // leave absolute SharePoint URLs alone
+            if (preg_match('#^https?://#i', $url) && str_contains($url, 'sharepoint.com')) {
+                return $m[0];
+            }
+
+            $new = mapAttachmentUrlToTarget($url, $attachmentsMap);
+            if (preg_match('#^https?://#i', $new)) {
+                return $label . '(' . $new . ')';
+            }
+            if (!$isImageLabel && preg_match('/^\d+__.+$/', $new)) {
+                $new = 'attachment:' . $new;
+            }
+
+            return $label . '(' . $new . ')';
+        },
+        $text
+    );
+
+    // plain "attachment:123__filename" tokens -> resolve to SharePoint if available
+    $text = preg_replace_callback(
+        '/\battachment:(\d+__[^)\s,;]+)/i',
+        function ($m) use ($attachmentsMap) {
+            $unique = $m[1];
+            $mapped = mapAttachmentUrlToTarget($unique, $attachmentsMap);
+            if (preg_match('#^https?://#i', $mapped)) {
+                return $mapped;
+            }
+            return $m[0];
+        },
+        $text
+    );
+
+    // bare unique filenames such as "10388__foo"
+    $text = preg_replace_callback(
+        '#(?<![/:])\b(\d+__[^)\s,;]+)#',
+        function ($m) use ($attachmentsMap) {
+            $unique = $m[1];
+            $mapped = mapAttachmentUrlToTarget($unique, $attachmentsMap);
+            if (preg_match('#^https?://#i', $mapped)) {
+                return $mapped;
+            }
+            return $m[0];
+        },
+        $text
+    );
+
+    // leftover absolute REST API attachment URLs
+    $text = preg_replace_callback(
+        '#https?://[^\s)\]}]+/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+)[^\s)\]}]*#i',
+        function ($m) use ($attachmentsMap) {
+            $id = $m[1] ?? null;
+            if ($id === null || !isset($attachmentsMap[$id])) return $m[0];
+            $meta = $attachmentsMap[$id];
+            return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
+        },
+        $text
+    );
+
+    // relative REST API attachment URLs
+    $text = preg_replace_callback(
+        '#/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+)[^\s)\]}]*#i',
+        function ($m) use ($attachmentsMap) {
+            $id = $m[1] ?? null;
+            if ($id === null || !isset($attachmentsMap[$id])) return $m[0];
+            $meta = $attachmentsMap[$id];
+            return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
+        },
+        $text
+    );
+
+    // patterns like "/attachment/1234" or "/secure/attachment/1234"
+    $text = preg_replace_callback(
+        '#(?:/secure/attachment/|/attachment/|/attachment/content/)(\d+)#i',
+        function ($m) use ($attachmentsMap) {
+            $id = $m[1] ?? null;
+            if ($id === null || !isset($attachmentsMap[$id])) return $m[0];
+            $meta = $attachmentsMap[$id];
+            return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
+        },
+        $text
+    );
+
+    return normalizeRedmineReferenceSpacing($text);
+}
