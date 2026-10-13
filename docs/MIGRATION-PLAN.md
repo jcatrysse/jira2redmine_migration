@@ -58,7 +58,7 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
    **B2:** WIKI run and bench done (Text conversion protocol, results B2); fixes B37 to B43 and B42 (conversion).
 6. SURV volume run: first implement the attachment sample test option (Jan's rule, under work list
    2; off by default; skipped files reported "skipped by sample" and expected-absent in verify).
-   **B2:** option built (`attachments.test_sample`, B33 commit list); SURV run on 5.1, see Results.
+   **B2:** option built (`attachments.test_sample`); SURV run on 5.1, see Results.
 7. Phase 6 rest: the 8 helper functions still copied in every script (M1), CLI and config helpers,
    each step proven with identical recorded requests.
 8. Phase 9: final runs on both targets, numbers in "Results".
@@ -615,6 +615,8 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B41 | 11 rewrote 10's issue descriptions in staging after 10 pushed them | avatars stayed in Redmine (3 issues); issues not created yet got a broken hash and stayed "manual overrides" (17) | **fixed**: 10 cleans descriptions before its hash and push, 11 no longer touches them |
 | B42 | Link markup Jira showed as text, URLs with parentheses | `](` visible (22 items) | **fixed** in descriptions and comments, PHPUnit cases from anonymised input |
 | B43 | 08's purge of mappings without a Jira field deleted the synthetic `cascading_parent:` rows on every transform; after a rerun of 08 nothing recreated them | 10 lost the parent field of 3 cascading fields; issues created after the rerun lost their parent value (41 verify failures in the healed WIKI run) | **fixed** (`MappingKeys`) |
+| B44 | The spacing clean-up joined digits after a reference; two clean-ups turned "user 5" into a mention | a mention followed by a number pointed to another user ("user#332 4 lines" became "user#3324": 8 journals in the SURV run, 7 comments in the data); "#12 3" would become "#123" | **fixed**, PHPUnit cases from anonymised input |
+| B45 | 08 took the values of app fields without allowed values (label manager fields) only in the jira phase, before 10 staged the issues | 5 fields MANUAL, not migrated | **fixed** with B37 (usage phase): 34 fields created instead of 30. "Organizations" and "Request participants" (service desk) are now seen and MANUAL; not migrated before either |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
@@ -635,4 +637,17 @@ session A; rerun the gate on the next commit.
 
 ## Results
 
-(empty)
+**SURV volume run, 5.1, B2, 2026-10-13** (`J2R_PROJECTS=surv J2R_TEST_SAMPLE=1 run_all.sh 51 b2-surv`,
+code before B44): 1,494 issues, all created (10 in 479 s); attachments 6,323 in Jira, 4,306 in the sample
+(0.98 GB, pull 518 s, push 182 s), 2,017 skipped by sample (97.7 GB); journals 8,674 pushed and 12,882
+changelog entries without content skipped (11 in 2,592 s, Jira extraction included); relations 151
+created, 309 to issues outside the run, 3 parent/subtask links ignored (B40); watchers 3,750. A second
+pass of 11 to 15 (by accident, see below) created nothing twice: verify "journals: no duplicates"
+25/25. Verify, 50 issues: 3 failures before the verify fixes, all explained: one mention joined with a
+number (B44, fixed after this run), one empty rich text field and one checksum that matched on every
+later read (verify fixes). By accident `run_all.sh` was edited while this run used it; bash then
+repeated 13 and 14 and ran 11 to 15 once more.
+
+**Phase 9: final runs** (filled in below when they finish).
+
+(earlier: empty)
