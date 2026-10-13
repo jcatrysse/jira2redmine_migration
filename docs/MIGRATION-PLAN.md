@@ -55,12 +55,15 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
    (code 161fa52) on 5.1, fresh full run: verify 22 checks, 0 failures, results equal to `main` 132fff5.
 5. WIKI through the conversion bench pipeline (Text conversion protocol); then phase 7 item 13
    (conversion fixes with PHPUnit cases) and bench step 3 (visual check with Jan).
-   **B2:** WIKI run and bench done (Text conversion protocol, results B2); fixes B37 to B43 and B42 (conversion).
+   **B2:** WIKI run and bench done (Text conversion protocol, results B2); run findings B37 to B43,
+   conversion fixes B42 and B44 with PHPUnit cases. **Open:** bench step 3 (visual check with Jan),
+   a pipeline measurement after B41/B42/B44, the remaining defect classes (Outlook safelinks in mailed
+   comments, status lozenges, a few headings).
 6. SURV volume run: first implement the attachment sample test option (Jan's rule, under work list
    2; off by default; skipped files reported "skipped by sample" and expected-absent in verify).
-   **B2:** option built (`attachments.test_sample`); SURV run on 5.1, see Results.
+   **B2: DONE**, option built (`attachments.test_sample`); SURV run on 5.1, see Results.
 7. Phase 6 rest: the 8 helper functions still copied in every script (M1), CLI and config helpers,
-   each step proven with identical recorded requests.
+   each step proven with identical recorded requests. **Open** (B2 did not start it; not Jira-bound).
 8. Phase 9: final runs on both targets, numbers in "Results".
 
 **Test environment, for `tools/testenv/setup.sh` in a fresh container.**
