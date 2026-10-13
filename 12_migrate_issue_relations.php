@@ -10,6 +10,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Relations\RelationState;
 
 const MIGRATE_RELATIONS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -984,20 +985,5 @@ function computeRelationAutomationStateHash(
     mixed $migrationStatus,
     mixed $notes
 ): string {
-    $payload = [
-        'redmine_issue_from_id' => $redmineIssueFromId,
-        'redmine_issue_to_id' => $redmineIssueToId,
-        'redmine_relation_id' => $redmineRelationId,
-        'proposed_relation_type' => $proposedRelationType,
-        'migration_status' => $migrationStatus,
-        'notes' => $notes,
-    ];
-
-    try {
-        $encoded = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    } catch (JsonException $exception) {
-        throw new RuntimeException('Failed to encode relation automation payload: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    return hash('sha256', $encoded);
+    return RelationState::hash($redmineIssueFromId, $redmineIssueToId, $redmineRelationId, $proposedRelationType, $migrationStatus, $notes);
 }
