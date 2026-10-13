@@ -26,7 +26,7 @@ is left. Written 2026-10-13 from a reading of the code and Jan's answers in the 
 | | |
 |---|---|
 | Branch | `redmine70-migration` (from `main` at `1de1fc9`) |
-| Phase | 2 and 3 done (session B, 2026-10-13); phase 4 waits for the test project keys |
+| Phase | 2 to 5 done, 6 first part and 7 largely done (session B, 2026-10-13); see Results |
 | Scripts | 16 scripts, ~39,000 lines of PHP, no shared library, no tests |
 | Targets | Redmine 5.1 and 7.0; the scripts stay dual-target (unlike the plugins, 5.1 is not dropped) |
 | Extended API | to be made compatible with Redmine 5.1, 6.1 and 7.0 (own repo, own branch) |
@@ -184,9 +184,19 @@ In this order. Each item records its result under "Results" when done.
 **Phase 7, fixes**
 
 12. Mentions to `@login` (decision 4), in both conversion paths.
+    **DONE** 2026-10-13: HTML path and ADF path; `user#id` stays only for users without a known login.
 13. Conversion fixes from the bench, each with a PHPUnit case built from an anonymised
     reproduction of the Jira input.
 14. Every finding from the baseline: fixed, or a line saying why not.
+    **Status 2026-10-13**, each fix with a PHPUnit test (73 tests) unless noted:
+    fixed B1, B3, B4 (`migration.issues.projects`), B6 (link rewrite; MANUAL rows judged again, the
+    latter checked end to end only), B7, B8, B9, B10/B11/B22, B13 (setting), B14 (Jan's rule), B15,
+    B19, B20, B24, F5; B21 is configuration (`download_concurrency` 6: 760 s to 96 s); open subtask
+    under a closed parent: parent gets "Resolved" (Jan). Not code: B2 (token scopes, waiting for Jan's
+    new token), B5/B12 (manual steps, item 15), B16 alt text (kept), B17 and B23 (noise; reported),
+    B18 (production config of redmine_issue_view_columns, documented in the runbook).
+    Run on 7.0 with the fixes (before B24, B14, Resolved and the parent priority setting): 420 of 426
+    issues, every tracker/status count equal to Jira, presence 75/75, watchers 960 stored.
 
 **Phase 8, workflow and documentation**
 
@@ -354,9 +364,15 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
 - Staging database: stay on MySQL or move to PostgreSQL (decide after the baseline).
 - Worklogs to time entries: in scope or not.
 - Which manual steps to automate (decide after the baseline, per step).
-- Attachment names (B14), Jan 2026-10-13: test how 5.1 and 7.0 handle two attachments with the same
-  name on one issue and in one journal (list, downloads by checksum, inline image in description and
-  comment, API); original names if Redmine handles it correctly, otherwise keep `{jiraId}__`. To do.
+- B14 measured on 7.0 (2026-10-13): Redmine stores, lists and downloads same-named attachments
+  correctly, but an inline image resolves to the latest attachment of that name (description showed
+  #578 instead of #577). **Jan: original names, `{jiraId}__` only for a name the issue already has.**
+  Implemented; with that rule all four inline references of the test issue resolve to the right file
+  on 7.0. 5.1: to check after the gate run.
+- Open subtask under a closed parent, **Jan:** link it and give the parent the open status "Resolved"
+  (exists and is open on 5.1 and 7.0, id 3). Implemented as the default rule; parents noted
+  `[open-parent]` with their Jira status; the verify tool expects Resolved for them. In the baseline
+  data: OAC-19 and OAC-42.
 - Granular read scopes (approved by Jan 2026-10-13: read:group:jira, read:user:jira,
   read:project-role:jira, read:workflow:jira, read:workflow-scheme:jira, read:issue-type-scheme:jira,
   read:issue-type-screen-scheme:jira, read:screen:jira, read:screen-scheme:jira, read:screen-tab:jira,
