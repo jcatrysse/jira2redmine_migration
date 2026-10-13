@@ -565,10 +565,10 @@ function transform_text_in_transform_phase(string $text, array $userMap): string
         $text
     ) ?? $text;
 
-   // safety: remove accidental space or missing hash between "user" and "123" anywhere
-   // matches "user 123", "user #123", "user   #  123", etc. -> "user#123"
+    // safety: remove an accidental space between "user" and "#123" ("user #123" -> "user#123"); without
+    // the "#" it is text ("the user 5 minutes later", B44)
     $text = preg_replace(
-        '/\buser[[:space:]]+#?[[:space:]]*([0-9]+)/i',
+        '/\buser[[:space:]]+#[[:space:]]*([0-9]+)/i',
         'user#$1',
         $text
     ) ?? $text;
@@ -796,20 +796,11 @@ function normalizeRedmineReferenceSpacing(string $text): string
     $text = preg_replace('/(user#\d+)(?=[.,;:!?])/u', '$1 ', $text) ?? $text;
     $text = preg_replace('/(#\d+)(?=[.,;:!?])/u', '$1 ', $text) ?? $text;
 
-    // Final conservative cleanup: remove any accidental whitespace inside numeric tokens
-    // e.g. "user#3 7 7" -> "user#377", "#3 7 7" -> "#377"
-    $text = preg_replace_callback('/user#((?:\s*\d)+)/u', function ($m) {
-        $digits = preg_replace('/\s+/u', '', $m[1]);
-        return 'user#' . $digits;
-    }, $text) ?? $text;
+    // No joining of digits after a reference: "user#332 4 lines" became "user#3324" (another user) and
+    // "#12 3 times" "#123" (B44).
 
-    $text = preg_replace_callback('/#((?:\s*\d)+)/u', function ($m) {
-        $digits = preg_replace('/\s+/u', '', $m[1]);
-        return '#' . $digits;
-    }, $text) ?? $text;
-
-    // Final normalization of user token encodings (defensive)
-    $text = preg_replace('/\buser(?:%20|\s)*(?:%23|#)?(?:%20|\s)*([0-9]+)\b/iu', 'user#$1', $text) ?? $text;
+    // Final normalization of user token encodings (defensive); the "#" is required, "user 5" is text.
+    $text = preg_replace('/\buser(?:%20|\s)*(?:%23|#)(?:%20|\s)*([0-9]+)\b/iu', 'user#$1', $text) ?? $text;
 
     return $text;
 }
