@@ -274,6 +274,14 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
     without transitions follows the global workflow (it cannot store an empty one); on 7.0 it is an own,
     empty workflow. Built in `a4a3d9c`; plugin points reported to the coordinator, the plugin repository
     not changed.
+    Context from Jan (2026-10-14): production 5.1 runs an old, somewhat buggy version of the plugin that
+    works; the renewed version (v0.1.x, branch `redmine70-migration`) has not run in production yet. The
+    migration uses the new version and is its test. Session C (jcatrysse/redmine_project_workflows)
+    verifies the reported points with failing tests, fixes the new version and checks the upgrade from
+    the old data model; it may ask for a migration run through its fixed version. Plugin version per run:
+    5.1 test instance v0.0.3 (`d61b1de`, its default branch), 7.0 v0.1.6 (`f2c1c2f`, `redmine70-migration`);
+    5.1 moves to the new version once session C confirms it supports 5.1. The runner writes the new
+    version's model (scopes) whenever the plugin has the scope table.
     **Built** (`20cc6e8`, `7f1d898`, `8ff9e11`): rule 3 after all, from the field configurations 16 now
     exports (0 rows on this Jira); `tools/workflow_plan.php` and `tools/apply_workflows.rb` (preview,
     `--confirm-push`, repeatable); `WORKFLOWS=1` in `run_all.sh`. Runbook section 5. Information for Jan:
