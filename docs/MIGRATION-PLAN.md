@@ -17,8 +17,9 @@ op GSPP; verify 23 checks met 2 open punten in WIKI (een relatie, een commentaar
 - **B46.** Jira houdt een assignee die zijn rechten kwijt is, Redmine niet. 04 stelt zo iemand voor als
   lid (rol `migration.roles.assignee_only_role`, standaard Developer): 7 in GEOS, SIS en OAC, 19 met WIKI
   erbij. Zonder dat weigerde Redmine 10 en 47 issues, nu 0. 04 draait daarom na het ophalen van de issues.
-- **B50.** Een watcher zonder toegang tot het project (geen Browse in Jira) wordt niet gemigreerd, zoals
-  in Jira: 38 in de testrun, elk gemeld met `[no-access]`; verify verwacht ze afwezig.
+- **B50 (jouw beslissing van 14/10).** Een watcher zonder toegang tot het project wordt toch gemigreerd:
+  04 stelt hem voor als watcher-only lid (rol `migration.roles.watcher_only_role`, voorlopig Developer),
+  14 voegt hem toe, verify verwacht hem aanwezig. Was 38 watchers in de testrun.
 - **Batches.** Een latere batch voegt nieuwe selectiewaarden toe aan een bestaand veld (B47, B51; anders
   bleven 294 WIKI-issues hangen) en zet bestaande velden aan voor de nieuwe projecten (B53; anders
   verdwenen 48 waarden stil). Wachtende issues worden gekoppeld zodra het parent-project binnenkomt (B38,
@@ -51,8 +52,8 @@ Advies: niet migreren vanuit `main`. De fixes staan op `redmine70-migration`, el
 1. Bevestigen: Assignable user als Developer; B46 assignee-only leden met Developer (alternatief: een
    eigen rol met alleen inzage); Non member-groep pas na jouw READY; B37 oude selectiewaarde toevoegen en
    na de migratie inactief zetten; B38/B39 cross-project instellingen blijven aan.
-2. **B50, watchers zonder toegang**: (a, aanbevolen) niet migreren, zoals in Jira; (b) als watcher-only
-   lid voorstellen, zoals bij B46 (geeft toegang die Jira niet geeft).
+2. **B50, watchers zonder toegang**: beslist, ze worden gemigreerd (gebouwd). Nog open: welke rol
+   (`migration.roles.watcher_only_role`, nu Developer).
 3. **B52, links naar een latere batch**: een link uit batch 1 naar een issue van batch 2 blijft een
    Jira-link. (a, aanbevolen) voor productie één run met alle projecten, dan speelt het niet; (b) de
    opt-in stap `tools/relink_issue_links.php` na de laatste batch (gebouwd en bewezen: 2 commentaren
@@ -128,9 +129,9 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
 5. WIKI through the conversion bench pipeline (Text conversion protocol); then phase 7 item 13
    (conversion fixes with PHPUnit cases) and bench step 3 (visual check with Jan).
    **B2:** WIKI run and bench done (Text conversion protocol, results B2); run findings B37 to B43,
-   conversion fixes B42 and B44 with PHPUnit cases. **Open:** bench step 3 (visual check with Jan),
-   a pipeline measurement after B41/B42/B44, the remaining defect classes (Outlook safelinks in mailed
-   comments, status lozenges, a few headings).
+   conversion fixes B42 and B44 with PHPUnit cases. Then the pipeline measurement after the fixes and
+   the remaining defect classes (safelinks, status lozenges, headings, issue link text): **DONE**, see
+   "Results B2, night 2026-10-14". **Open:** Jan's look at the bench step 3 pages (made, see there).
 6. SURV volume run: first implement the attachment sample test option (Jan's rule, under work list
    2; off by default; skipped files reported "skipped by sample" and expected-absent in verify).
    **B2: DONE**, option built (`attachments.test_sample`); SURV run on 5.1, see Results.
@@ -218,6 +219,12 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
     reviews and edits `migration_mapping_project_role_groups` before `--confirm-push`; the
     automation hash keeps his edits; only READY rows are pushed. The `members` step only activates
     locked users. Done (B2, 2026-10-14): commits `f3443eb`, `17b8ec5`; review query in the runbook.
+11. **Watchers without project access are migrated (B50, option b)** (2026-10-14, relayed by the
+    coordinator), so the history shows who followed an issue. Built like B46: 04 proposes each watcher
+    no membership covers as a direct member, pseudo role -5 "Watcher of issues (no membership)",
+    READY, note "Watcher only, not in the project's permission groups", role from
+    `migration.roles.watcher_only_role`; 14 then adds the watcher, verify expects it present. 14's jira
+    phase runs before 04. The role is still open (asked of Jan; Developer until then). Commit `24d3611`.
 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
@@ -245,7 +252,8 @@ Per item: what was done, the alternatives, why this one.
   (b) 10 creates such an issue unassigned and keeps the Jira assignee in the mapping notes and the run
   report (the assignee is lost in Redmine); (c) the old members step, limited to assignees. (a) keeps
   the assignee and follows Jan's review model.
-- **B50, option (a): a watcher without access to the project is not migrated, as in Jira.** Redmine
+- **B50: superseded by Jan's decision 11 (option b, migrate them).** Overnight choice was option (a),
+  not migrated, as in Jira. Redmine
   drops a watcher who is not a member (204, not stored); with Jira's membership model that user has no
   Browse projects in Jira either and cannot see the issue there (38 in the GEOS/SIS/OAC run, 372 in the
   WIKI batch). 14 notes `[no-access]` and keeps the row FAILED, so a rerun adds the watcher once a
@@ -408,6 +416,7 @@ In this order. Each item records its result under "Results" when done.
 9. Text conversion bench (decision 7), see "Text conversion protocol".
    **Steps 1, 2 and 4 DONE** 2026-10-13: `tools/conversion_bench.php`, results under that protocol.
    Step 3 (visual check with Jan) and 5 (PHPUnit cases) follow in phase 7.
+   **B2:** step 5 done with every fix; step 3 pages made on 2026-10-14 (29 issues), Jan's look open.
 10. Large attachment test (decision 3), see "Large attachment protocol".
     **DONE** 2026-10-13, results under that protocol.
 
@@ -609,6 +618,15 @@ nested list, mailto, img), and no visible Markdown syntax (`**`, `\|`, `](`, `|-
   attachment link GEOS-8, GEOS-23; mention GEOS-10, SIS-162; issue link GEOS-65, OAC-16; heading
   GEOS-102, WIKI-254; quote GEOS-10, OAC-17; colour WIKI-185, WIKI-406; emoji GEOS-22, SIS-151; status
   lozenge SIS-85, WIKI-13; email link GEOS-41, SIS-211; MediaWiki text WIKI-280, WIKI-294.
+- Step 3 (B2, 2026-10-14): 29 side-by-side pages of the curated set (Jira's rendered HTML on the left,
+  a screenshot of the Redmine 7.0 issue page on the right), in B2's session only and handed to Jan
+  there; nothing committed. The first version showed descriptions only, while 14 of the 29 constructs
+  sit in a comment; the tools now put every migrated comment next to its journal. Checked: GEOS-10's
+  table and its five separate numbered lists match Jira; SIS-85 shows "#192 `New`" and the closed #194
+  struck through. To make them again after a run:
+  `php tools/testenv/visual_items.php OUT/items.json table=GEOS-10,OAC-39 ...`, then
+  `REDMINE_URL=... OUT=OUT ITEMS=OUT/items.json node tools/testenv/visual_check.mjs`, with OUT outside
+  the repository (the pages hold Jira data).
 
 ## Large attachment protocol
 
@@ -795,7 +813,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B47 | A later batch: a select value its issues hold never reached a field created by an earlier batch | 294 WIKI issues MANUAL ("could not be normalised"); 08's push updated an existing field's projects and trackers, not its values | **fixed**: 08's push adds the missing values to a field the migration created (Extended API) and refreshes the snapshot 10 reads; a field that existed before is listed, not changed |
 | B48 | A Jira user page cut off mid-transfer (cURL 18) | 02's extraction stopped in the WIKI batch; the retry covered failed connections only | **fixed**: every transport failure of a GET is retried |
 | B49 | Heading anchors (`<a name>`) left as HTML in the Markdown | the link passes wrapped the whole text in `<p>`: Redmine showed `###`, `**`, `&gt;` (13 of 2,214 texts) | **fixed**: anchors dropped before conversion; 3 texts left (literal MediaWiki HTML, another class) |
-| B50 | With 04's memberships from Jira's model (B31 a), Redmine drops watchers who are not members of the project | 48 FAILED rows ("204 but not stored") in the 5.1 run, 372 in the WIKI batch | **handled** (option a, decided overnight): 14 notes `[no-access]` when the user is no member, verify expects them absent; all 38 rows of the final 5.1 run are `[no-access]` |
+| B50 | With 04's memberships from Jira's model (B31 a), Redmine drops watchers who are not members of the project | 48 FAILED rows ("204 but not stored") in the 5.1 run, 372 in the WIKI batch | **fixed** (Jan's decision 11, option b, `24d3611`): 04 proposes them as watcher-only members, 14 adds them, verify expects them present; `[no-access]` stays as the note of a row whose membership was not pushed. Before (option a, overnight): not migrated, 38 `[no-access]` rows in the final 5.1 run |
 | B51 | 08's snapshot update used CAST(... AS JSON), which MariaDB refuses | B47's fix added the value in Redmine but 10 read the stale snapshot: the 294 WIKI issues stayed MANUAL in the proof batch | **fixed**: JSON_EXTRACT(:e, '$'); 08 compares with the field's values in Redmine before adding |
 | B52 | A link to an issue that a later batch migrates stays a Jira link | 10 rewrites the links of created issues in staging but pushes only the issues still waiting; 11 pushes a comment once. In the WIKI batch: 1 SIS comment to a WIKI issue | **built** (decided overnight): opt-in `tools/relink_issue_links.php` after the last batch, guarded by the hash of the pushed text (10 and 11 store it); one run with all projects recommended for production |
 | B53 | A field created by an earlier batch was never enabled for a later batch's projects and trackers | 48 empty custom field values in the WIKI batch's verify (Rank, Epic Link, Solution, Time in Status): Redmine dropped them silently | **fixed**: 08's update plan takes the scope the Jira data gives now (FieldScope) against the field as Redmine has it |
