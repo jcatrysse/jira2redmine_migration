@@ -54,7 +54,8 @@ const BENCH_CONSTRUCTS = [
     'mention' => '/class="user-hover"/i',
     'issue link' => '#href="[^"]*/browse/[A-Z][A-Z0-9_]*-\d+#',
     'task list' => '/task-list|data-task-local-id|type="checkbox"/i',
-    'heading' => '/<h[1-6]\b/i',
+    // a heading with text: Jira also renders empty ones ("<h1><a name=""></a></h1>"), which carry nothing
+    'heading' => '/<h([1-6])\b[^>]*>(?:\s*<a\b[^>]*>\s*<\/a>)*+\s*(?!<\/h\1>)\S/i',
     'quote' => '/<blockquote\b/i',
     'colour' => '/style="[^"]*\bcolor\s*:/i',
     'emoji' => '/emoticon|data-emoji/i',

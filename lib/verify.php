@@ -28,11 +28,14 @@ function verifyHtmlToText(?string $html): string
 
 /**
  * Links to Jira issues (".../browse/ABC-12...") are rewritten to Redmine issue links (#123) by design;
- * they are left out of the word comparison on both sides.
+ * Outlook safe-link wrappers in mailed comments are replaced by the link itself by design. Both are left
+ * out of the word comparison on both sides.
  */
 function verifyDropJiraBrowseUrls(string $text): string
 {
-    return preg_replace('#https?://[^\s"<>()\[\]]+/browse/[A-Z][A-Z0-9_]*-\d+[^\s"<>()\[\]]*#', ' ', $text) ?? $text;
+    $text = preg_replace('#https?://[^\s"<>()\[\]]+/browse/[A-Z][A-Z0-9_]*-\d+[^\s"<>()\[\]]*#', ' ', $text) ?? $text;
+
+    return preg_replace('#https?://[A-Za-z0-9.-]*\.safelinks\.protection\.outlook\.com/\S*#i', ' ', $text) ?? $text;
 }
 
 /**

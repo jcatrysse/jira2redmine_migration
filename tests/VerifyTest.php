@@ -80,6 +80,26 @@ final class VerifyTest extends TestCase
         self::assertSame(['links' => 1, 'images' => 2], verifyHtmlLinkCounts($html));
     }
 
+    public function testAnOutlookSafeLinkWrapperIsNoTextToKeep(): void
+    {
+        $html = '<p>See <a href="https://eur06.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.org&amp;data=05">'
+            . 'https://eur06.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.org&amp;data=05%7C02</a> now</p>';
+
+        self::assertSame(['see', 'now'], verifyWords(verifyHtmlToText($html)));
+    }
+
+    public function testTheBenchCountsOnlyHeadingsWithText(): void
+    {
+        $bench = (string)file_get_contents(__DIR__ . '/../tools/conversion_bench.php');
+        self::assertSame(1, preg_match("/'heading' => '([^']+)'/", $bench, $m));
+        $pattern = $m[1];
+
+        // Jira renders empty headings with an anchor only: nothing to keep
+        self::assertSame(0, preg_match($pattern, '<h1><a name=""></a></h1>'));
+        self::assertSame(1, preg_match($pattern, '<h3><a name="Plan"></a><b>Plan</b></h3>'));
+        self::assertSame(1, preg_match($pattern, '<h2>Plan</h2>'));
+    }
+
     public function testTheIssueTypeIconOfAnIssueMacroIsNoImage(): void
     {
         $html = '<a href="https://x.atlassian.net/browse/ABC-1" class="jira-issue-macro-key issue-link">'
