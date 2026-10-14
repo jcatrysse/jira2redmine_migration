@@ -10,6 +10,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\Redmine\Names;
 
 const MIGRATE_TRACKERS_SCRIPT_VERSION = '0.0.1';
@@ -108,7 +109,7 @@ function main(array $config, array $cliOptions): void
 
         printf("[%s] Starting Redmine tracker snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
 
-        $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
 
         $totalRedmineProcessed = fetchAndStoreRedmineTrackers($redmineClient, $pdo, $redmineConfig, $useExtendedApi);
 
@@ -162,7 +163,7 @@ function main(array $config, array $cliOptions): void
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         $redmineConfig ??= extractArrayConfig($config, 'redmine');
-        $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
 
         runTrackerPushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi);
     } else {
@@ -469,18 +470,18 @@ function fetchAndStoreRedmineTrackers(Client $client, PDO $pdo, array $redmineCo
         throw new RuntimeException('Unexpected response when fetching trackers from Redmine.');
     }
 
-    $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
+    $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
     $extendedApiEnabled = $useExtendedApi;
 
     if ($useExtendedApi) {
         try {
-            verifyExtendedApiAvailability($client, $extendedApiPrefix, 'trackers.json');
+            ExtendedApi::verifyAvailable($client, $extendedApiPrefix, 'trackers.json');
         } catch (Throwable $exception) {
             $extendedApiEnabled = false;
             printf(
                 "  [WARN] Extended API unavailable for tracker snapshots (%s): %s%s",
-                buildExtendedApiPath($extendedApiPrefix, 'trackers.json'),
-                summarizeExtendedApiError($exception),
+                ExtendedApi::path($extendedApiPrefix, 'trackers.json'),
+                ExtendedApi::summarizeError($exception),
                 PHP_EOL
             );
         }
@@ -528,7 +529,7 @@ function fetchAndStoreRedmineTrackers(Client $client, PDO $pdo, array $redmineCo
                     printf(
                         "  [WARN] Extended API tracker fetch failed for %d: %s%s",
                         $trackerId,
-                        summarizeExtendedApiError($exception),
+                        ExtendedApi::summarizeError($exception),
                         PHP_EOL
                     );
                 }
@@ -874,7 +875,6 @@ function runTrackerTransformationPhase(PDO $pdo, array $config): array
     return $summary;
 }
 
-
 function syncTrackerMappings(PDO $pdo): void
 {
     $sql = <<<SQL
@@ -890,7 +890,6 @@ function syncTrackerMappings(PDO $pdo): void
         throw new RuntimeException('Failed to synchronise migration_mapping_trackers: ' . $exception->getMessage(), 0, $exception);
     }
 }
-
 
 function refreshTrackerMetadata(PDO $pdo): void
 {
@@ -918,8 +917,6 @@ function refreshTrackerMetadata(PDO $pdo): void
 /**
  * @return array<string, array{id: int, name: string, is_default: mixed}>
  */
-
-
 
 function buildRedmineTrackerLookup(PDO $pdo): array
 {
@@ -1184,8 +1181,6 @@ function countTrackersInStatuses(PDO $pdo, array $statuses): int
     return (int)$row['total'];
 }
 
-
-
 function resolveDefaultTrackerStatusId(PDO $pdo, array $config): ?int
 {
     $configured = null;
@@ -1260,10 +1255,10 @@ function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array 
         }
 
         $redmineClient = createRedmineClient($redmineConfig);
-        $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
-        verifyExtendedApiAvailability($redmineClient, $extendedApiPrefix, 'trackers.json');
+        $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
+        ExtendedApi::verifyAvailable($redmineClient, $extendedApiPrefix, 'trackers.json');
 
-        $endpoint = buildExtendedApiPath($extendedApiPrefix, 'trackers.json');
+        $endpoint = ExtendedApi::path($extendedApiPrefix, 'trackers.json');
 
         if ($pendingCount > 0) {
             printf("  %d tracker(s) queued for creation via the extended API.%s", $pendingCount, PHP_EOL);
@@ -1398,7 +1393,7 @@ function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array 
 
                 $successCount++;
             } catch (Throwable $exception) {
-                $errorMessage = summarizeExtendedApiError($exception);
+                $errorMessage = ExtendedApi::summarizeError($exception);
                 $automationHash = computeTrackerAutomationStateHash(
                     null,
                     'CREATION_FAILED',
@@ -1527,7 +1522,6 @@ function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array 
     printf("  Manual acknowledgement recorded. Remember to update redmine_tracker_id and migration_status once the trackers exist in Redmine.%s", PHP_EOL);
 }
 
-
 function fetchTrackersReadyForCreation(PDO $pdo): array
 {
     $sql = <<<SQL
@@ -1564,7 +1558,6 @@ function fetchTrackersReadyForCreation(PDO $pdo): array
 
     return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
-
 
 function buildRedmineProjectTrackerSnapshot(PDO $pdo): array
 {
@@ -1647,7 +1640,6 @@ function buildRedmineProjectTrackerSnapshot(PDO $pdo): array
     return $snapshot;
 }
 
-
 function buildJiraToRedmineProjectLookup(PDO $pdo): array
 {
     try {
@@ -1720,7 +1712,6 @@ function buildJiraIssueTypeProjectUsage(PDO $pdo): array
 
     return $usage;
 }
-
 
 function collectTrackerProjectLinkPlan(PDO $pdo, array $jiraToRedmineProjectLookup, array $projectTrackerSnapshot): array
 {
@@ -1849,7 +1840,6 @@ function collectTrackerProjectLinkPlan(PDO $pdo, array $jiraToRedmineProjectLook
     return [$plan, $warnings, $trackerMetadata];
 }
 
-
 function synchronizeProjectTrackers(
     PDO $pdo,
     Client $redmineClient,
@@ -1897,7 +1887,7 @@ function synchronizeProjectTrackers(
         try {
             $resource = sprintf('projects/%d.json', $projectId);
             if ($extendedApiPrefix !== null) {
-                $resource = buildExtendedApiPath($extendedApiPrefix, $resource);
+                $resource = ExtendedApi::path($extendedApiPrefix, $resource);
             }
 
             $redmineClient->put(
@@ -2463,74 +2453,9 @@ function normalizeStoredAutomationHash(mixed $value): ?string
     return strtolower($trimmed);
 }
 
-function shouldUseExtendedApi(array $redmineConfig, bool $cliFlag): bool
-{
-    if ($cliFlag) {
-        return true;
-    }
-
-    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
-        ? $redmineConfig['extended_api']
-        : [];
-
-    return (bool)($extendedConfig['enabled'] ?? false);
-}
-
-function resolveExtendedApiPrefix(array $redmineConfig): string
-{
-    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
-        ? $redmineConfig['extended_api']
-        : [];
-
-    $prefix = isset($extendedConfig['prefix']) ? trim((string)$extendedConfig['prefix']) : '/extended_api';
-
-    if ($prefix === '') {
-        $prefix = '/extended_api';
-    }
-
-    return trim($prefix, '/');
-}
-
-function buildExtendedApiPath(string $prefix, string $resource): string
-{
-    $normalizedPrefix = trim($prefix, '/');
-    $normalizedResource = ltrim($resource, '/');
-
-    if ($normalizedPrefix === '') {
-        return $normalizedResource;
-    }
-
-    return $normalizedPrefix . '/' . $normalizedResource;
-}
-
-function verifyExtendedApiAvailability(Client $client, string $prefix, string $resource): void
-{
-    $path = buildExtendedApiPath($prefix, $resource);
-
-    try {
-        $response = $client->get($path);
-    } catch (BadResponseException $exception) {
-        $response = $exception->getResponse();
-        $statusCode = $response ? $response->getStatusCode() : 0;
-        $reason = $response ? $response->getReasonPhrase() : 'unknown error';
-        throw new RuntimeException(
-            sprintf('Extended API availability check failed (%s): HTTP %d %s', $path, $statusCode, $reason),
-            0,
-            $exception
-        );
-    } catch (GuzzleException $exception) {
-        throw new RuntimeException('Failed to reach the extended API: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    $header = $response->getHeaderLine('X-Redmine-Extended-API');
-    if (trim($header) === '') {
-        throw new RuntimeException('Extended API response missing X-Redmine-Extended-API header. Verify the plugin installation.');
-    }
-}
-
 function fetchExtendedRedmineTracker(Client $client, string $prefix, int $trackerId): array
 {
-    $path = buildExtendedApiPath($prefix, sprintf('trackers/%d.json', $trackerId));
+    $path = ExtendedApi::path($prefix, sprintf('trackers/%d.json', $trackerId));
 
     try {
         $response = $client->get($path);
@@ -2563,51 +2488,6 @@ function fetchExtendedRedmineTracker(Client $client, string $prefix, int $tracke
 
     return $decoded;
 }
-
-function summarizeExtendedApiError(Throwable $exception): string
-{
-    if ($exception instanceof BadResponseException) {
-        $response = $exception->getResponse();
-        if ($response !== null) {
-            $message = sprintf('HTTP %d %s', $response->getStatusCode(), $response->getReasonPhrase());
-            $details = extractExtendedApiErrorDetails($response);
-            if ($details !== null) {
-                $message .= ': ' . $details;
-            }
-
-            return $message;
-        }
-    }
-
-    return $exception->getMessage();
-}
-
-function extractExtendedApiErrorDetails(ResponseInterface $response): ?string
-{
-    $body = trim((string)$response->getBody());
-    if ($body === '') {
-        return null;
-    }
-
-    try {
-        $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
-    } catch (JsonException $exception) {
-        return $body !== '' ? $body : null;
-    }
-
-    if (is_array($decoded)) {
-        if (isset($decoded['errors']) && is_array($decoded['errors'])) {
-            return implode('; ', array_map('strval', $decoded['errors']));
-        }
-
-        if (isset($decoded['error']) && is_string($decoded['error'])) {
-            return $decoded['error'];
-        }
-    }
-
-    return $body !== '' ? $body : null;
-}
-
 
 function extractCreatedTrackerId(mixed $decoded): int
 {

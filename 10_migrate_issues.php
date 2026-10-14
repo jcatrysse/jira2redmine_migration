@@ -12,6 +12,7 @@ use Psr\Http\Message\ResponseInterface;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\Redmine\IssueFinalUpdate;
 use Jira2Redmine\Redmine\IssueDates;
 use Jira2Redmine\Issues\AssigneeRule;
@@ -108,7 +109,7 @@ function buildIssueCreationPayloadForPreview(
     }
 
     $endpoint = $useExtendedApi
-        ? buildExtendedApiPath($extendedApiPrefix, 'issues.json')
+        ? ExtendedApi::path($extendedApiPrefix, 'issues.json')
         : 'issues.json';
 
     return [
@@ -158,7 +159,7 @@ function buildIssueUpdatePayloadForPreview(
     }
 
     $endpoint = $useExtendedApi
-        ? buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', (int)$candidate['redmine_issue_id']))
+        ? ExtendedApi::path($extendedApiPrefix, sprintf('issues/%d.json', (int)$candidate['redmine_issue_id']))
         : sprintf('issues/%d.json', (int)$candidate['redmine_issue_id']);
 
     return [
@@ -282,8 +283,8 @@ function main(array $config, array $cliOptions): void
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         $redmineConfig = extractArrayConfig($config, 'redmine');
-        $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
-        $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
+        $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
 
         $defaultExtendedIssueAuthorId = extractDefaultIssueAuthorId($config);
 
@@ -1722,7 +1723,7 @@ function runIssuePushPhase(
     $client = createRedmineClient($redmineConfig);
 
     if ($useExtendedApi) {
-        verifyExtendedApiAvailability($client, $extendedApiPrefix, 'issues.json');
+        ExtendedApi::verifyAvailable($client, $extendedApiPrefix, 'issues.json');
     }
 
     $creationUpdateStatement = $pdo->prepare(<<<SQL
@@ -1881,7 +1882,7 @@ function runIssuePushPhase(
         }
 
         $endpoint = $useExtendedApi
-            ? buildExtendedApiPath($extendedApiPrefix, 'issues.json')
+            ? ExtendedApi::path($extendedApiPrefix, 'issues.json')
             : 'issues.json';
 
         // Punt 5: forceer geen leading slash, zelfs als buildExtendedApiPath dat zou doen
@@ -2061,7 +2062,7 @@ function runIssuePushPhase(
 
         $payload = ['issue' => $issuePayload];
         $endpoint = $useExtendedApi
-            ? buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
+            ? ExtendedApi::path($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
             : sprintf('issues/%d.json', $redmineIssueId);
 
         $endpoint = ltrim($endpoint, '/');
@@ -2209,7 +2210,7 @@ function updateParentIssueStatus(
 ): bool {
     $payload = ['issue' => ['status_id' => $statusId]];
     $endpoint = $useExtendedApi
-        ? buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', $parentRedmineId))
+        ? ExtendedApi::path($extendedApiPrefix, sprintf('issues/%d.json', $parentRedmineId))
         : sprintf('issues/%d.json', $parentRedmineId);
 
     $endpoint = ltrim($endpoint, '/');
@@ -2727,7 +2728,6 @@ function updateAttachmentMappingAfterPush(PDO $pdo, int $mappingId, ?int $redmin
     ]);
     $statement->closeCursor();
 }
-
 
 function syncIssueMappings(PDO $pdo): void
 {
@@ -3949,7 +3949,6 @@ function extractJiraCustomFieldString(mixed $value): ?string
             return ($txt === '') ? null : $txt;
         }
 
-
         // Jira "labels with colors" (zoals customfield_10067)
         if (array_key_exists('labels', $value) && is_array($value['labels'])) {
             $labels = array_values(array_filter(array_map(
@@ -4337,7 +4336,6 @@ function encodeJsonColumn(mixed $value): ?string
         throw new RuntimeException('Failed to encode JSON column value: ' . $exception->getMessage(), 0, $exception);
     }
 }
-
 
 function encodeJsonIfNotNull(array $value): ?string
 {
@@ -4837,71 +4835,6 @@ function decodeJsonResponse(ResponseInterface $response): array
     return is_array($decoded) ? $decoded : [];
 }
 
-function shouldUseExtendedApi(array $redmineConfig, bool $cliFlag): bool
-{
-    if ($cliFlag) {
-        return true;
-    }
-
-    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
-        ? $redmineConfig['extended_api']
-        : [];
-
-    return (bool)($extendedConfig['enabled'] ?? false);
-}
-
-function resolveExtendedApiPrefix(array $redmineConfig): string
-{
-    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
-        ? $redmineConfig['extended_api']
-        : [];
-
-    $prefix = isset($extendedConfig['prefix']) ? trim((string)$extendedConfig['prefix']) : '/extended_api';
-
-    if ($prefix === '') {
-        $prefix = '/extended_api';
-    }
-
-    return trim($prefix, '/');
-}
-
-function buildExtendedApiPath(string $prefix, string $resource): string
-{
-    $normalizedPrefix = trim($prefix, '/');
-    $normalizedResource = ltrim($resource, '/');
-
-    if ($normalizedPrefix === '') {
-        return $normalizedResource;
-    }
-
-    return $normalizedPrefix . '/' . $normalizedResource;
-}
-
-function verifyExtendedApiAvailability(Client $client, string $prefix, string $resource): void
-{
-    $path = buildExtendedApiPath($prefix, $resource);
-
-    try {
-        $response = $client->get($path);
-    } catch (BadResponseException $exception) {
-        $response = $exception->getResponse();
-        $statusCode = $response ? $response->getStatusCode() : 0;
-        $reason = $response ? $response->getReasonPhrase() : 'unknown error';
-        throw new RuntimeException(
-            sprintf('Extended API availability check failed (%s): HTTP %d %s', $path, $statusCode, $reason),
-            0,
-            $exception
-        );
-    } catch (GuzzleException $exception) {
-        throw new RuntimeException('Failed to reach the extended API: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    $header = $response->getHeaderLine('X-Redmine-Extended-API');
-    if (trim($header) === '') {
-        throw new RuntimeException('Extended API response missing X-Redmine-Extended-API header. Verify the plugin installation.');
-    }
-}
-
 function extractErrorBody(ResponseInterface $response): string
 {
     $body = trim((string)$response->getBody());
@@ -5329,7 +5262,6 @@ function buildUploadUniqueName(string $attachmentId, string $originalFilename): 
     $san = sanitizeAttachmentFileName($originalFilename !== '' ? $originalFilename : ('attachment-' . $attachmentId));
     return $attachmentId . '__' . $san;
 }
-
 
 /**
  * Normalise attachment links in the proposed_description for a migration_mapping_issues row.

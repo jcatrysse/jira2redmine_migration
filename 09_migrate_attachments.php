@@ -13,6 +13,7 @@ use GuzzleHttp\Psr7\Utils;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\Attachments\AttachmentSample;
 use Jira2Redmine\Attachments\PullRetry;
 const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.1';
@@ -150,8 +151,8 @@ function main(array $config, array $cliOptions): void
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         $uploadLimit = $cliOptions['upload_limit'] ?? null;
         $redmineConfig = extractArrayConfig($config, 'redmine');
-        $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
-        $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
+        $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
         runAttachmentUploadPhase($pdo, $config, $confirmPush, $isDryRun, $uploadLimit, $useExtendedApi, $extendedApiPrefix);
     } else {
         printf("[%s] Skipping push phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
@@ -264,7 +265,7 @@ function runAttachmentUploadPhase(
     $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
 
     if ($useExtendedApi) {
-        verifyExtendedApiAvailability($redmineClient, $extendedApiPrefix, 'issues.json');
+        ExtendedApi::verifyAvailable($redmineClient, $extendedApiPrefix, 'issues.json');
     }
 
     $userLookup = buildRedmineUserLookup($pdo);
@@ -1098,7 +1099,7 @@ SQL);
         $attachmentOverrides = buildAttachmentOverrideQuery($authorAccountId, $createdAt, $userLookup, $defaultAuthorId);
         $query = array_merge(['filename' => basename($uniqueName)], $useExtendedApi ? $attachmentOverrides : []);
         $endpoint = $useExtendedApi
-            ? buildExtendedApiPath($extendedApiPrefix, 'uploads.json')
+            ? ExtendedApi::path($extendedApiPrefix, 'uploads.json')
             : 'uploads.json';
 
         try {
@@ -1740,46 +1741,6 @@ function extractErrorBody(ResponseInterface $response): string
     return $body;
 }
 
-function shouldUseExtendedApi(array $redmineConfig, bool $force): bool
-{
-    if ($force) {
-        return true;
-    }
-
-    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
-        ? $redmineConfig['extended_api']
-        : [];
-
-    return (bool)($extendedConfig['enabled'] ?? false);
-}
-
-function resolveExtendedApiPrefix(array $redmineConfig): string
-{
-    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
-        ? $redmineConfig['extended_api']
-        : [];
-
-    $prefix = isset($extendedConfig['prefix']) ? trim((string)$extendedConfig['prefix']) : '/extended_api';
-
-    if ($prefix === '') {
-        $prefix = '/extended_api';
-    }
-
-    return trim($prefix, '/');
-}
-
-function buildExtendedApiPath(string $prefix, string $resource): string
-{
-    $normalizedPrefix = trim($prefix, '/');
-    $normalizedResource = ltrim($resource, '/');
-
-    if ($normalizedPrefix === '') {
-        return $normalizedResource;
-    }
-
-    return $normalizedPrefix . '/' . $normalizedResource;
-}
-
 /**
  * @param array<string, mixed> $config
  * @param string $key
@@ -2071,27 +2032,3 @@ function extractRedmineAttachmentIdFromToken(string $token): ?int
     return $id > 0 ? $id : null;
 }
 
-function verifyExtendedApiAvailability(Client $client, string $prefix, string $resource): void
-{
-    $path = buildExtendedApiPath($prefix, $resource);
-
-    try {
-        $response = $client->get($path);
-    } catch (BadResponseException $exception) {
-        $response = $exception->getResponse();
-        $statusCode = $response ? $response->getStatusCode() : 0;
-        $reason = $response ? $response->getReasonPhrase() : 'unknown error';
-        throw new RuntimeException(
-            sprintf('Extended API availability check failed (%s): HTTP %d %s', $path, $statusCode, $reason),
-            0,
-            $exception
-        );
-    } catch (GuzzleException $exception) {
-        throw new RuntimeException('Failed to reach the extended API: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    $header = $response->getHeaderLine('X-Redmine-Extended-API');
-    if (trim($header) === '') {
-        throw new RuntimeException('Extended API response missing X-Redmine-Extended-API header. Verify the plugin installation.');
-    }
-}

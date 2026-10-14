@@ -10,6 +10,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\Roles\AssigneeMemberships;
 use Jira2Redmine\Roles\AssignmentHash;
 use Jira2Redmine\Roles\AssignmentStatus;
@@ -195,7 +196,7 @@ function main(array $config, array $cliOptions): void
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         $redmineConfig ??= extractArrayConfig($config, 'redmine');
-        $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
 
         $workflowsConfig = $config['migration']['workflows'] ?? [];
         runRolePushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi, is_array($workflowsConfig) ? $workflowsConfig : []);
@@ -1988,8 +1989,8 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
         }
 
         $redmineClient = createRedmineClient($redmineConfig);
-        $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
-        verifyExtendedApiAvailability($redmineClient, $extendedApiPrefix, 'roles.json');
+        $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
+        ExtendedApi::verifyAvailable($redmineClient, $extendedApiPrefix, 'roles.json');
 
         printf("  %d assignment(s) queued for automatic creation.%s", $pendingCount, PHP_EOL);
 
@@ -2146,7 +2147,7 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
                 if ($plan['action'] === 'create') {
                     // membership[user_id] takes a user or a group id
                     $response = $redmineClient->post(
-                        buildExtendedApiPath($extendedApiPrefix, sprintf('projects/%d/memberships.json', $projectId)),
+                        ExtendedApi::path($extendedApiPrefix, sprintf('projects/%d/memberships.json', $projectId)),
                         ['json' => ['membership' => ['user_id' => $groupId, 'role_ids' => $plan['role_ids']]]]
                     );
                     $membershipId = extractCreatedMembershipId(decodeJsonResponse($response));
@@ -2177,7 +2178,7 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
                     PHP_EOL
                 );
             } catch (Throwable $exception) {
-                $errorMessage = summarizeExtendedApiError($exception);
+                $errorMessage = ExtendedApi::summarizeError($exception);
                 $record($assignment, 'MANUAL_INTERVENTION_REQUIRED', $errorMessage);
                 printf(
                     "  [failed] Project %s -> %s #%d with role #%d: %s%s",
@@ -2346,8 +2347,8 @@ function ensureWorkflowGroupRoles(PDO $pdo, bool $confirmPush, bool $isDryRun, a
     }
 
     $client = createRedmineClient($redmineConfig);
-    $prefix = resolveExtendedApiPrefix($redmineConfig);
-    verifyExtendedApiAvailability($client, $prefix, 'roles.json');
+    $prefix = ExtendedApi::prefix($redmineConfig);
+    ExtendedApi::verifyAvailable($client, $prefix, 'roles.json');
     $existing = [];
     $roleRows = $pdo->query('SELECT id, name FROM staging_redmine_roles');
     foreach ($roleRows !== false ? $roleRows->fetchAll(PDO::FETCH_ASSOC) : [] as $role) {
@@ -2368,11 +2369,11 @@ function ensureWorkflowGroupRoles(PDO $pdo, bool $confirmPush, bool $isDryRun, a
         if ($id === null) {
             try {
                 $response = $client->post(
-                    buildExtendedApiPath($prefix, 'roles.json'),
+                    ExtendedApi::path($prefix, 'roles.json'),
                     ['json' => WorkflowGroupRoles::rolePayload($name, $permissions)]
                 );
             } catch (BadResponseException $exception) {
-                printf("  [error] Workflow role \"%s\" not created: %s%s", $name, summarizeExtendedApiError($exception), PHP_EOL);
+                printf("  [error] Workflow role \"%s\" not created: %s%s", $name, ExtendedApi::summarizeError($exception), PHP_EOL);
                 continue;
             } catch (GuzzleException $exception) {
                 printf("  [error] Workflow role \"%s\" not created: %s%s", $name, $exception->getMessage(), PHP_EOL);
@@ -2582,115 +2583,6 @@ function normalizeStoredAutomationHash(mixed $value): ?string
     }
 
     return strtolower($candidate);
-}
-
-function shouldUseExtendedApi(array $redmineConfig, bool $cliFlag): bool
-{
-    if ($cliFlag) {
-        return true;
-    }
-
-    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
-        ? $redmineConfig['extended_api']
-        : [];
-
-    return (bool)($extendedConfig['enabled'] ?? false);
-}
-
-function resolveExtendedApiPrefix(array $redmineConfig): string
-{
-    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
-        ? $redmineConfig['extended_api']
-        : [];
-
-    $prefix = isset($extendedConfig['prefix']) ? trim((string)$extendedConfig['prefix']) : '/extended_api';
-
-    if ($prefix === '') {
-        $prefix = '/extended_api';
-    }
-
-    return trim($prefix, '/');
-}
-
-function buildExtendedApiPath(string $prefix, string $resource): string
-{
-    $normalizedPrefix = trim($prefix, '/');
-    $normalizedResource = ltrim($resource, '/');
-
-    if ($normalizedPrefix === '') {
-        return $normalizedResource;
-    }
-
-    return $normalizedPrefix . '/' . $normalizedResource;
-}
-
-function verifyExtendedApiAvailability(Client $client, string $prefix, string $resource): void
-{
-    $path = buildExtendedApiPath($prefix, $resource);
-
-    try {
-        $response = $client->get($path);
-    } catch (BadResponseException $exception) {
-        $response = $exception->getResponse();
-        $statusCode = $response ? $response->getStatusCode() : 0;
-        $reason = $response ? $response->getReasonPhrase() : 'unknown error';
-        throw new RuntimeException(
-            sprintf('Extended API availability check failed (%s): HTTP %d %s', $path, $statusCode, $reason),
-            0,
-            $exception
-        );
-    } catch (GuzzleException $exception) {
-        throw new RuntimeException('Failed to reach the extended API: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    $header = $response->getHeaderLine('X-Redmine-Extended-API');
-    if (trim($header) === '') {
-        throw new RuntimeException('Extended API response missing X-Redmine-Extended-API header. Verify the plugin installation.');
-    }
-}
-
-function summarizeExtendedApiError(Throwable $exception): string
-{
-    if ($exception instanceof BadResponseException) {
-        $response = $exception->getResponse();
-        if ($response !== null) {
-            $message = sprintf('HTTP %d %s', $response->getStatusCode(), $response->getReasonPhrase());
-            $details = extractExtendedApiErrorDetails($response);
-            if ($details !== null) {
-                $message .= ': ' . $details;
-            }
-
-            return $message;
-        }
-    }
-
-    return $exception->getMessage();
-}
-
-function extractExtendedApiErrorDetails(ResponseInterface $response): ?string
-{
-    $body = trim((string)$response->getBody());
-    if ($body === '') {
-        return null;
-    }
-
-    try {
-        $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
-    } catch (JsonException $exception) {
-        return $body !== '' ? $body : null;
-    }
-
-    if (is_array($decoded)) {
-        if (isset($decoded['errors']) && is_array($decoded['errors'])) {
-            return implode('; ', array_map('strval', $decoded['errors']));
-        }
-
-        if (isset($decoded['error']) && is_string($decoded['error'])) {
-            return $decoded['error'];
-        }
-    }
-
-    return $body !== '' ? $body : null;
 }
 
 /**
@@ -3025,9 +2917,4 @@ function normalizeString(mixed $value, int $maxLength): ?string
 
     return substr($trimmed, 0, $maxLength);
 }
-
-
-
-
-
 

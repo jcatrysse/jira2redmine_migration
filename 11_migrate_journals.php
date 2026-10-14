@@ -12,6 +12,7 @@ use Psr\Http\Message\ResponseInterface;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\Attachments\AttachmentNames;
 use Jira2Redmine\Journals\JournalStatus;
 use Jira2Redmine\Text\Relink;
@@ -139,8 +140,8 @@ function main(array $config, array $cliOptions): void
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         $redmineConfig = extractArrayConfig($config, 'redmine');
-        $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
-        $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
+        $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
         runJournalPushPhase($pdo, $config, $confirmPush, $isDryRun, $useExtendedApi, $extendedApiPrefix);
     } else {
         printf("[%s] Skipping push phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
@@ -1186,7 +1187,7 @@ function processCommentPush(
     $payload = ['issue' => array_filter($issuePayload, static fn($v) => $v !== null && $v !== [])];
 
     $endpoint = $useExtendedApi
-        ? buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
+        ? ExtendedApi::path($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
         : sprintf('issues/%d.json', $redmineIssueId);
 
     $options = ['json' => $payload];
@@ -1384,7 +1385,7 @@ function processChangelogPush(
     $payload = ['issue' => array_filter($issuePayload, static fn($v) => $v !== null && $v !== [])];
 
     $endpoint = $useExtendedApi
-        ? buildExtendedApiPath($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
+        ? ExtendedApi::path($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
         : sprintf('issues/%d.json', $redmineIssueId);
 
     $options = ['json' => $payload];
@@ -2081,46 +2082,6 @@ function decodeJsonResponse(ResponseInterface $response): array
     }
 
     return is_array($decoded) ? $decoded : [];
-}
-
-function shouldUseExtendedApi(array $redmineConfig, bool $force): bool
-{
-    if ($force) {
-        return true;
-    }
-
-    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
-        ? $redmineConfig['extended_api']
-        : [];
-
-    return (bool)($extendedConfig['enabled'] ?? false);
-}
-
-function resolveExtendedApiPrefix(array $redmineConfig): string
-{
-    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
-        ? $redmineConfig['extended_api']
-        : [];
-
-    $prefix = isset($extendedConfig['prefix']) ? trim((string)$extendedConfig['prefix']) : '/extended_api';
-
-    if ($prefix === '') {
-        $prefix = '/extended_api';
-    }
-
-    return trim($prefix, '/');
-}
-
-function buildExtendedApiPath(string $prefix, string $resource): string
-{
-    $normalizedPrefix = trim($prefix, '/');
-    $normalizedResource = ltrim($resource, '/');
-
-    if ($normalizedPrefix === '') {
-        return $normalizedResource;
-    }
-
-    return $normalizedPrefix . '/' . $normalizedResource;
 }
 
 function extractErrorBody(ResponseInterface $response): string

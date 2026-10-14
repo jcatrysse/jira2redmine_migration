@@ -11,6 +11,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\CustomFields\MappingKeys;
 use Jira2Redmine\CustomFields\EnumerationGap;
 use Jira2Redmine\CustomFields\FieldScope;
@@ -161,7 +162,7 @@ function main(array $config, array $cliOptions): void
 
     if (in_array('redmine', $phasesToRun, true)) {
         $redmineConfig ??= extractArrayConfig($config, 'redmine');
-        $redmineUseExtendedApi ??= shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $redmineUseExtendedApi ??= ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
         $redmineExtendedApiPrefix ??= $redmineUseExtendedApi ? resolveExtendedApiPrefix($redmineConfig) : null;
         $redmineClient = createRedmineClient($redmineConfig);
 
@@ -239,7 +240,7 @@ function main(array $config, array $cliOptions): void
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         $redmineConfig ??= extractArrayConfig($config, 'redmine');
-        $redmineUseExtendedApi ??= shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $redmineUseExtendedApi ??= ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
 
         runCustomFieldPushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $redmineUseExtendedApi);
     } else {
@@ -2364,7 +2365,6 @@ function deriveAllowedValuesDescriptorFromIssues(PDO $pdo, string $fieldId, stri
         'values' => array_values($values),
     ];
 }
-
 
 function normalizeIssueFieldValueItem(mixed $item): ?array
 {
@@ -4787,7 +4787,6 @@ function buildObjectFieldMultiplicityLookup(PDO $pdo): array
     return $lookup;
 }
 
-
 /**
  * @return array<int, array<string, mixed>>
  */
@@ -5349,7 +5348,7 @@ function addValuesToExistingEnumerationFields(PDO $pdo, Client $client, string $
             $updateMapping->execute(['e' => $encoded, 'id' => $row['mapping_id']]);
             $updateSnapshot->execute(['e' => $encoded, 'id' => $redmineId]);
         } catch (Throwable $exception) {
-            printf("  [failed] Adding values to Redmine custom field #%d: %s%s", $redmineId, summarizeExtendedApiError($exception), PHP_EOL);
+            printf("  [failed] Adding values to Redmine custom field #%d: %s%s", $redmineId, ExtendedApi::summarizeError($exception), PHP_EOL);
         }
     }
 }
@@ -6103,7 +6102,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
 
                     $successCount++;
                 } catch (Throwable $exception) {
-                    $errorMessage = summarizeExtendedApiError($exception);
+                    $errorMessage = ExtendedApi::summarizeError($exception);
                     $automationHash = computeCustomFieldAutomationStateHash(
                         null,
                         'CREATION_FAILED',
@@ -6268,7 +6267,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
 
                 $successCount++;
             } catch (Throwable $exception) {
-                $errorMessage = summarizeExtendedApiError($exception);
+                $errorMessage = ExtendedApi::summarizeError($exception);
                 $automationHash = computeCustomFieldAutomationStateHash(
                     null,
                     'CREATION_FAILED',
@@ -6776,7 +6775,7 @@ function createStandardCustomField(
 
         return ['id' => $newFieldId, 'enumerations' => $newEnumerations];
     } catch (Throwable $exception) {
-        $errorMessage = summarizeExtendedApiError($exception);
+        $errorMessage = ExtendedApi::summarizeError($exception);
         $automationHash = computeCustomFieldAutomationStateHash(
             null,
             'CREATION_FAILED',
@@ -6963,7 +6962,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
                     $client->put($parentPath, ['json' => $parentPayload]);
                     recordFieldScopeInSnapshot($pdo, $parentRedmineId, $projects, $trackers);
                 } catch (Throwable $exception) {
-                    $errorMessage = summarizeExtendedApiError($exception);
+                    $errorMessage = ExtendedApi::summarizeError($exception);
                     $automationHash = computeCustomFieldAutomationStateHash(
                         $redmineId,
                         'CREATION_FAILED',
@@ -7043,7 +7042,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
                 'mapping_id' => $mappingId,
             ]);
         } catch (Throwable $exception) {
-            $errorMessage = summarizeExtendedApiError($exception);
+            $errorMessage = ExtendedApi::summarizeError($exception);
             $automationHash = computeCustomFieldAutomationStateHash(
                 $redmineId,
                 'CREATION_FAILED',
@@ -7301,20 +7300,6 @@ function decodeJsonResponse(ResponseInterface $response): mixed
     }
 }
 
-function shouldUseExtendedApi(array $redmineConfig, bool $cliFlag): bool
-{
-    if ($cliFlag) {
-        return true;
-    }
-
-    if (!isset($redmineConfig['extended_api']) || !is_array($redmineConfig['extended_api'])) {
-        return false;
-    }
-
-    $extendedConfig = $redmineConfig['extended_api'];
-    return !empty($extendedConfig['enabled']);
-}
-
 function resolveExtendedApiPrefix(array $redmineConfig): string
 {
     $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
@@ -7382,24 +7367,6 @@ function verifyDependingCustomFieldsApi(Client $client): void
     } catch (GuzzleException $exception) {
         throw new RuntimeException('Failed to reach redmine_depending_custom_fields: ' . $exception->getMessage(), 0, $exception);
     }
-}
-
-function summarizeExtendedApiError(Throwable $exception): string
-{
-    if ($exception instanceof BadResponseException) {
-        $response = $exception->getResponse();
-        if ($response !== null) {
-            $message = sprintf('HTTP %d %s', $response->getStatusCode(), $response->getReasonPhrase());
-            $details = extractExtendedApiErrorDetails($response);
-            if ($details !== null) {
-                $message .= ': ' . $details;
-            }
-
-            return $message;
-        }
-    }
-
-    return $exception->getMessage();
 }
 
 function extractCreatedCustomFieldId(mixed $decoded): int
@@ -7474,32 +7441,6 @@ function fetchRedmineCustomFieldEnumerations(
     } catch (Throwable $exception) {
         return null;
     }
-}
-
-function extractExtendedApiErrorDetails(ResponseInterface $response): ?string
-{
-    $body = trim((string)$response->getBody());
-    if ($body === '') {
-        return null;
-    }
-
-    try {
-        $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
-    } catch (JsonException $exception) {
-        return $body !== '' ? $body : null;
-    }
-
-    if (is_array($decoded)) {
-        if (isset($decoded['errors']) && is_array($decoded['errors'])) {
-            return implode('; ', array_map('strval', $decoded['errors']));
-        }
-
-        if (isset($decoded['error']) && is_string($decoded['error'])) {
-            return $decoded['error'];
-        }
-    }
-
-    return $body !== '' ? $body : null;
 }
 
 function formatCurrentTimestamp(?string $format = null): string

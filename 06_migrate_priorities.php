@@ -10,6 +10,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Redmine\ExtendedApi;
 
 const MIGRATE_PRIORITIES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -158,7 +159,7 @@ function main(array $config, array $cliOptions): void
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         $redmineConfig ??= extractArrayConfig($config, 'redmine');
-        $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
 
         runPriorityPushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi);
     } else {
@@ -784,14 +785,14 @@ function runPriorityPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array
         }
 
         $redmineClient = createRedmineClient($redmineConfig);
-        $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
-        verifyExtendedApiAvailability(
+        $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
+        ExtendedApi::verifyAvailable(
             $redmineClient,
             $extendedApiPrefix,
             'enumerations.json?type=issue_priorities'
         );
 
-        $endpoint = buildExtendedApiPath($extendedApiPrefix, 'enumerations.json');
+        $endpoint = ExtendedApi::path($extendedApiPrefix, 'enumerations.json');
 
         printf("  %d priority/priorities queued for creation via the extended API.%s", $pendingCount, PHP_EOL);
         foreach ($pendingPriorities as $priority) {
@@ -910,7 +911,7 @@ function runPriorityPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array
 
                 $successCount++;
             } catch (Throwable $exception) {
-                $errorMessage = summarizeExtendedApiError($exception);
+                $errorMessage = ExtendedApi::summarizeError($exception);
                 $automationHash = computePriorityAutomationStateHash(
                     null,
                     'CREATION_FAILED',
@@ -1344,115 +1345,6 @@ function normalizeStoredAutomationHash(mixed $value): ?string
     }
 
     return strtolower($trimmed);
-}
-
-function shouldUseExtendedApi(array $redmineConfig, bool $cliFlag): bool
-{
-    if ($cliFlag) {
-        return true;
-    }
-
-    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
-        ? $redmineConfig['extended_api']
-        : [];
-
-    return (bool)($extendedConfig['enabled'] ?? false);
-}
-
-function resolveExtendedApiPrefix(array $redmineConfig): string
-{
-    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
-        ? $redmineConfig['extended_api']
-        : [];
-
-    $prefix = isset($extendedConfig['prefix']) ? trim((string)$extendedConfig['prefix']) : '/extended_api';
-
-    if ($prefix === '') {
-        $prefix = '/extended_api';
-    }
-
-    return trim($prefix, '/');
-}
-
-function buildExtendedApiPath(string $prefix, string $resource): string
-{
-    $normalizedPrefix = trim($prefix, '/');
-    $normalizedResource = ltrim($resource, '/');
-
-    if ($normalizedPrefix === '') {
-        return $normalizedResource;
-    }
-
-    return $normalizedPrefix . '/' . $normalizedResource;
-}
-
-function verifyExtendedApiAvailability(Client $client, string $prefix, string $resource): void
-{
-    $path = buildExtendedApiPath($prefix, $resource);
-
-    try {
-        $response = $client->get($path);
-    } catch (BadResponseException $exception) {
-        $response = $exception->getResponse();
-        $statusCode = $response ? $response->getStatusCode() : 0;
-        $reason = $response ? $response->getReasonPhrase() : 'unknown error';
-        throw new RuntimeException(
-            sprintf('Extended API availability check failed (%s): HTTP %d %s', $path, $statusCode, $reason),
-            0,
-            $exception
-        );
-    } catch (GuzzleException $exception) {
-        throw new RuntimeException('Failed to reach the extended API: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    $header = $response->getHeaderLine('X-Redmine-Extended-API');
-    if (trim($header) === '') {
-        throw new RuntimeException('Extended API response missing X-Redmine-Extended-API header. Verify the plugin installation.');
-    }
-}
-
-function summarizeExtendedApiError(Throwable $exception): string
-{
-    if ($exception instanceof BadResponseException) {
-        $response = $exception->getResponse();
-        if ($response !== null) {
-            $message = sprintf('HTTP %d %s', $response->getStatusCode(), $response->getReasonPhrase());
-            $details = extractExtendedApiErrorDetails($response);
-            if ($details !== null) {
-                $message .= ': ' . $details;
-            }
-
-            return $message;
-        }
-    }
-
-    return $exception->getMessage();
-}
-
-function extractExtendedApiErrorDetails(ResponseInterface $response): ?string
-{
-    $body = trim((string)$response->getBody());
-    if ($body === '') {
-        return null;
-    }
-
-    try {
-        $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
-    } catch (JsonException $exception) {
-        return $body !== '' ? $body : null;
-    }
-
-    if (is_array($decoded)) {
-        if (isset($decoded['errors']) && is_array($decoded['errors'])) {
-            return implode('; ', array_map('strval', $decoded['errors']));
-        }
-
-        if (isset($decoded['error']) && is_string($decoded['error'])) {
-            return $decoded['error'];
-        }
-    }
-
-    return $body !== '' ? $body : null;
 }
 
 function extractCreatedPriorityId(mixed $decoded): int
