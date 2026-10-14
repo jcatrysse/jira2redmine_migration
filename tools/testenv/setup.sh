@@ -29,8 +29,8 @@ for v in 51 70; do
   su postgres -c "createdb -O redmine -E UTF8 -T template0 redmine$v" 2>/dev/null || true
 done
 
-[ -d "$BASE/redmine51" ] || git clone -q --depth 1 -b 5.1-stable-GEOxyz https://github.com/jcatrysse/redmine.git "$BASE/redmine51"
-[ -d "$BASE/redmine70" ] || git clone -q --depth 1 -b 7.0-stable-GEOxyz https://github.com/jcatrysse/redmine.git "$BASE/redmine70"
+# clone the cores, or bring existing checkouts to the branch heads (forced refspec); prints each hash
+"$HERE/core.sh" "$BASE"
 echo 3.2.6 > "$BASE/redmine51/.ruby-version"
 echo 3.3.6 > "$BASE/redmine70/.ruby-version"
 

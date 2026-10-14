@@ -930,6 +930,13 @@ session A; rerun the gate on the next commit.
 
 ## Results
 
+**Redmine cores of B2's runs.** Every B2 run (from 2026-10-13 19:40 UTC, when B2's `setup.sh` cloned both
+instances) used 5.1 `bcf917c` (5.1-stable-GEOxyz) and 7.0 `1d8c2a3` (7.0-stable-GEOxyz, the head after the
+upstream rewrite from 8067e23/1bf0ef6). Checked 2026-10-14 10:50 UTC: both equal the remote branch heads, so
+no 7.0 proof needs a rerun. `tools/testenv/core.sh` (called by `setup.sh`) now brings an existing checkout to
+the branch head with a forced refspec and prints the hash, so an old core cannot stay in place unnoticed;
+`--migrate` bundles, migrates and restarts an instance whose hash changed. Runs from now on name the core hash.
+
 **SURV volume run, 5.1, B2, 2026-10-13** (`J2R_PROJECTS=surv J2R_TEST_SAMPLE=1 run_all.sh 51 b2-surv`,
 code before B44): 1,494 issues, all created (10 in 479 s); attachments 6,323 in Jira, 4,306 in the sample
 (0.98 GB, pull 518 s, push 182 s), 2,017 skipped by sample (97.7 GB); journals 8,674 pushed and 12,882
