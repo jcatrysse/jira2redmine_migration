@@ -5,7 +5,8 @@
 # (commit 0398974, "2.1.3 devel", what production 5.1 runs; its 5.x and master need Redmine 6) and
 # redmine_project_workflows (its new version on redmine70-migration, which supports 5.1, 6.1 and 7.0; decision 13).
 # With --migrate: bundle install, plugins:migrate and a restart when a plugin changed. The baseline dump that
-# run_all.sh restores holds the old plugin schema: refresh it afterwards (see docs/RUNBOOK.md, test instances).
+# run_all.sh restores holds the old plugin schema: refresh it afterwards (reset.sh, plugins.sh --migrate, pg_dump;
+# docs/MIGRATION-PLAN.md, Results, dress rehearsal).
 # A local change to a tracked file stops it (checkout without --force).
 # Usage: tools/testenv/plugins.sh 51|70 [base dir, default /home/user/src] [--migrate]
 set -euo pipefail

@@ -1,9 +1,29 @@
 # Jira Cloud to Redmine: test migrations and script upgrade
 
-## Samenvatting voor Jan (2026-10-14, B2, bijgewerkt rond de middag)
+## Samenvatting voor Jan (2026-10-14, B2, bijgewerkt in de avond)
 
-**Stand.** Alles staat op `redmine70-migration`, QA groen (235 tests). Jira bleef read-only: alleen
-GET-calls, de schrijfprobe gaf 401 "scope does not match".
+**Stand.** Alles staat op `redmine70-migration`, QA groen op PHP 8.2 en 8.3 (259 tests). Jira bleef
+read-only: alleen GET-calls, de schrijfprobe gaf 401 "scope does not match".
+
+**Generale repetitie van vanavond (al je beslissingen, plugins op hun huidige versie)**
+- 7.0: 43 van de 44 plugins naar de `redmine70-migration`-heads; 5.1 met de productieset, ook
+  redmine_custom_workflows op `0398974` (2.1.3 devel, wat productie draait; de testinstantie had 2.1.2).
+  5.1 draaide op PHP 8.2.
+- 5.1: verify PASS, tweede pass ongewijzigd, workflows toegepast (+1.940, tweede run +0 -0, 0 te reviewen),
+  restore-bewijzen in orde (12/12), lidmaatschappen gelijk aan 04. 7.0 volledige run en de cumulatieve
+  WIKI-batch: verify PASS, tweede pass ongewijzigd, workflows +0 -0, restore 101/101.
+- Tegenover de runs van vanochtend: dezelfde aantallen en dezelfde verify-tabellen; de verschillen komen
+  van de beslissingen van vandaag (meer geopende overgangen door B57, TEST niet aangemaakt, de 4
+  G-groepen, de workflowstap nu meteen in de run).
+
+**Jouw antwoorden van de avond, gebouwd (beslissingen 18 tot 25)**
+- De unie blijft (18). FPS-conditie weggelaten, overgangen voorgesteld (19). Service desk-velden niet
+  gemigreerd, IGNORED in plaats van MANUAL (20). Conversiekeuzes bevestigd (21). Productievolgorde van de
+  batches in het runbook, TEST niet gemigreerd (22). PHP 8.2 of nieuwer met een tijdelijke MariaDB of MySQL
+  (23): getest op 8.2, startcontrole met duidelijke melding, runbook-sectie "Prerequisites". Worklogs
+  buiten scope (24). De vier RedmineUP-plugins niet naar 7.0 (25): stonden niet in de testsetup.
+- Fase 6 (M1): de Extended API-hulpfuncties in één klasse en één regel voor `--phases`/`--skip` (een
+  tikfout liet sommige scripts alle fasen draaien); bewezen met 7.116 identieke Redmine-requests.
 - 5.1, volledige run met jouw beslissingen 12 en 13 (`a813ffb`, workflows met de latere fixes): verify
   PASS, een tweede pass van 08 tot 15 verandert niets, 0 watchers zonder toegang.
 - 7.0: volledige run PASS met dezelfde code, de cumulatieve WIKI-batch ook PASS (B55 en B56 weg):
@@ -65,18 +85,10 @@ GET-calls, de schrijfprobe gaf 401 "scope does not match".
 **Fouten die ook op `main` zitten (belangrijk voor productie)**: B31, B35, B41, B43, B44, B49 (details in
 Findings). Advies: niet migreren vanuit `main`; de fixes staan op `redmine70-migration`, elk met een test.
 
-**Te beslissen of te bevestigen (aanbeveling eerst)**
-1. De unie per tracker opkuisen (globale workflow voor projecten zonder eigen): het rapport van
-   `tools/workflow_proposal.php` toont per overgang de workflows, projecten en issues in de status; wat je
-   nergens wilt, zet je IGNORED.
-2. FPS: 12 reviewrijen voor de veldwaarde-conditie ("Screen" met één optie van een keuzeveld): PROPOSED
-   (overgang zonder die conditie) of IGNORED; FPS heeft vandaag 0 issues.
-3. Service desk velden: (a, aanbevolen) pas bouwen als een project in scope ze gebruikt.
-4. Conversiekeuzes: status-lozenge als inline code; link met eigen tekst als "tekst (#id)".
-5. Batchvolgorde voor productie (runbook, voorstel): WIKI; GEOS, SIS, OAC; SURV, DOC, LABO; de rest; TEST
-   alleen als je het testproject meeneemt.
-6. Nog open: PHP-versie op de productiemachine, staging MySQL of PostgreSQL, worklogs naar time
-   entries, fase 6 rest (M1).
+**Nog open voor jou**
+1. De visuele controle van de conversie (29 issues, bench stap 3): de pagina's staan klaar.
+2. Vóór de productierun: de reviewtabel van 04 nakijken en READY zetten voor de Non member-groep (beslissing 15).
+3. De productierun zelf volgens het runbook: batches in de beslisde volgorde, daarna relink en de controle 0.
 
 Start a Claude Code session on this repository, branch `redmine70-migration`, with:
 
@@ -551,7 +563,9 @@ In this order. Each item records its result under "Results" when done.
     `src/Cli/Phases.php` (`ec32074`, behaviour change for invalid options only: an unknown phase no longer runs
     every phase in 09, 11, 13 to 16). Left: helpers whose copies behave differently (timestamps in UTC or local
     time, JSON decoding of an empty body, PDO attributes, option parsing per script); each needs a choice, so
-    they move one by one with a test per difference.
+    they move one by one with a test per difference. Proof (5.1, 2026-10-14, `RECORD=` runs `b2-dress2` with
+    `2853767` and `b2-m1` with `eb53e88`, both with the stability pass, workflows and restore): 7,116 Redmine requests
+    before and after, 0 differing; both runs PASS with identical summaries.
 
 **Phase 7, fixes**
 
@@ -971,6 +985,33 @@ upstream rewrite from 8067e23/1bf0ef6). Checked 2026-10-14 10:50 UTC: both equal
 no 7.0 proof needs a rerun. `tools/testenv/core.sh` (called by `setup.sh`) now brings an existing checkout to
 the branch head with a forced refspec and prints the hash, so an old core cannot stay in place unnoticed;
 `--migrate` bundles, migrates and restarts an instance whose hash changed. Runs from now on name the core hash.
+
+**Dress rehearsal, 2026-10-14 evening** (Jan's decisions 1 to 25, code `2853767`; cores 5.1 `bcf917c`, 7.0
+`1d8c2a3`). Plugins first (`tools/testenv/plugins.sh --migrate`, then a fresh baseline dump, since run_all
+restores the baseline): 7.0 43 of 44 plugins to their `redmine70-migration` heads (redmine_extended_api already
+at `d103a2d`, redmine_wiki_extensions unchanged; redmine_project_workflows `18c02ad`); 5.1 the production set,
+2 changed (redmine_project_workflows `18c02ad`, redmine_contacts_helpdesk `02de92c`). 5.1 ran on PHP 8.2.34, 7.0
+on 8.3.6. `STABILITY=1 WORKFLOWS=1 RESTORE=1 run_all.sh 51 b2-dress`; 7.0 `STABILITY=1 run_all.sh 70 b2-dress`,
+then the cumulative `BATCH=1 WORKFLOWS=1 RESTORE=1 J2R_PROJECTS=geos,sis,oac,wiki run_all.sh 70 b2-dress-wiki`.
+
+| check | 5.1 | 7.0 full run | 7.0 WIKI batch |
+|---|---|---|---|
+| verify | PASS | PASS | PASS |
+| second pass of 08 to 15 | unchanged | unchanged | (batch) |
+| issues, journals, attachments, relations, watchers | 426, 1,488, 576, 71, 1,142 | 426, 1,534, 576, 71, 1,169 | 1,883, 8,643, 1,413, 885, 4,761 |
+| workflows: apply, then a second run | +1,940 -143,860, then +0 -0; 0 to review, 32 ignored, 13 projects | (batch) | the same |
+| restore: temporary role left, watchers kept, (b) edited and saved / refused | 0, 1,142, 12/12, 12/12 | (batch) | 0, 4,761, 101/101, 101/101 |
+| memberships equal 04's proposal | yes | (batch) | yes |
+
+Against the last runs (`51-b2-final7`, `70-b2-final7`, `70-b2-final7-wiki`, timings left out) the step results,
+the counts per status and the verify tables are identical. The differences are the decisions of today: 159,871
+opened workflow transitions instead of 112,767 (B57's statuses); 7 fewer member rows (6 in the WIKI batch): TEST
+no longer created, the 4 G group memberships added; the workflow step now applies within the run (the earlier
+runner stopped on a rails error then, the proofs were done by hand), so restore removes only the 14,914 opened
+transitions the plan does not own (before: all 112,767).
+Then 5.1 again with redmine_custom_workflows at production's commit `0398974` ("2.1.3 devel"; the instance had
+loaded tag v2.1.2, not the 5.x of `plugins-5.1.tsv`, whose 5.x and master need Redmine 6): `b2-dress2`, the same
+summary as `b2-dress`. That run, with every Redmine request recorded, was also the "before" of the M1 proof.
 
 **SURV volume run, 5.1, B2, 2026-10-13** (`J2R_PROJECTS=surv J2R_TEST_SAMPLE=1 run_all.sh 51 b2-surv`,
 code before B44): 1,494 issues, all created (10 in 479 s); attachments 6,323 in Jira, 4,306 in the sample
