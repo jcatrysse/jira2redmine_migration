@@ -20,6 +20,10 @@ if ($out === '' || count($argv) < 3) {
 }
 $query = $pdo->prepare('SELECT m.redmine_issue_id, i.description_html FROM migration_mapping_issues m
     JOIN staging_jira_issues i ON i.id = m.jira_issue_id WHERE m.jira_issue_key = :key AND m.redmine_issue_id IS NOT NULL');
+$comments = $pdo->prepare("SELECT j.redmine_journal_id, c.body_html FROM migration_mapping_issues m
+    JOIN staging_jira_comments c ON c.issue_id = m.jira_issue_id
+    JOIN migration_mapping_journals j ON j.jira_entity_id = c.id AND j.entity_type = 'COMMENT'
+    WHERE m.jira_issue_key = :key AND j.redmine_journal_id IS NOT NULL ORDER BY c.created_at, c.id");
 $items = [];
 foreach (array_slice($argv, 2) as $argument) {
     [$construct, $keys] = array_pad(explode('=', $argument, 2), 2, '');
@@ -33,8 +37,12 @@ foreach (array_slice($argv, 2) as $argument) {
             fwrite(STDERR, "not migrated: $key\n");
             continue;
         }
+        // many constructs of the set sit in a comment: every migrated comment, next to its journal
+        $comments->execute(['key' => $key]);
+        $notes = array_map(static fn (array $c): array => ['journal_id' => (int)$c['redmine_journal_id'],
+            'jira_html' => (string)$c['body_html']], $comments->fetchAll());
         $items[$key] = ['key' => $key, 'redmine_id' => (int)$row['redmine_issue_id'], 'construct' => $construct,
-            'jira_html' => (string)$row['description_html']];
+            'jira_html' => (string)$row['description_html'], 'comments' => $notes];
     }
 }
 file_put_contents($out, json_encode(array_values($items), JSON_THROW_ON_ERROR));

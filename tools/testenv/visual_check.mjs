@@ -15,16 +15,26 @@ await Promise.all([page.waitForNavigation(), page.click('#login-submit')]);
 const rows = [];
 for (const it of items) {
   await page.goto(`${base}/issues/${it.redmine_id}`);
+  // the sticky issue header of newer Redmine versions would cover the element screenshots
+  await page.addStyleTag({ content: '#sticky-issue-header{display:none!important}' });
   const shot = `${it.key}-redmine.png`;
   const desc = await page.$('.issue .description');
   if (desc) await desc.screenshot({ path: `${out}/${shot}` }); else await page.screenshot({ path: `${out}/${shot}` });
+  const notes = [];
+  for (const c of it.comments || []) {
+    const journal = await page.$(`#change-${c.journal_id}`);
+    const file = `${it.key}-journal-${c.journal_id}.png`;
+    if (journal) await journal.screenshot({ path: `${out}/${file}` });
+    notes.push(`<section><h2>Jira comment</h2>${c.jira_html}</section>`
+      + `<section><h2>Redmine journal ${c.journal_id}</h2>${journal ? `<img src="${file}">` : 'not on the page'}</section>`);
+  }
   const html = `<!doctype html><meta charset="utf-8"><title>${it.key}</title>
 <style>body{font:14px sans-serif;margin:0}main{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px}
 section{border:1px solid #ccc;padding:8px;overflow:auto}h2{font-size:15px;margin:4px 0 8px}img{max-width:100%}
 table{border-collapse:collapse}td,th{border:1px solid #bbb;padding:2px 4px}pre{background:#f4f4f4;padding:6px;white-space:pre-wrap}
 .aui-lozenge{border:1px solid #888;border-radius:3px;padding:0 4px;font-size:11px;text-transform:uppercase}</style>
 <main><section><h2>Jira (rendered HTML from the API; Jira images need a login)</h2>${it.jira_html}</section>
-<section><h2>Redmine #${it.redmine_id}</h2><img src="${shot}"></section></main>`;
+<section><h2>Redmine #${it.redmine_id}</h2><img src="${shot}"></section>${notes.join('')}</main>`;
   fs.writeFileSync(`${out}/${it.key}.html`, html);
   rows.push(`<li><a href="${it.key}.html">${it.key}</a> (${it.construct})</li>`);
 }
