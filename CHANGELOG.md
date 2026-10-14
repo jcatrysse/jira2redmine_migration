@@ -24,7 +24,18 @@ All notable changes to this project. Steps to take before and after a migration 
   file extension up to 20 MB; the rest is noted "skipped by sample" and expected absent by verify.
 - verify: fails on a journal present twice; reads open parents, unmapped assignees, empty rich text and
   empty label values the way the scripts migrate them; downloads a checksum mismatch again.
-- `tools/testenv/run_all.sh`: `STABILITY=1` reruns 08 to 15 and compares Redmine's counts.
+- `tools/testenv/run_all.sh`: `STABILITY=1` reruns 08 to 15 and compares Redmine's counts; `BATCH=1`
+  runs a later batch on the previous state; the summary lists B37 and B38 lines.
+- 04 proposes project memberships from each project's permission scheme: groups with Browse projects
+  or Assignable user as Developer, Administer projects as Manager (B31, Jan option a). New staging
+  table `staging_jira_project_permission_grants`. The proposals are reviewed in
+  `migration_mapping_project_role_groups` before the push; hand edits stay (runbook, section 1).
+- 08 lists the select values Jira no longer offers, with the number of issues and how to retire them
+  per Redmine format (`[unoffered]`, B37); `tools/testenv/retired_values.rb/.mjs` check what issues do
+  with a retired value.
+- 10 lists the issues waiting for a parent outside the run, per parent project (`[waiting]`, B38).
+- 16 logs why automation rules are not exported.
+- Bench `--details`: the full measure per item and path.
 
 ### Changed
 - Issues are created with their description; parents and rewritten Jira links follow in the same
@@ -47,6 +58,10 @@ All notable changes to this project. Steps to take before and after a migration 
 - 10 cleans descriptions (avatars, profile links, Jira issue URLs) before it pushes them; 11 no longer
   rewrites issue descriptions (B41). Comments lose avatars too.
 - Link markup that Jira showed as text becomes a link (B42).
+- 04's push adds a role to an existing membership (PUT) instead of a second POST that Redmine
+  refused (422); the `members` manual step only activates locked users.
+- A link to a migrated issue with its own text reads "text (#123)"; a status lozenge becomes inline
+  code; Outlook safe links in mailed comments become the link itself.
 
 ### Fixed
 - Cascading fields: value dependencies are set as option ids after the child field exists (B7).
@@ -68,6 +83,9 @@ All notable changes to this project. Steps to take before and after a migration 
   an attachment that is switched off.
 - 08 no longer deletes the cascading parent mappings on a rerun (B43).
 - A mention or `#id` followed by a number keeps its id; "user 5" in text is no longer a mention (B44).
+- A GET whose transfer was cut off (cURL 18) is retried like a failed connection.
+- Heading anchors no longer turn a text into one HTML paragraph that Redmine shows as text.
+- Verify and bench: the issue type icon of an issue macro is not counted as an image.
 
 ## [0.0.1]
 
