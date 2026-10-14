@@ -73,6 +73,11 @@ $maps = [
     'status' => verifyMap($pdo, 'SELECT jira_status_id, redmine_status_id FROM migration_mapping_statuses'),
     'priority' => verifyMap($pdo, 'SELECT jira_priority_id, redmine_priority_id FROM migration_mapping_priorities'),
 ];
+$noAccessWatchers = [];
+foreach ($pdo->query("SELECT redmine_issue_id, redmine_user_id FROM migration_mapping_watchers WHERE migration_status = 'FAILED'
+    AND notes LIKE '" . Jira2Redmine\Redmine\Watchers::NO_ACCESS . "%' AND redmine_issue_id IS NOT NULL") as $row) {
+    $noAccessWatchers[(string)$row['redmine_issue_id']][] = (string)$row['redmine_user_id'];
+}
 $customFields = verifyMap($pdo, "SELECT jira_field_id, redmine_custom_field_id FROM migration_mapping_custom_fields
     WHERE migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')");
 $defaultAuthor = (string)($config['migration']['issues']['default_redmine_author_id'] ?? '');
@@ -348,7 +353,13 @@ foreach ($projectKeys as $projectKey) {
             }
         }
         $actualWatchers = array_map(static fn (array $w): string => (string)$w['id'], $rm['watchers'] ?? []);
-        $missingWatchers = array_diff($expectedWatchers, $actualWatchers);
+        // a watcher without access to the project (not a member, no Browse projects in Jira either) is not migrated (B50)
+        $noAccess = array_values(array_intersect($expectedWatchers, $noAccessWatchers[(string)$redmineId] ?? []));
+        if ($noAccess !== []) {
+            $record('watchers: no project access (expected absent)', array_intersect($noAccess, $actualWatchers) === [], $issueKey,
+                'present: ' . implode(', ', array_intersect($noAccess, $actualWatchers)));
+        }
+        $missingWatchers = array_diff($expectedWatchers, $actualWatchers, $noAccess);
         $record('watchers', $missingWatchers === [], $issueKey, 'missing Redmine users: ' . implode(', ', $missingWatchers));
 
         // Relations between migrated issues.

@@ -20,4 +20,20 @@ final class WatchersTest extends TestCase
         self::assertSame([126, 242], Watchers::notStored([126, 235, 242], [1, 235]));
         self::assertSame([], Watchers::notStored([235], [235]));
     }
+
+    public function testAWatcherWithoutProjectAccessIsTold(): void
+    {
+        $page = ['memberships' => [
+            ['id' => 1, 'user' => ['id' => 7], 'roles' => [['id' => 4, 'inherited' => true]]],
+            ['id' => 2, 'group' => ['id' => 30], 'roles' => [['id' => 4]]],
+        ]];
+
+        // a member through a group counts; the group itself is no user
+        self::assertSame([7], Watchers::memberUserIds($page));
+        self::assertStringStartsWith(Watchers::NO_ACCESS, Watchers::noAccessNote(215));
+        $fourteen = (string)file_get_contents(__DIR__ . '/../14_migrate_watchers.php');
+        self::assertTrue(str_contains($fourteen, 'Watchers::noAccessNote($redmineUserId)'), '14 cannot tell a watcher without access');
+        $verify = (string)file_get_contents(__DIR__ . '/../tools/verify.php');
+        self::assertTrue(str_contains($verify, "'watchers: no project access (expected absent)'"), 'verify counts them as missing');
+    }
 }

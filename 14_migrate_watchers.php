@@ -472,7 +472,8 @@ function runWatcherPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $
     foreach ($addedPerIssue as $redmineIssueId => $added) {
         try {
             $response = $client->get(sprintf('/issues/%d.json', $redmineIssueId), ['query' => ['include' => 'watchers']]);
-            $stored = Watchers::storedUserIds(json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR));
+            $issuePayload = json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+            $stored = Watchers::storedUserIds(is_array($issuePayload) ? $issuePayload : []);
         } catch (GuzzleException | JsonException $exception) {
             foreach (array_keys($added) as $mappingId) {
                 $updateStatement->execute([
@@ -486,14 +487,20 @@ function runWatcherPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $
         }
 
         $notStored = Watchers::notStored(array_values($added), $stored);
+        // a dropped watcher who is not a member of the project has no access in Jira either (B50)
+        $members = $notStored === [] ? [] : projectMemberUserIds($client, (int)($issuePayload['issue']['project']['id'] ?? 0));
         foreach ($added as $mappingId => $redmineUserId) {
             $missing = in_array($redmineUserId, $notStored, true);
+            $note = null;
+            if ($missing) {
+                $note = $members !== null && !in_array($redmineUserId, $members, true)
+                    ? Watchers::noAccessNote($redmineUserId)
+                    : sprintf('Redmine answered 204 but did not store user #%d as watcher (missing permission such as view_watched_issues).', $redmineUserId);
+            }
             $updateStatement->execute([
                 'mapping_id' => $mappingId,
                 'migration_status' => $missing ? 'FAILED' : 'SUCCESS',
-                'notes' => $missing
-                    ? sprintf('Redmine answered 204 but did not store user #%d as watcher (missing permission such as view_watched_issues, or no access to the project).', $redmineUserId)
-                    : null,
+                'notes' => $note,
             ]);
         }
         if ($notStored !== []) {
@@ -502,6 +509,41 @@ function runWatcherPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $
             printf("  [watcher] Redmine issue #%d updated.%s", $redmineIssueId, PHP_EOL);
         }
     }
+}
+
+/**
+ * User ids of a Redmine project's members (directly or through a group), cached per project; null when
+ * they cannot be read.
+ *
+ * @return list<int>|null
+ */
+function projectMemberUserIds(Client $client, int $projectId): ?array
+{
+    static $cache = [];
+    if ($projectId <= 0) {
+        return null;
+    }
+    if (!array_key_exists($projectId, $cache)) {
+        try {
+            $ids = [];
+            $offset = 0;
+            do {
+                $page = json_decode((string)$client->get(
+                    sprintf('/projects/%d/memberships.json', $projectId),
+                    ['query' => ['limit' => 100, 'offset' => $offset]]
+                )->getBody(), true, 512, JSON_THROW_ON_ERROR);
+                $page = is_array($page) ? $page : [];
+                $ids = array_merge($ids, Watchers::memberUserIds($page));
+                $count = is_array($page['memberships'] ?? null) ? count($page['memberships']) : 0;
+                $offset += $count;
+            } while ($count > 0 && $offset < (int)($page['total_count'] ?? 0));
+            $cache[$projectId] = $ids;
+        } catch (GuzzleException | JsonException) {
+            $cache[$projectId] = null;
+        }
+    }
+
+    return $cache[$projectId];
 }
 
 /**
