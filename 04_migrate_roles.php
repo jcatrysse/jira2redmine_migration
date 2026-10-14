@@ -10,6 +10,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Roles\AssignmentHash;
 use Jira2Redmine\Roles\AssignmentStatus;
 use Jira2Redmine\Roles\ProjectRolePrincipals;
 use Jira2Redmine\Roles\RoleMapping;
@@ -2283,15 +2284,7 @@ function redmineProjectRoleAssignmentExists(array $assignments, int $groupId, in
  */
 function computeProjectRoleAssignmentAutomationHash(?int $projectId, ?int $groupId, ?int $roleId, ?int $proposedRoleId, ?string $proposedRoleName, string $status, ?string $notes): string
 {
-    return hash('sha256', implode('|', [
-        $projectId ?? 'null',
-        $groupId ?? 'null',
-        $roleId ?? 'null',
-        $proposedRoleId ?? 'null',
-        $proposedRoleName ?? 'null',
-        $status,
-        $notes ?? 'null',
-    ]));
+    return AssignmentHash::compute($projectId, $groupId, $roleId, $proposedRoleId, $proposedRoleName, $status, $notes);
 }
 
 /**
