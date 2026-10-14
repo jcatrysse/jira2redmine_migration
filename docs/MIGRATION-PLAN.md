@@ -973,6 +973,40 @@ project/tracker/role sets (14 projects) and 6 "assign to the current user" scrip
 (10); the workflows step (111,819 opened), the runner (99,557 of them replaced), restore (12,262 removed),
 then the preview: +0 -0. 439 rows wait for Jan: transitions limited to a group that is not a member.
 
+**Jira workflow rules and how the migration carries them** (16's export of 2026-10-14: 64 workflows, 26 used
+by the migrated projects with 332 transitions, 38 unused with 524). Counts: transitions / workflows.
+
+| rule | used | unused | how the migration carries it | not carried (used) |
+|---|---:|---:|---|---:|
+| transition (any) | 332 / 26 | 524 / 38 | Redmine workflow per tracker and role; per project with redmine_project_workflows | 0 |
+| initial transition (create) | 26 / 26 | 38 / 38 | "(new issue)" transition per tracker and role | 0 |
+| global transition (any status to X) | 11 / 4 | 16 / 5 | expanded to a transition from every other status | 0 |
+| reflexive transition (X to X) | 0 | 0 | not needed: Redmine edits without a status change | 0 |
+| condition: user in group | 196 / 20 | 347 / 26 | the Redmine roles the group holds in the project (04); a group that is not a member: review row for Jan | 67 |
+| condition: permission | 6 / 2 | 20 / 5 | only the roles that hold the permission in the project (rule 4) | 0 |
+| validator: permission | 20 / 20 | 34 / 34 | as the permission condition | 0 |
+| condition: only assignee | 0 | 4 / 2 | Redmine's assignee transition | 0 |
+| condition: field value | 1 / 1 | 0 | not carried (FPS "Screen" only with one option of a select field); possible as a custom workflow script | 1 |
+| condition: only Bamboo notifications | 0 | 2 / 1 | not carried (a build server's transition) | 0 |
+| condition: only reporter, user in project role, subtask blocking | 0 | 0 | (Redmine's author transition would carry only reporter) | 0 |
+| validators other than permission (field required, date, regex, parent status) | 0 | 0 | | 0 |
+| post function: assign to current user | 3 / 2 | 5 / 3 | redmine_custom_workflows script per tracker and status (6 scripts) | 0 |
+| post function: update or clear field Resolution | 39 / 20 | 56 / 26 | nothing to do: Redmine has no resolution, the closed status is it | 0 |
+| post function: fire standard event (generic, created, resolved, closed, reopened) | 331 / 26 | 518 / 38 | Redmine's own notifications | 0 |
+| post function: fire event issue_updated | 1 / 1 | 6 / 3 | Redmine's own notification of an update | 0 |
+| post functions assign to reporter/lead, copy value, create issue, other update field | 0 | 0 | | 0 |
+| transition screen "Resolve Issue Screen" | 63 / 20 | 123 / 31 | field permissions for the fields it requires: none (all optional in all 12 field configurations); Redmine shows the fields on every edit | 0 |
+| transition screen "Workflow Screen" | 0 | 6 / 3 | (unused) | 0 |
+| transition labels (jira.i18n.title, jira.i18n.submit) | 18 / 4, 13 / 3 | 54 / 9, 27 / 6 | not carried: Redmine shows the status names, not transition names | 18 |
+| button order (opsbar-sequence) | 0 | 14 / 2 | | 0 |
+| status read-only (jira.issue.editable = false) | 0 | 3 statuses / 3 | (unused; would be read-only field permissions per status) | 0 |
+| jira.permission.* properties | 0 | 0 | | 0 |
+| DevOps triggers (commit.command.mapping, build.*) | 0 | 10 / 1 | not carried; Jira's REST API exports no triggers | 0 |
+
+In short: redmine_project_workflows v0.1.6 with Redmine's workflow model carries every rule the used
+workflows have, except a field value condition (1 transition, FPS), the transition labels (cosmetic) and
+the transitions limited to a group that is not a member (67, Jan decides per case).
+
 **Plugin upgrade rehearsal on 5.1, 2026-10-14** (redmine_project_workflows v0.0.3 `d61b1de` to v0.1.6
 `f2c1c2f`, on the state the runner wrote with the old version). Migrations 004 to 007 ran; 004 made 115
 scopes from the 115 project sets, rows unchanged (1,092 global, 1,202 project). `workflow_fingerprint.rb`
