@@ -60,6 +60,10 @@ return [
                 'Administrators' => 'Manager',
                 // holds only app accounts (Jira apps), which are not migrated
                 'atlassian-addons-project-access' => null,
+                // group grants of the project's permission scheme (B31, Jan 2026-10-13)
+                'Browse projects (permission scheme)' => 'Developer',
+                'Assignable user (permission scheme)' => 'Developer',
+                'Administer projects (permission scheme)' => 'Manager',
             ],
         ],
         'trackers' => [

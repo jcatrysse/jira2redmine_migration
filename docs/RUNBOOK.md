@@ -31,11 +31,10 @@ hand in the mapping tables keep their edits (automation hash). Checked on 5.1 an
 1. **Open the workflows** (`J2R_STEP=workflows`): every transition for the roles that create issues, new
    issues included. Without it every issue is created in its tracker's default status (B12). The step
    records what it adds; `J2R_STEP=restore` removes exactly that after the run.
-2. **Activate locked users and add them to the projects** (`J2R_STEP=members`, after 04): Redmine refuses
-   a locked user or a non-member as assignee (B5). Activated users are flagged and locked again by
-   `restore`. 04 adds only what Jira's project roles hold (at GEOxyz the project administrators); Jira
-   grants project access through permission schemes, so the step gives every user the Developer role
-   in the run's projects (open question for Jan in the plan, B31).
+2. **Activate locked users** (`J2R_STEP=members`, after 04): Redmine refuses a locked user as author or
+   assignee (B5). Activated users are flagged and locked again by `restore`. The step adds no
+   memberships: those are 04's proposals, reviewed before its push (see "Review the proposed
+   memberships" in section 1).
 3. **Watch permission**: roles need `view_watched_issues` (redmine_view_issue_description), otherwise
    Redmine drops watchers silently (14 now reports them as FAILED with the reason).
 4. Switch off for the duration: attachment prune (uploads wait for their issue; prune deletes unattached
@@ -49,7 +48,8 @@ php 02_migrate_users.php    && php 02_migrate_users.php    --phases=push --confi
 php 03_migrate_groups.php   && php 03_migrate_groups.php   --phases=push --confirm-push
 # members wait for their group: a second pass once the groups exist
 php 03_migrate_groups.php --skip=jira && php 03_migrate_groups.php --phases=push --confirm-push
-php 04_migrate_roles.php    && php 04_migrate_roles.php    --phases=push --confirm-push
+php 04_migrate_roles.php    # review the proposed memberships (below), then:
+php 04_migrate_roles.php    --phases=push --confirm-push
 php 05_migrate_statuses.php && php 05_migrate_statuses.php --phases=push --confirm-push
 php 06_migrate_priorities.php && php 06_migrate_priorities.php --phases=push --confirm-push
 php 07_migrate_trackers.php && php 07_migrate_trackers.php --phases=push --confirm-push
@@ -67,6 +67,44 @@ Check the summary line of each (`Matched / Ready / Manual`):
 - roles: `migration.roles.mappings` maps Jira role names to Redmine roles (default `Administrators` =>
   `Manager`, `atlassian-addons-project-access` ignored); a user in a Jira project role becomes a member
   of that project, a group in it a group member; nothing is given to a user's other groups.
+
+### Review the proposed memberships (04, before its push)
+
+Jira gives project access in two places, and 04 proposes a Redmine membership for both (B31, Jan
+option a), in `migration_mapping_project_role_groups`, one row per project, Jira role and principal:
+
+| Jira | `jira_role_name` | `principal_type` | proposed role |
+|---|---|---|---|
+| a group with Browse projects in the project's permission scheme | `Browse projects (permission scheme)` | group | Developer |
+| a group with Assignable user (Redmine assigns only to members) | `Assignable user (permission scheme)` | group | Developer |
+| a group with Administer projects | `Administer projects (permission scheme)` | group | Manager |
+| a user or group in the project role Administrators | `Administrators` | user / group | Manager |
+| the project role atlassian-addons-project-access (Jira apps) | `atlassian-addons-project-access` | user | IGNORED |
+
+The three permission-scheme names are pseudo roles (`jira_role_id` -1, -3, -2); `migration.roles.mappings`
+maps them like any role name. A grant to an application role ("every licensed user") or another holder
+type is not proposed; 04 prints it as `[note]`. A group member is a Redmine group membership: its users
+get the role through the group, nothing is expanded per user.
+
+```sql
+SELECT mapping_id, jira_project_key, jira_role_name, principal_type, jira_group_name,
+       redmine_role_id, proposed_redmine_role_name, migration_status, notes
+FROM migration_mapping_project_role_groups
+WHERE migration_status <> 'IGNORED'
+ORDER BY jira_project_key, principal_type, jira_group_name;
+
+-- not wanted:
+UPDATE migration_mapping_project_role_groups SET migration_status = 'IGNORED', notes = 'review: ...'
+WHERE mapping_id = ...;
+-- another role (ids in staging_redmine_roles):
+UPDATE migration_mapping_project_role_groups
+SET redmine_role_id = 5, proposed_redmine_role_id = 5, proposed_redmine_role_name = 'Reporter'
+WHERE mapping_id = ...;
+```
+
+A row you change keeps your values on every rerun of 04 (its `automation_hash` no longer matches; 04
+prints `[preserved]`). The push sends only `READY_FOR_ASSIGNMENT` rows; a principal that already is a
+member gets the role added to its membership, inherited roles stay.
 
 ## 2. Custom fields, issues and attachments
 

@@ -12,6 +12,8 @@ use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Roles\AssignmentHash;
 use Jira2Redmine\Roles\AssignmentStatus;
+use Jira2Redmine\Roles\MembershipPlan;
+use Jira2Redmine\Roles\PermissionGrants;
 use Jira2Redmine\Roles\ProjectRolePrincipals;
 use Jira2Redmine\Roles\RoleMapping;
 
@@ -212,12 +214,62 @@ function fetchAndStoreJiraProjectRoles(Client $client, PDO $pdo): array
 {
     $rolesProcessed = refreshJiraRoleDefinitions($client, $pdo);
     $assignmentSummary = refreshJiraProjectRoleActors($client, $pdo);
+    $grants = refreshJiraProjectPermissionGrants($client, $pdo);
+    printf("  Captured %d group grant(s) from the projects' permission schemes.%s", $grants, PHP_EOL);
 
     return [
         'roles_processed' => $rolesProcessed,
         'projects_processed' => $assignmentSummary['projects_processed'],
         'actor_rows' => $assignmentSummary['actor_rows'],
     ];
+}
+
+/**
+ * Group grants of Browse projects, Assignable user and Administer projects in each project's permission
+ * scheme: where Jira gives project access (B31).
+ */
+function refreshJiraProjectPermissionGrants(Client $client, PDO $pdo): int
+{
+    $pdo->exec('TRUNCATE TABLE staging_jira_project_permission_grants');
+    $insert = $pdo->prepare(<<<SQL
+        INSERT INTO staging_jira_project_permission_grants (project_id, project_key, project_name, permission, group_id, group_name)
+        VALUES (:project_id, :project_key, :project_name, :permission, :group_id, :group_name)
+    SQL);
+    if ($insert === false) {
+        throw new RuntimeException('Failed to prepare insert statement for staging_jira_project_permission_grants.');
+    }
+
+    $count = 0;
+    foreach (fetchJiraProjectsForRoleExtraction($client) as $project) {
+        $response = $client->get(
+            sprintf('/rest/api/3/project/%s/permissionscheme', rawurlencode((string)$project['id'])),
+            ['query' => ['expand' => 'permissions,group']]
+        );
+        $scheme = decodeJsonResponse($response);
+        $result = PermissionGrants::fromScheme(is_array($scheme) ? $scheme : []);
+        foreach ($result['grants'] as $grant) {
+            $insert->execute([
+                'project_id' => (string)$project['id'],
+                'project_key' => $project['key'],
+                'project_name' => $project['name'],
+                'permission' => $grant['permission'],
+                'group_id' => $grant['group_id'],
+                'group_name' => $grant['group_name'],
+            ]);
+            $count++;
+        }
+        foreach ($result['other_holders'] as $holder => $times) {
+            printf(
+                "  [note] Project %s: %s granted %d time(s) to a holder that is not a group or project role; not migrated.%s",
+                $project['key'] ?? $project['id'],
+                $holder,
+                $times,
+                PHP_EOL
+            );
+        }
+    }
+
+    return $count;
 }
 
 /**
@@ -810,6 +862,25 @@ function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo): void
     $actors = $actorRows->fetchAll(PDO::FETCH_ASSOC);
     /** @var array<string, string> $groupNames */
     $groupNames = $groupRows->fetchAll(PDO::FETCH_KEY_PAIR);
+
+    // The permission scheme's group grants, as group actors of a pseudo role (B31).
+    $grantRows = $pdo->query('SELECT project_id, project_key, project_name, permission, group_id, group_name FROM staging_jira_project_permission_grants');
+    foreach ($grantRows !== false ? $grantRows->fetchAll(PDO::FETCH_ASSOC) : [] as $grant) {
+        [$pseudoRoleId, $pseudoRoleName] = PermissionGrants::PSEUDO_ROLES[(string)$grant['permission']] ?? [null, null];
+        if ($pseudoRoleId === null) {
+            continue;
+        }
+        $actors[] = [
+            'project_id' => $grant['project_id'],
+            'project_key' => $grant['project_key'],
+            'project_name' => $grant['project_name'],
+            'role_id' => (string)$pseudoRoleId,
+            'role_name' => $pseudoRoleName,
+            'actor_id' => $grant['group_id'],
+            'actor_display' => $grant['group_name'],
+            'actor_type' => 'atlassian-group-role-actor',
+        ];
+    }
 
     $statement = $pdo->prepare(<<<SQL
         INSERT INTO migration_mapping_project_role_groups (
@@ -1847,184 +1918,128 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
             throw new RuntimeException('Failed to prepare update statement for migration_mapping_project_role_groups during the push phase.');
         }
 
-        $successCount = 0;
+        $createdCount = 0;
+        $updatedCount = 0;
+        $presentCount = 0;
         $failureCount = 0;
-        $duplicateCount = 0;
 
-        // key: "projectId|groupId|roleId" -> primary mapping_id
-        $processedTargets = [];
+        // Redmine memberships per project, per principal id (user or group), read once and kept current.
+        /** @var array<int, array<int, array{id: int, role_ids: list<int>}>> $membershipsByProject */
+        $membershipsByProject = [];
 
-        foreach ($pendingAssignments as $assignment) {
-            $mappingId = (int)$assignment['mapping_id'];
+        $record = static function (array $assignment, string $status, ?string $notes) use ($updateStatement): void {
             $projectId = $assignment['redmine_project_id'];
             $groupId = $assignment['redmine_group_id'];
             $roleId = $assignment['redmine_role_id'];
-            $proposedRoleId = $assignment['proposed_redmine_role_id'] ?? $assignment['redmine_role_id'];
+            $proposedRoleId = $assignment['proposed_redmine_role_id'] ?? $roleId;
             $proposedRoleName = $assignment['proposed_redmine_role_name'] ?? $assignment['redmine_role_name'];
-            $notes = $assignment['notes'] ?? null;
 
-            if ($projectId === null || $groupId === null || $roleId === null) {
-                $errorMessage = 'Missing Redmine project/group/role identifiers for automatic assignment.';
-                $automationHash = computeProjectRoleAssignmentAutomationHash(
+            $updateStatement->execute([
+                'redmine_project_id' => $projectId,
+                'redmine_group_id' => $groupId,
+                'redmine_role_id' => $roleId,
+                'proposed_redmine_role_id' => $proposedRoleId,
+                'proposed_redmine_role_name' => $proposedRoleName,
+                'migration_status' => $status,
+                'notes' => $notes,
+                'automation_hash' => computeProjectRoleAssignmentAutomationHash(
                     $projectId,
                     $groupId,
                     $roleId,
                     $proposedRoleId,
                     $proposedRoleName,
-                    'MANUAL_INTERVENTION_REQUIRED',
-                    $errorMessage
-                );
+                    $status,
+                    $notes
+                ),
+                'mapping_id' => (int)$assignment['mapping_id'],
+            ]);
+        };
 
-                $updateStatement->execute([
-                    'redmine_project_id' => $projectId,
-                    'redmine_group_id' => $groupId,
-                    'redmine_role_id' => $roleId,
-                    'proposed_redmine_role_id' => $proposedRoleId,
-                    'proposed_redmine_role_name' => $proposedRoleName,
-                    'migration_status' => 'MANUAL_INTERVENTION_REQUIRED',
-                    'notes' => $errorMessage,
-                    'automation_hash' => $automationHash,
-                    'mapping_id' => $mappingId,
-                ]);
+        foreach ($pendingAssignments as $assignment) {
+            $projectId = $assignment['redmine_project_id'];
+            $groupId = $assignment['redmine_group_id'];
+            $roleId = $assignment['redmine_role_id'];
+            $notes = $assignment['notes'] ?? null;
+            $projectReference = formatJiraProjectReference(
+                $assignment['jira_project_key'],
+                $assignment['jira_project_name'],
+                $assignment['jira_project_id']
+            );
 
+            if ($projectId === null || $groupId === null || $roleId === null) {
+                $errorMessage = 'Missing Redmine project/group/role identifiers for automatic assignment.';
+                $record($assignment, 'MANUAL_INTERVENTION_REQUIRED', $errorMessage);
                 printf(
                     "  [skipped] Project %s, Jira role %s: %s%s",
-                    formatJiraProjectReference($assignment['jira_project_key'], $assignment['jira_project_name'], $assignment['jira_project_id']),
+                    $projectReference,
                     $assignment['jira_role_name'] ?? ('Role #' . $assignment['jira_role_id']),
                     $errorMessage,
                     PHP_EOL
                 );
-
                 $failureCount++;
                 continue;
             }
 
-            $targetKey = $projectId . '|' . $groupId . '|' . $roleId;
-
-            // Deduplicatie: als deze combinatie al verwerkt is, geen tweede POST, maar wel status bijwerken
-            if (isset($processedTargets[$targetKey])) {
-                $primaryMappingId = $processedTargets[$targetKey];
-
-                $automationHash = computeProjectRoleAssignmentAutomationHash(
-                    $projectId,
-                    $groupId,
-                    $roleId,
-                    $proposedRoleId,
-                    $proposedRoleName,
-                    'ASSIGNMENT_RECORDED',
-                    $notes
-                );
-
-                $updateStatement->execute([
-                    'redmine_project_id' => $projectId,
-                    'redmine_group_id' => $groupId,
-                    'redmine_role_id' => $roleId,
-                    'proposed_redmine_role_id' => $proposedRoleId,
-                    'proposed_redmine_role_name' => $proposedRoleName,
-                    'migration_status' => 'ASSIGNMENT_RECORDED',
-                    'notes' => $notes,
-                    'automation_hash' => $automationHash,
-                    'mapping_id' => $mappingId,
-                ]);
-
-                printf(
-                    "  [duplicate] Project %s -> %s #%d with role #%d already created by mapping #%d, marking mapping #%d as ASSIGNMENT_RECORDED without extra API call.%s",
-                    formatJiraProjectReference($assignment['jira_project_key'], $assignment['jira_project_name'], $assignment['jira_project_id']),
-                    $assignment['principal_type'],
-                    $groupId,
-                    $roleId,
-                    $primaryMappingId,
-                    $mappingId,
-                    PHP_EOL
-                );
-
-                $duplicateCount++;
-                continue;
-            }
-
-            // Markeer deze combinatie als primair voordat we posten
-            $processedTargets[$targetKey] = $mappingId;
-
-            $endpoint = buildExtendedApiPath(
-                $extendedApiPrefix,
-                sprintf('projects/%d/memberships.json', $projectId)
-            );
-
-            // Payload conform Redmine REST API:
-            // membership[user_id] = id van user of group
-            // membership[role_ids] = array van role ids
-            $payload = [
-                'membership' => [
-                    'user_id' => $groupId,
-                    'role_ids' => [$roleId]
-                ],
-            ];
-
             try {
-                $response = $redmineClient->post($endpoint, ['json' => $payload]);
-                $decoded = decodeJsonResponse($response);
-                $membershipId = extractCreatedMembershipId($decoded);
+                if (!isset($membershipsByProject[$projectId])) {
+                    $membershipsByProject[$projectId] = fetchRedmineProjectMemberships($redmineClient, $projectId);
+                }
+                // A principal can get several roles on a project and can already be a member (B31): add the role.
+                $plan = MembershipPlan::decide($membershipsByProject[$projectId][$groupId] ?? null, $roleId);
 
-                $automationHash = computeProjectRoleAssignmentAutomationHash(
-                    $projectId,
-                    $groupId,
-                    $roleId,
-                    $proposedRoleId,
-                    $proposedRoleName,
-                    'ASSIGNMENT_RECORDED',
-                    null
-                );
+                if ($plan['action'] === 'none') {
+                    $record($assignment, 'ASSIGNMENT_RECORDED', $notes);
+                    printf(
+                        "  [present] Project %s -> %s #%d already has role #%d.%s",
+                        $projectReference,
+                        $assignment['principal_type'],
+                        $groupId,
+                        $roleId,
+                        PHP_EOL
+                    );
+                    $presentCount++;
+                    continue;
+                }
 
-                $updateStatement->execute([
-                    'redmine_project_id' => $projectId,
-                    'redmine_group_id' => $groupId,
-                    'redmine_role_id' => $roleId,
-                    'proposed_redmine_role_id' => $proposedRoleId,
-                    'proposed_redmine_role_name' => $proposedRoleName,
-                    'migration_status' => 'ASSIGNMENT_RECORDED',
-                    'notes' => null,
-                    'automation_hash' => $automationHash,
-                    'mapping_id' => $mappingId,
-                ]);
+                if ($plan['action'] === 'create') {
+                    // membership[user_id] takes a user or a group id
+                    $response = $redmineClient->post(
+                        buildExtendedApiPath($extendedApiPrefix, sprintf('projects/%d/memberships.json', $projectId)),
+                        ['json' => ['membership' => ['user_id' => $groupId, 'role_ids' => $plan['role_ids']]]]
+                    );
+                    $membershipId = extractCreatedMembershipId(decodeJsonResponse($response));
+                    $membershipsByProject[$projectId][$groupId] = ['id' => (int)$membershipId, 'role_ids' => $plan['role_ids']];
+                    $createdCount++;
+                } else {
+                    $membership = $membershipsByProject[$projectId][$groupId];
+                    $membershipId = (string)$membership['id'];
+                    // inherited roles stay: Redmine keeps them on a role_ids update
+                    $redmineClient->put(
+                        sprintf('memberships/%d.json', $membership['id']),
+                        ['json' => ['membership' => ['role_ids' => $plan['role_ids']]]]
+                    );
+                    $membershipsByProject[$projectId][$groupId]['role_ids'] = $plan['role_ids'];
+                    $updatedCount++;
+                }
 
+                $record($assignment, 'ASSIGNMENT_RECORDED', null);
                 printf(
-                    "  [created] Project %s -> Redmine %s #%d with role #%d (membership #%s).%s",
-                    formatJiraProjectReference($assignment['jira_project_key'], $assignment['jira_project_name'], $assignment['jira_project_id']),
+                    "  [%s] Project %s -> Redmine %s #%d with role #%d (membership #%s, roles %s).%s",
+                    $plan['action'] === 'create' ? 'created' : 'role added',
+                    $projectReference,
                     $assignment['principal_type'],
                     $groupId,
                     $roleId,
                     $membershipId,
+                    implode(',', $plan['role_ids']),
                     PHP_EOL
                 );
-
-                $successCount++;
             } catch (Throwable $exception) {
                 $errorMessage = summarizeExtendedApiError($exception);
-                $automationHash = computeProjectRoleAssignmentAutomationHash(
-                    $projectId,
-                    $groupId,
-                    $roleId,
-                    $proposedRoleId,
-                    $proposedRoleName,
-                    'MANUAL_INTERVENTION_REQUIRED',
-                    $errorMessage
-                );
-
-                $updateStatement->execute([
-                    'redmine_project_id' => $projectId,
-                    'redmine_group_id' => $groupId,
-                    'redmine_role_id' => $roleId,
-                    'proposed_redmine_role_id' => $proposedRoleId,
-                    'proposed_redmine_role_name' => $proposedRoleName,
-                    'migration_status' => 'MANUAL_INTERVENTION_REQUIRED',
-                    'notes' => $errorMessage,
-                    'automation_hash' => $automationHash,
-                    'mapping_id' => $mappingId,
-                ]);
-
+                $record($assignment, 'MANUAL_INTERVENTION_REQUIRED', $errorMessage);
                 printf(
                     "  [failed] Project %s -> %s #%d with role #%d: %s%s",
-                    formatJiraProjectReference($assignment['jira_project_key'], $assignment['jira_project_name'], $assignment['jira_project_id']),
+                    $projectReference,
                     $assignment['principal_type'],
                     $groupId,
                     $roleId,
@@ -2041,9 +2056,10 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
         }
 
         printf(
-            "  Completed extended API push. Success: %d, Duplicates: %d, Failed: %d.%s",
-            $successCount,
-            $duplicateCount,
+            "  Completed extended API push. Created: %d, Role added: %d, Already present: %d, Failed: %d.%s",
+            $createdCount,
+            $updatedCount,
+            $presentCount,
             $failureCount,
             PHP_EOL
         );
@@ -2406,6 +2422,31 @@ function extractExtendedApiErrorDetails(ResponseInterface $response): ?string
     }
 
     return $body !== '' ? $body : null;
+}
+
+/**
+ * The project's memberships per principal id, with their direct roles (B31).
+ *
+ * @return array<int, array{id: int, role_ids: list<int>}>
+ */
+function fetchRedmineProjectMemberships(Client $client, int $projectId): array
+{
+    $memberships = [];
+    $offset = 0;
+    do {
+        $page = decodeJsonResponse($client->get(
+            sprintf('projects/%d/memberships.json', $projectId),
+            ['query' => ['limit' => 100, 'offset' => $offset]]
+        ));
+        if (!is_array($page)) {
+            throw new RuntimeException(sprintf('Unexpected memberships response for Redmine project #%d.', $projectId));
+        }
+        $memberships = MembershipPlan::existingFromApi($page) + $memberships;
+        $count = is_array($page['memberships'] ?? null) ? count($page['memberships']) : 0;
+        $offset += $count;
+    } while ($count > 0 && $offset < (int)($page['total_count'] ?? 0));
+
+    return $memberships;
 }
 
 function extractCreatedMembershipId(mixed $decoded): string

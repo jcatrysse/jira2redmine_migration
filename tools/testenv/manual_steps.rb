@@ -3,9 +3,9 @@
 # workflows: every transition open for Manager and Developer on every tracker, new issues included
 #            ("open the workflows", reset after the migration); watchers need view_watched_issues
 #            (redmine_view_issue_description), given to both roles; parent priority independent (B13).
-# members:   activate locked users, flagged with preference j2r_relock ("activate locked users"), and add
-#            every user to the test projects as Developer: Jira grants project access through permission
-#            schemes, which 04 does not read (04 migrates project role actors only). Run after 04.
+# members:   activate locked users, flagged with preference j2r_relock ("activate locked users"). Project
+#            memberships come from 04, which proposes them from the permission schemes and project roles
+#            (B31, Jan option a). Run after 04.
 # restore:   undo after the migration: remove exactly the workflow transitions "workflows" added (listed in
 #            tmp/j2r_added_workflows.json) and lock again the users "members" activated.
 step = ENV.fetch('J2R_STEP')
@@ -43,26 +43,15 @@ when 'workflows'
   roles.each { |role| perms.each { |p| role.add_permission!(p) } }
   puts "workflow transitions created=#{created} permissions=#{perms.inspect} cross_project_subtasks=#{Setting.cross_project_subtasks} cross_project_issue_relations=#{Setting.cross_project_issue_relations}"
 when 'members'
-  role = Role.find_by!(name: 'Developer')
-  projects = Project.where(identifier: ENV.fetch('J2R_PROJECTS').split(',')).to_a
   activated = 0
-  added = 0
   User.where(type: 'User').where.not(id: 1).find_each do |user|
-    if user.locked?
-      user.pref[:j2r_relock] = '1'
-      user.pref.save!
-      user.update_column(:status, User::STATUS_ACTIVE)
-      activated += 1
-    end
-    projects.each do |project|
-      next if Member.where(user_id: user.id, project_id: project.id).exists?
-      member = Member.new(user: user, project: project)
-      member.role_ids = [role.id]
-      member.save!
-      added += 1
-    end
+    next unless user.locked?
+    user.pref[:j2r_relock] = '1'
+    user.pref.save!
+    user.update_column(:status, User::STATUS_ACTIVE)
+    activated += 1
   end
-  puts "activated=#{activated} memberships=#{added}"
+  puts "activated=#{activated} members=#{Member.count}"
 when 'restore'
   added_file = Rails.root.join('tmp', 'j2r_added_workflows.json')
   removed = 0
