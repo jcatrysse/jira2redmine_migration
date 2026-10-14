@@ -54,6 +54,29 @@ final class PermissionGrantsTest extends TestCase
         );
     }
 
+    public function testEveryHolderOfEveryPermissionIsKeptForTheWorkflows(): void
+    {
+        $scheme = ['permissions' => [
+            ['permission' => 'RESOLVE_ISSUES', 'holder' => ['type' => 'group', 'parameter' => 'support',
+                'group' => ['name' => 'Support', 'groupId' => 'g-1']]],
+            ['permission' => 'RESOLVE_ISSUES', 'holder' => ['type' => 'projectRole', 'parameter' => '10002',
+                'projectRole' => ['name' => 'Administrators', 'id' => 10002]]],
+            ['permission' => 'CREATE_ISSUES', 'holder' => ['type' => 'applicationRole']],
+            ['permission' => 'CREATE_ISSUES', 'holder' => ['type' => 'applicationRole']],
+            ['permission' => 'ADD_COMMENTS', 'holder' => ['type' => 'reporter']],
+        ]];
+
+        self::assertSame([
+            ['permission' => 'RESOLVE_ISSUES', 'holder_type' => 'group', 'holder_id' => 'g-1', 'holder_name' => 'Support'],
+            ['permission' => 'RESOLVE_ISSUES', 'holder_type' => 'projectRole', 'holder_id' => '10002', 'holder_name' => 'Administrators'],
+            ['permission' => 'CREATE_ISSUES', 'holder_type' => 'applicationRole', 'holder_id' => PermissionGrants::APPLICATION_ROLE,
+                'holder_name' => 'Application role: any'],
+            ['permission' => 'ADD_COMMENTS', 'holder_type' => 'reporter', 'holder_id' => '', 'holder_name' => null],
+        ], PermissionGrants::holders($scheme));
+        $script = (string)file_get_contents(__DIR__ . '/../04_migrate_roles.php');
+        self::assertStringContainsString('PermissionGrants::holders(', $script, '04 keeps only the membership grants');
+    }
+
     public function testABuiltInGroupMembershipIsRead(): void
     {
         $nonMember = ['id' => 21, 'group_non_member' => ['id' => 3, 'name' => 'Non member users'], 'roles' => [['id' => 4]]];

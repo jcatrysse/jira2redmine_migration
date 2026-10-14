@@ -235,22 +235,30 @@ function fetchAndStoreJiraProjectRoles(Client $client, PDO $pdo): array
 function refreshJiraProjectPermissionGrants(Client $client, PDO $pdo): int
 {
     $pdo->exec('TRUNCATE TABLE staging_jira_project_permission_grants');
+    $pdo->exec('TRUNCATE TABLE staging_jira_project_permission_holders');
+    $holderInsert = $pdo->prepare(<<<SQL
+        INSERT INTO staging_jira_project_permission_holders (project_id, project_key, permission, holder_type, holder_id, holder_name)
+        VALUES (:project_id, :project_key, :permission, :holder_type, :holder_id, :holder_name)
+    SQL);
     $insert = $pdo->prepare(<<<SQL
         INSERT INTO staging_jira_project_permission_grants (project_id, project_key, project_name, permission, group_id, group_name)
         VALUES (:project_id, :project_key, :project_name, :permission, :group_id, :group_name)
     SQL);
-    if ($insert === false) {
-        throw new RuntimeException('Failed to prepare insert statement for staging_jira_project_permission_grants.');
+    if ($insert === false || $holderInsert === false) {
+        throw new RuntimeException('Failed to prepare insert statements for the Jira permission grants.');
     }
 
     $count = 0;
     foreach (fetchJiraProjectsForRoleExtraction($client) as $project) {
         $response = $client->get(
             sprintf('/rest/api/3/project/%s/permissionscheme', rawurlencode((string)$project['id'])),
-            ['query' => ['expand' => 'permissions,group']]
+            ['query' => ['expand' => 'permissions,group,projectRole']]
         );
         $scheme = decodeJsonResponse($response);
         $result = PermissionGrants::fromScheme(is_array($scheme) ? $scheme : []);
+        foreach (PermissionGrants::holders(is_array($scheme) ? $scheme : []) as $holder) {
+            $holderInsert->execute($holder + ['project_id' => (string)$project['id'], 'project_key' => $project['key']]);
+        }
         foreach ($result['grants'] as $grant) {
             $insert->execute([
                 'project_id' => (string)$project['id'],

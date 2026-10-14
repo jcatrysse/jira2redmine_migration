@@ -85,4 +85,45 @@ final class PermissionGrants
 
         return ['grants' => $grants, 'other_holders' => $other];
     }
+
+    /**
+     * Every holder of every permission of the scheme, for the workflow proposal (Jan, decision 13): a
+     * transition with a permission condition goes only to the Redmine roles of the holders.
+     *
+     * @param array<mixed> $scheme GET /rest/api/3/project/{id}/permissionscheme?expand=permissions,group,projectRole
+     * @return list<array{permission: string, holder_type: string, holder_id: string, holder_name: ?string}>
+     *     holder_type: group, projectRole, applicationRole or Jira's other types (anyone, user, reporter, ...)
+     */
+    public static function holders(array $scheme): array
+    {
+        $holders = [];
+        foreach ($scheme['permissions'] ?? [] as $permission) {
+            if (!is_array($permission) || !is_array($permission['holder'] ?? null) || !isset($permission['permission'])) {
+                continue;
+            }
+            $holder = $permission['holder'];
+            $type = (string)($holder['type'] ?? '');
+            [$id, $name] = match ($type) {
+                'group' => [
+                    (string)($holder['group']['groupId'] ?? $holder['value'] ?? ''),
+                    (string)($holder['group']['name'] ?? $holder['parameter'] ?? '') ?: null,
+                ],
+                'projectRole' => [
+                    (string)($holder['projectRole']['id'] ?? $holder['value'] ?? $holder['parameter'] ?? ''),
+                    isset($holder['projectRole']['name']) ? (string)$holder['projectRole']['name'] : null,
+                ],
+                'applicationRole' => [self::APPLICATION_ROLE, 'Application role: ' . ((string)($holder['parameter'] ?? '') ?: 'any')],
+                default => [(string)($holder['value'] ?? $holder['parameter'] ?? ''), null],
+            };
+            $key = $permission['permission'] . '|' . $type . '|' . $id;
+            $holders[$key] = [
+                'permission' => (string)$permission['permission'],
+                'holder_type' => $type,
+                'holder_id' => $id,
+                'holder_name' => $name,
+            ];
+        }
+
+        return array_values($holders);
+    }
 }

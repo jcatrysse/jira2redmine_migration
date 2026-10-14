@@ -163,6 +163,17 @@ CREATE TABLE `staging_jira_project_permission_grants` (
                                                     PRIMARY KEY (`project_id`, `permission`, `group_id`)
 ) COMMENT='Group grants of Browse projects, Assignable user and Administer projects in each project permission scheme (B31).';
 
+CREATE TABLE `staging_jira_project_permission_holders` (
+                                                    `project_id` VARCHAR(255) NOT NULL,
+                                                    `project_key` VARCHAR(255) NULL,
+                                                    `permission` VARCHAR(64) NOT NULL,
+                                                    `holder_type` VARCHAR(64) NOT NULL,
+                                                    `holder_id` VARCHAR(255) NOT NULL,
+                                                    `holder_name` VARCHAR(255) NULL,
+                                                    `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                    PRIMARY KEY (`project_id`, `permission`, `holder_type`, `holder_id`)
+) COMMENT='Every holder of every permission in each project permission scheme (04), for the workflow proposal (decision 13).';
+
 CREATE TABLE `staging_redmine_builtin_groups` (
                                                     `id` INT NOT NULL PRIMARY KEY,
                                                     `builtin` VARCHAR(32) NOT NULL,
