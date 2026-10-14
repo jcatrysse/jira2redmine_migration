@@ -566,6 +566,21 @@ In this order. Each item records its result under "Results" when done.
     they move one by one with a test per difference. Proof (5.1, 2026-10-14, `RECORD=` runs `b2-dress2` with
     `2853767` and `b2-m1` with `eb53e88`, both with the stability pass, workflows and restore): 7,116 Redmine requests
     before and after, 0 differing; both runs PASS with identical summaries.
+    **M1 rest, B2 2026-10-14 night** (the helpers whose copies behave differently), per helper what is right for this
+    migration:
+    - timestamps: staging and both APIs are UTC, but 08, 09 and 12 (and the log lines of 01 to 09) used the server's
+      timezone, and a time without an offset was read in it. **Unified on UTC** (`bfdcc13`): bootstrap sets PHP to
+      UTC, ConnectionFactory sets the MySQL session to +00:00. On the way B58 (attachments one or two hours late),
+      fixed separately (`004b57b`);
+    - JSON decoding of an empty body (null, [] or an error per script): every call decodes a GET or a create
+      response, which always has a body; Redmine's empty 204 answers are never decoded. **Kept** per script: each
+      fits its callers' types, a change would gain nothing;
+    - PDO attributes: the fetch mode differs, but every query names its own mode; native prepares in 01 to 03 give
+      integers where the others cast strings. **Kept**: switching risks TypeErrors under strict_types and gains
+      nothing;
+    - option parsing: every script stops on an unknown option (reported as "Unexpected positional arguments");
+      the copies differ only in accepted spellings (01 to 03 also take `--phases jira`). **Kept**.
+    Nothing here needs a choice from Jan.
 
 **Phase 7, fixes**
 
@@ -959,6 +974,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B55 | verify expected a relation for a link between an issue and its own parent or subtask, which 12 leaves to the hierarchy (B40) | 1 WIKI failure (link 11351: a subtask's "To Wiki" link to its parent) | **fixed** in verify (`e0fe77b`), with a test |
 | B56 | verify counted the address of link markup a user typed ("[label\|url]") as Jira text; B42 makes it a link with that label | 1 WIKI failure (comment 29072, 49% of the words) | **fixed** in verify and the bench (`b71306f`), with a test; the comment measures 100% |
 | B57 | 05 reads the statuses from GET /rest/api/3/status, which does not list the 25 statuses Jira's status search (GET /rest/api/3/statuses/search) adds; 9 of them are in FPS's workflow (Accepted, Rejected, Re-Open, ...), no other migrated project uses one | FPS's workflow transitions to or from them are not proposed (reported as "no Redmine status"); FPS has 0 issues the read token can see, so nothing is lost now | **fixed** (coordinator: a completeness bug, fix regardless of FPS): 05 also reads the status search (GET, paged) and adds a status when a staged project uses it (GET statuses/{id}/projectUsages), with tests; on 5.1 and 7.0: 9 added, 16 used by none skipped, 8 created and 1 matched (Rejected); the proposal's "no Redmine status" problems 29 to 0, FPS 288 rows proposed and 16 to review (8 of them the group rows to Accepted and Rejected), the other projects unchanged (2,185 and 439) |
+| B58 | 09 stored an attachment's Jira creation time without its offset ("2024-07-04T10:31:35.833+0200" became 10:31:35) and pushed it as UTC | every attachment one or two hours late in Redmine (issues and comments were right: 10 and 11 convert to UTC); verify had no check for it | **fixed** (`004b57b`, found by the M1 review of the timestamp helpers): staging holds the instant in UTC, a value without an offset is read as UTC; verify's new "attachments: created" fails 149 of 149 on the old data |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2

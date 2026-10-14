@@ -117,6 +117,9 @@ All notable changes to this project. Steps to take before and after a migration 
 - An unknown phase in `--phases` or `--skip` stops a script; 09, 11 and 13 to 16 ran every phase instead. Phases
   run in the script's order (02 and 03 followed the order given).
 - 08 calls the Extended API relative to the Redmine base URL, so a Redmine under a sub-path keeps it (F6).
+- Attachments keep their Jira creation time: 09 dropped Jira's offset, so Redmine showed them one or two hours
+  late (B58); verify compares the creation times.
+- Every timestamp in UTC whatever the server's timezone: PHP's default timezone and the MySQL session.
 - 05 also reads Jira's status search (`GET /rest/api/3/statuses/search`) and adds the statuses the status
   list lacks when a staged project uses them (`GET /rest/api/3/statuses/{id}/projectUsages`); their
   transitions were dropped from the workflow proposal (B57).
