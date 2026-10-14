@@ -67,6 +67,11 @@ function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
         return null;
     }
 
+    // Heading anchors ("<h3><a name="Title"></a>Title</h3>"): Redmine makes its own. Left in, the empty
+    // <a> stayed as HTML in the Markdown, and the DOM passes over it wrapped the whole text in <p>, so
+    // Redmine showed the Markdown as text ("### ", "**", "&gt;").
+    $trimmed = preg_replace('#<a\s+name=("[^"]*"|\'[^\']*\')\s*(?:/>|>\s*</a>)#i', '', $trimmed) ?? $trimmed;
+
     $rewrittenHtml = rewriteJiraAttachmentLinks($trimmed, $attachments);
 
     static $converter = null;
