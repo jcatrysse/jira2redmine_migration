@@ -12,6 +12,38 @@ hand in the mapping tables keep their edits (automation hash). Checked on 5.1 an
 14 a second time: nothing changes. Do not rerun 11 from `main` on a target: before B35 every rerun of
 11 created all journals again.
 
+## Prerequisites (Jan, decision 23)
+
+The scripts run on an existing server with PHP 8.2 or newer and a temporary MySQL or MariaDB for the staging
+database, which is removed after the migration (no PostgreSQL port of the staging SQL).
+
+1. **PHP 8.2 or newer (CLI)** with the extensions pdo, pdo_mysql, mbstring, ctype, json, dom, libxml, curl
+   and openssl. Debian/Ubuntu: `apt install php8.2-cli php8.2-mysql php8.2-mbstring php8.2-xml php8.2-curl`
+   (json, ctype, openssl and pdo come with the CLI package). Check: `php -v`, `php -m`. Every script checks
+   this first and stops with `[ERROR] This PHP cannot run the migration scripts:` and what is missing. The
+   CLI's default `memory_limit` (-1 on Debian) is what the test runs used. Tested on PHP 8.2.34 and 8.3.6.
+   In the repository checkout: `composer install --no-dev`. For `tools/qa.sh` (developers only) also
+   pdo_sqlite (`php8.2-sqlite3`) and the dev dependencies.
+2. **A temporary MySQL 8 or MariaDB** on the same server (or one it reaches), with the staging database and
+   its user:
+
+   ```bash
+   apt install mariadb-server
+   mysql -e "CREATE DATABASE jira2redmine CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+     CREATE USER 'jira2redmine'@'localhost' IDENTIFIED BY '<password>';
+     GRANT ALL ON jira2redmine.* TO 'jira2redmine'@'localhost';"
+   mysql jira2redmine < database/schema.sql
+   ```
+
+   In `config/config.local.php`: `database.dsn` (`mysql:host=127.0.0.1;port=3306;dbname=jira2redmine;charset=utf8mb4`),
+   `database.username`, `database.password`. Room on disk: the staging database holds the Jira payloads of every
+   migrated issue and comment, and `paths.tmp` the attachments of a batch until 09 has pushed them (SURV alone
+   has 98.7 GB of attachments in Jira).
+3. **After the migration**, once the last batch, the relink (section 1) and the workflows (section 5) are
+   done and no rerun is needed: if a copy of the staging data is wanted, `mysqldump` it and keep it outside
+   this repository (it holds Jira data); then `mysql -e "DROP DATABASE jira2redmine; DROP USER
+   'jira2redmine'@'localhost';"`, `apt purge mariadb-server` (if installed for this), and empty `paths.tmp`.
+
 ## 0. Before the run
 
 | what | how | check |
@@ -132,11 +164,12 @@ migrated stays on that list: link it by hand or leave it.
 
 **Production procedure (Jan, 2026-10-14: batches plus relink, not one run).**
 
-1. Batch order: projects other projects link to or hang under first, so fewer links and parents wait.
-   Measured: GEOS issues hang under WIKI epics, and the first batch (GEOS, SIS, OAC) left 49 relations
-   whose other side was in WIKI (30), SURV (13), DOC (5) and LABO (1). Recommended order:
-   (1) WIKI; (2) GEOS, SIS, OAC; (3) SURV, DOC, LABO; (4) ICT, LLE, SOIL, SSPT, ROV, GSPP, FPS (and TEST
-   if Jan keeps it). Any order works with the steps below; this one keeps the waiting lists short.
+1. Batch order for production (Jan, decision 22): (1) WIKI; (2) GEOS, SIS, OAC; (3) SURV, DOC, LABO;
+   (4) ICT, LLE, SOIL, SSPT, ROV, GSPP, FPS. **TEST is not migrated**: `migration.projects.not_migrated`
+   lists it, 01 marks it IGNORED and does not create it. The order puts first what other projects link to
+   or hang under: GEOS issues hang under WIKI epics, and a first batch of GEOS, SIS and OAC left 49 relations
+   whose other side was in WIKI (30), SURV (13), DOC (5) and LABO (1). Any order works with the steps below;
+   this one keeps the waiting lists short.
 2. Each batch: 01 to 16 with `migration.issues.projects` = every project migrated so far plus the new
    ones. 12 runs in every batch: a relation whose other side was not migrated yet stays MANUAL ("Missing
    Redmine issue mapping") and 12 creates it in the batch that migrates that side (proved on 7.0: 30 of
@@ -185,6 +218,12 @@ php 10_migrate_issues.php --phases=transform,push --confirm-push
   the run stops if that status is missing or closed); the transform prints each `[open-parent]`.
 - Attachments keep their Jira name; a second attachment with the same name on the issue gets the
   prefix `{jiraId}__`, so inline images show the right file.
+
+### Fields that are not migrated (Jan, decision 20)
+
+`migration.custom_fields.not_migrated` lists Jira field types 08 does not create: the service desk fields
+"Organizations" and "Request participants". 08 marks them IGNORED with a note (not MANUAL), so they do not
+show up as work in its summary or in verify. **Their values stay in Jira only**; Redmine has no copy.
 
 ### Select values Jira no longer offers (B37)
 
@@ -257,6 +296,8 @@ bundle exec rails runner /path/tools/apply_workflows.rb /path/plan.json --confir
   plugin's 7.0 branch the runner makes the plugin's scopes itself; on its 5.1 version a project role
   without transitions follows the global workflow (the plugin cannot store an empty one).
 - Only PROPOSED rows are applied. A REVIEW row waits for a decision: set it to PROPOSED or IGNORED.
+  A Jira condition Redmine cannot carry gives a REVIEW row, unless `migration.workflows.dropped_conditions`
+  leaves it out for that project (Jan, decision 19: FPS's field value condition); the row is then PROPOSED.
   A row edited by hand keeps its edit when the proposal is made again.
 - `migration_mapping_workflow_transitions`: per tracker and role, the runner sets exactly the PROPOSED
   transitions; a tracker and role whose rows are all IGNORED gets none. A row with role 0 is a transition
@@ -267,8 +308,9 @@ bundle exec rails runner /path/tools/apply_workflows.rb /path/plan.json --confir
   assignable), `R` gives the transitions to the roles the group's users hold, `ignore` marks the rows
   IGNORED. Only a group not listed still gives review rows; run 04 and its push before the proposal.
   Trackers fed by several Jira workflows get their union (decision 13);
-  Jan harmonises them to one workflow per tracker by marking the transitions he does not want anywhere
-  IGNORED. The report's "Union per tracker" lists per transition the Jira workflows and projects it
+  Jan decided to keep the union as it is (decision 18): it stays the global workflow for projects without their
+  own, "Create RMA" on Task included; he can still mark a union transition IGNORED later, or change it in
+  Redmine's workflow screen. The report's "Union per tracker" lists per transition the Jira workflows and projects it
   comes from and how many issues sit in its from-status. One transition for every role:
 
   ```sql

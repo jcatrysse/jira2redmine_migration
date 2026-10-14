@@ -312,6 +312,29 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
 17. **Automation rules**: Jan exports them himself once as JSON, kept outside this public repository
     (runbook section 0: where in Jira, never commit; `.gitignore` stops `automation-rules*.json`).
 
+Jan's answers to the six open points of the summary (2026-10-14, evening, relayed by the coordinator):
+
+18. **The union per tracker stays as it is**: no cleanup; it remains the global workflow for projects without
+    their own, "Create RMA" on Task included. The report of `tools/workflow_proposal.php` stays available if he
+    wants to clean it later in the GUI.
+19. **FPS, the field value condition ("Screen", one option of a select field): proposed without the
+    condition.** The transitions stay limited to the Crewing approvers' own role (decision 14, G); no
+    custom_workflows script. `migration.workflows.dropped_conditions` (`911e26c`).
+20. **Service desk fields "Organizations" and "Request participants": not migrated**, as the configured
+    outcome: 08 marks them IGNORED with a note instead of MANUAL (`migration.custom_fields.not_migrated`,
+    `911e26c`); their values stay in Jira only (runbook section 2).
+21. **Conversion choices confirmed as proposed**: a status lozenge becomes inline code; a link to a migrated
+    issue with its own text reads "text (#id)"; a link to an issue outside the migration keeps its Jira link
+    with the key as text; Outlook safe links become the plain link.
+22. **Production batch order: WIKI; then GEOS, SIS, OAC; then SURV, DOC, LABO; then ICT, LLE, SOIL, SSPT, ROV,
+    GSPP, FPS. TEST is not migrated** (`migration.projects.not_migrated`: 01 marks it IGNORED and does not
+    create it, `911e26c`). Runbook section 1, Batches.
+23. **Production environment: an existing server with PHP 8.2 or newer, plus a temporary MySQL/MariaDB for
+    staging** (no port of the staging SQL to PostgreSQL). Verified on PHP 8.2.34 (QA green; nothing 8.3-only);
+    a start-up check stops with a clear message below 8.2.0 or without the required extensions (`0827b1f`);
+    runbook section "Prerequisites".
+24. **Jira worklogs are not migrated** (out of scope); M12's worklog half is closed.
+
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
 Taken by B2 on the coordinator's instruction (recommended option, no waiting); each can be reversed.
@@ -402,7 +425,7 @@ choices) is still open.
 | M9 | Attachments are uploaded for tokens before issues exist; Redmine's prune task deletes unattached uploads older than a day, hence "prune off" in M8 | `09_migrate_attachments.php` push phase |
 | M10 | Staging SQL is MySQL-only (`ON DUPLICATE KEY UPDATE`, `VALUES()`); GEOxyz runs no MySQL any more | all scripts |
 | M11 | GEOxyz-specific relation types in `config.default.php` | `migration.relations.custom_mappings` |
-| M12 | Worklogs (time entries) are not migrated; workflows are export-only | repo |
+| M12 | Worklogs (time entries) are not migrated; workflows are export-only | repo. **Worklogs: out of scope (Jan, decision 24), closed.** Workflows: built (decisions 13, 14) |
 | M13 | Extended API `main` (what 5.1 runs) still has bugs fixed on its `redmine70-migration`: `notify=false` switches mail off process-wide (`Mailer.with_deliveries(false)`), so other users' mail is lost during an import; unstorable override values are saved as NULL instead of a 422 | `redmine_extended_api` |
 | M14 | Large files: Redmine streams uploads to disk in 8 KB blocks and has no hard size cap (`attachment_max_size`, default 5 MB); core has no video player, a video is a download; Apache 2.4.53+ has `LimitRequestBody` 1 GiB by default | Redmine 5.1/7.0 `AttachmentsController`, `Attachment` |
 | M15 | Good, keep: ETL with staging, mapping tables, idempotent reruns, `--dry-run`/`--confirm-push`, `automation_hash` preserves manual edits, Jira keys rewritten to `#id`, keyset paging on `/rest/api/3/search/jql` | |
@@ -776,10 +799,10 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
 
 ## Open questions for Jan
 
-- Test projects (work list 2).
-- PHP version on the machine where the scripts will run in production.
-- Staging database: stay on MySQL or move to PostgreSQL (decide after the baseline).
-- Worklogs to time entries: in scope or not.
+- ~~Test projects (work list 2).~~ **Jan: TEST is not migrated** (decision 22).
+- ~~PHP version on the machine where the scripts will run in production.~~ **Jan: PHP 8.2 or newer** (decision 23).
+- ~~Staging database: stay on MySQL or move to PostgreSQL.~~ **Jan: a temporary MySQL/MariaDB** (decision 23).
+- ~~Worklogs to time entries: in scope or not.~~ **Jan: out of scope** (decision 24).
 - Which manual steps to automate (decide after the baseline, per step).
 - B14 measured on 7.0 (2026-10-13): Redmine stores, lists and downloads same-named attachments
   correctly, but an inline image resolves to the latest attachment of that name (description showed

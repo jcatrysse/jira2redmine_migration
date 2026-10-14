@@ -49,6 +49,13 @@ All notable changes to this project. Steps to take before and after a migration 
   (04 proposes it, its push creates the role through the Extended API: Edit issues only, not assignable),
   `R` gives it to the roles the group's users hold, `ignore` marks the review row IGNORED; a group not
   listed stays a review row. `tools/testenv/group_role_proof.rb` shows it on a real Redmine.
+- Configured outcomes for what Jan leaves out (decisions 19, 20, 22): `migration.workflows.dropped_conditions`
+  (a Jira condition left out per project, the transition proposed without it), `migration.custom_fields.not_migrated`
+  (field types IGNORED, not MANUAL: the service desk fields), `migration.projects.not_migrated` (TEST).
+- Start-up check in `bootstrap.php`: PHP 8.2 or newer and the required extensions, with a clear message
+  (decision 23); runbook section "Prerequisites" (PHP, a temporary MySQL/MariaDB for staging, its removal).
+- `tools/testenv/core.sh` and `plugins.sh`: bring the test instances' core and plugins to their branch heads
+  (forced refspec) and print the hashes.
 - Later batches: 08 adds new select values to fields an earlier batch created (B47) and enables them for
   the new projects and trackers (B53); `tools/relink_issue_links.php` rewrites links to issues of a later
   batch in texts Redmine did not change (B52), and its check counts the texts that still link a migrated
