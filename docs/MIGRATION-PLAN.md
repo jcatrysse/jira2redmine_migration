@@ -226,6 +226,37 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
     READY, note "Watcher only, not in the project's permission groups", role from
     `migration.roles.watcher_only_role`; 14 then adds the watcher, verify expects it present. 14's jira
     phase runs before 04. The role is still open (asked of Jan; Developer until then). Commit `24d3611`.
+    **Replaced the same day by decision 12**: the watcher-only rows stay in the code, off by default.
+12. **A temporary migration role instead of assignee-only and watcher-only members** (2026-10-14,
+    relayed by the coordinator; replaces 11 and B46's rows). During the import every migrated user is
+    a member of every migrated project with one temporary role ("Migration (temporary)", every
+    permission, assignable), on top of the final memberships from 04 (decision 10). After the run,
+    `restore` removes only that role (and members left without a role) and locks the activated users
+    again: the final roles reflect Jira today, assignees and watchers stay as they were. Redmine keeps
+    them: removing a member role prunes no watchers (only `rake redmine:watchers:prune`, or deleting a
+    user or group, does), and an assignee is only validated on a new issue or when it changes. B46's
+    and B50's rows are off by default; 14 migrates every watcher, verify expects them all. Runbook: never
+    run `rake redmine:watchers:prune` after the migration; a watcher without access gets no
+    notifications. To prove on both targets after `restore`: a watcher without access is still there, an
+    issue whose assignee lost the membership can be edited and saved, the final memberships equal 04's
+    proposal.
+13. **Workflows** (2026-10-14, relayed by the coordinator):
+    - applied by a runner after the migration: it writes the rows Jan approved in
+      `migration_mapping_workflow_transitions` into Redmine and replaces the temporary open workflows;
+      repeatable, preview first, then `--confirm-push`; 5.1 and 7.0;
+    - a tracker fed by several Jira workflows gets their union (11 trackers, 2 to 14 workflows each);
+    - transition screens: fields the screen makes required become Redmine field permissions (per
+      tracker, role and target status), as review rows applied by the same runner. On this Jira that is
+      0 rows: the only screen in use ("Resolve Issue Screen": Solution, Resolution, Log Work) has no
+      required field in any of the 12 field configurations. Open for Jan: a rule Jira does not have,
+      such as Solution required on Closed; the extraction is not built until he answers;
+    - permission conditions: per role, only the Redmine roles that hold the Jira permission in the
+      project (its permission scheme's holders, mapped by 04) get the transition;
+    - "assign to the current user" (12 rows): a small redmine_custom_workflows script per tracker and
+      status (v2.1.2 on 5.1, the 7.0 branch on 7.0), generated from the proposal and reviewable;
+    - transitions limited to groups that are not members of the project: review rows with the group,
+      Jan decides per case;
+    - the 9 Jira statuses without a Redmine status (unused): skipped.
 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
@@ -913,8 +944,8 @@ Redmine cannot apply, by rows: transition screens 96, a permission condition giv
 the project 68 (CREATE_ISSUES 48, RESOLVE_ISSUES 18, ASSIGNABLE_USER 2), the post function "assign to
 the current user" 12. Not proposed: transitions from or to 9 Jira statuses without a Redmine status
 (not in Jira's status list that 05 reads, and no staged issue has them), transitions limited to groups that are not members of the project
-(TEST, ICT, SURV, GEOS, DOC). Five trackers are fed by 2 to 6 Jira workflows: Redmine has one workflow
-per tracker, so the proposal is their union. A hand edit (IGNORED) stayed on a rerun. Nothing is sent
+(TEST, ICT, SURV, GEOS, DOC). Eleven trackers are fed by 2 to 14 Jira workflows (corrected 2026-10-14; this said five): Redmine has one
+workflow per tracker, so the proposal is their union. A hand edit (IGNORED) stayed on a rerun. Nothing is sent
 to Redmine: how to apply it is Jan's decision (open question).
 
 **Cumulative WIKI batch on 7.0 with the final code** (`STABILITY=1 run_all.sh 70 b2-final3`, then
