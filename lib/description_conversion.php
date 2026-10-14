@@ -6,6 +6,7 @@ use GuzzleHttp\Client;
 use League\HTMLToMarkdown\HtmlConverter;
 use League\HTMLToMarkdown\Converter\TableConverter;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
+use Jira2Redmine\Jira\ProjectKeyAliases;
 use Jira2Redmine\Text\IssueReference;
 use Jira2Redmine\Text\Safelinks;
 
@@ -827,6 +828,75 @@ function normalizeRedmineReferenceSpacing(string $text): string
 }
 
 /**
+ * Former project keys in the staged texts' issue links (B54): every link prefix that is not a current
+ * project key is asked of Jira (GET project/{key}, read-only); a key Jira resolves to another project is
+ * stored as an alias. Returns the number of aliases now known.
+ */
+function refreshProjectKeyAliases(Client $client, PDO $pdo): int
+{
+    $current = [];
+    $keys = $pdo->query('SELECT project_key FROM staging_jira_projects');
+    foreach ($keys !== false ? $keys->fetchAll(PDO::FETCH_COLUMN) : [] as $key) {
+        $current[strtoupper((string)$key)] = true;
+    }
+    $prefixes = [];
+    $texts = $pdo->query("SELECT description_html FROM staging_jira_issues WHERE description_html LIKE '%/browse/%'
+        UNION ALL SELECT body_html FROM staging_jira_comments WHERE body_html LIKE '%/browse/%'");
+    foreach ($texts !== false ? $texts->fetchAll(PDO::FETCH_COLUMN) : [] as $html) {
+        foreach (ProjectKeyAliases::prefixes((string)$html) as $prefix) {
+            $prefixes[$prefix] = true;
+        }
+    }
+    $store = $pdo->prepare('INSERT INTO staging_jira_project_key_aliases (old_key, current_key, project_id) VALUES (:old, :current, :id)
+        ON DUPLICATE KEY UPDATE current_key = VALUES(current_key), project_id = VALUES(project_id), extracted_at = CURRENT_TIMESTAMP');
+    if ($store === false) {
+        throw new RuntimeException('Failed to prepare the project key alias insert.');
+    }
+    foreach (array_keys(array_diff_key($prefixes, $current)) as $prefix) {
+        try {
+            $project = json_decode((string)$client->get('/rest/api/3/project/' . rawurlencode((string)$prefix))->getBody(), true);
+        } catch (Throwable) {
+            // no such project (deleted, or not visible to the token): the links stay Jira links
+            continue;
+        }
+        $currentKey = strtoupper((string)($project['key'] ?? ''));
+        if ($currentKey !== '' && $currentKey !== $prefix) {
+            $store->execute(['old' => $prefix, 'current' => $currentKey, 'id' => isset($project['id']) ? (string)$project['id'] : null]);
+            printf("  [alias] Jira project key %s is now %s: links to %s-n are rewritten as %s-n (B54).%s", $prefix, $currentKey, $prefix, $currentKey, PHP_EOL);
+        }
+    }
+    $count = $pdo->query('SELECT COUNT(*) FROM staging_jira_project_key_aliases');
+
+    return $count !== false ? (int)$count->fetchColumn() : 0;
+}
+
+/**
+ * Jira issue key => Redmine issue id of the migrated issues, also under their project's former keys
+ * ("DATA-12" next to "GEOS-12", B54): the map every link rewrite uses (10, 11, the relink step).
+ *
+ * @return array<string, int>
+ */
+function loadIssueLinkMap(PDO $pdo): array
+{
+    $map = [];
+    $rows = $pdo->query('SELECT jira_issue_key, redmine_issue_id FROM migration_mapping_issues WHERE redmine_issue_id IS NOT NULL');
+    foreach ($rows !== false ? $rows->fetchAll(PDO::FETCH_ASSOC) : [] as $row) {
+        $map[strtoupper((string)$row['jira_issue_key'])] = (int)$row['redmine_issue_id'];
+    }
+    $aliases = [];
+    try {
+        $aliasRows = $pdo->query('SELECT old_key, current_key FROM staging_jira_project_key_aliases');
+        foreach ($aliasRows !== false ? $aliasRows->fetchAll(PDO::FETCH_ASSOC) : [] as $row) {
+            $aliases[(string)$row['old_key']] = (string)$row['current_key'];
+        }
+    } catch (PDOException) {
+        // a staging database from before B54 has no alias table: current keys only
+    }
+
+    return ProjectKeyAliases::extend($map, $aliases);
+}
+
+/**
  * Vervang Jira issue links door #redmine_id in DB (issues only).
  * Optioneel ook PATCH naar Redmine zodat de issue description op Redmine zelf verandert.
  *
@@ -843,12 +913,8 @@ function replaceIssueLinksWithRedmineIds(
     string $extendedApiPrefix = '',
     bool $updateRedmine = false
 ): void {
-    // preload mapping: JIRA key -> redmine_issue_id
-    $issueMap = [];
-    $st = $pdo->query("SELECT jira_issue_key, redmine_issue_id FROM migration_mapping_issues WHERE redmine_issue_id IS NOT NULL");
-    while ($r = $st->fetch(PDO::FETCH_ASSOC)) {
-        $issueMap[strtoupper($r['jira_issue_key'])] = (int)$r['redmine_issue_id'];
-    }
+    // preload mapping: JIRA key -> redmine_issue_id (former project keys too, B54)
+    $issueMap = loadIssueLinkMap($pdo);
     if ($issueMap === []) {
         // niets te doen
         return;

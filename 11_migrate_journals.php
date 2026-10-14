@@ -87,6 +87,7 @@ function main(array $config, array $cliOptions): void
         printf("[%s] Fetching Jira comments and changelog entries...%s", formatCurrentTimestamp(), PHP_EOL);
         $jiraClient = createJiraClient(extractArrayConfig($config, 'jira'));
         $jiraSummary = fetchJiraJournals($jiraClient, $pdo, $config);
+        refreshProjectKeyAliases($jiraClient, $pdo);
         printf(
             "[%s] Jira journal extraction complete. Comments: %d (updated %d), Changelog entries: %d (updated %d).%s",
             formatCurrentTimestamp(),
@@ -1124,12 +1125,7 @@ function processCommentPush(
         // build jira->redmine map once per push
         static $jiraToRedmineMap = null;
         if ($jiraToRedmineMap === null) {
-            $jiraToRedmineMap = [];
-            $stmt = $pdo->query("SELECT jira_issue_key, redmine_issue_id FROM migration_mapping_issues WHERE redmine_issue_id IS NOT NULL");
-            while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
-                $jiraToRedmineMap[strtoupper($r['jira_issue_key'])] = (int)$r['redmine_issue_id'];
-            }
-            $stmt->closeCursor();
+            $jiraToRedmineMap = loadIssueLinkMap($pdo);
         }
         if (!empty($jiraToRedmineMap)) {
             $bodyText = inlineReplaceJiraIssueKeysWithHashes($bodyText, $jiraToRedmineMap);
@@ -2482,12 +2478,7 @@ SQL;
 function updateMigrationJournalProposedNotesWithRedmineIds(PDO $pdo): void
 {
     // build jira->redmine map
-    $jiraToRedmine = [];
-    $stmt = $pdo->query("SELECT jira_issue_key, redmine_issue_id FROM migration_mapping_issues WHERE redmine_issue_id IS NOT NULL");
-    while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
-        $jiraToRedmine[strtoupper($r['jira_issue_key'])] = (int)$r['redmine_issue_id'];
-    }
-    $stmt->closeCursor();
+    $jiraToRedmine = loadIssueLinkMap($pdo);
     if ($jiraToRedmine === []) {
         return;
     }

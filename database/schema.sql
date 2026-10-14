@@ -146,6 +146,13 @@ CREATE TABLE `staging_jira_project_roles` (
                                               `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) COMMENT='Raw extraction of Jira Project Roles.';
 
+CREATE TABLE `staging_jira_project_key_aliases` (
+                                                    `old_key` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                                    `current_key` VARCHAR(255) NOT NULL,
+                                                    `project_id` VARCHAR(255) NULL,
+                                                    `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) COMMENT='Former project keys found in issue links, resolved by Jira (B54): DATA-12 is GEOS-12.';
+
 CREATE TABLE `staging_jira_project_permission_grants` (
                                                     `project_id` VARCHAR(255) NOT NULL,
                                                     `project_key` VARCHAR(255) NULL,

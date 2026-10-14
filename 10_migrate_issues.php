@@ -227,6 +227,7 @@ function main(array $config, array $cliOptions): void
         printf("[%s] Starting Jira issue extraction...%s", formatCurrentTimestamp(), PHP_EOL);
 
         $jiraSummary = fetchAndStoreJiraIssues($jiraClient, $pdo, $config);
+        refreshProjectKeyAliases($jiraClient, $pdo);
 
         printf(
             "[%s] Completed Jira extraction. Issues: %d (updated %d), Labels captured: %d, Object samples: %d, Flattened rows: %d.%s",
@@ -2319,21 +2320,7 @@ function fetchIssueRewriteCandidates(PDO $pdo): array
  */
 function fetchIssueLinkReplacementMap(PDO $pdo): array
 {
-    $statement = $pdo->query("SELECT jira_issue_key, redmine_issue_id FROM migration_mapping_issues WHERE redmine_issue_id IS NOT NULL");
-    if ($statement === false) {
-        throw new RuntimeException('Failed to prepare issue link replacement map.');
-    }
-
-    $issueMap = [];
-    while ($row = $statement->fetch(PDO::FETCH_ASSOC)) {
-        if (!isset($row['jira_issue_key'], $row['redmine_issue_id'])) {
-            continue;
-        }
-        $issueMap[strtoupper((string)$row['jira_issue_key'])] = (int)$row['redmine_issue_id'];
-    }
-    $statement->closeCursor();
-
-    return $issueMap;
+    return loadIssueLinkMap($pdo);
 }
 
 /**

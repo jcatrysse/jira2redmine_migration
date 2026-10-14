@@ -26,10 +26,7 @@ $pdo = new PDO((string)$config['database']['dsn'], (string)$config['database']['
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
 ]);
 $client = ClientFactory::redmine($config['redmine']);
-$issueMap = [];
-foreach ($pdo->query('SELECT jira_issue_key, redmine_issue_id FROM migration_mapping_issues WHERE redmine_issue_id IS NOT NULL') as $row) {
-    $issueMap[strtoupper((string)$row['jira_issue_key'])] = (int)$row['redmine_issue_id'];
-}
+$issueMap = loadIssueLinkMap($pdo);
 $rewrite = static fn (string $text): string => replaceIssueLinksInText($text, $issueMap);
 $counts = ['relink' => 0, 'nothing' => 0, 'edited' => 0, 'unknown' => 0, 'failed' => 0];
 $get = static function (string $path, array $query = []) use ($client): array {
