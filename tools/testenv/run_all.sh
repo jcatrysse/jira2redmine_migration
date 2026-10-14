@@ -112,6 +112,11 @@ mysql -N "$db" -e "SELECT 'issues', migration_status, COUNT(*) FROM migration_ma
   UNION ALL SELECT 'attachments', migration_status, COUNT(*) FROM migration_mapping_attachments GROUP BY 2
   UNION ALL SELECT 'relations', migration_status, COUNT(*) FROM migration_mapping_issue_relations GROUP BY 2
   UNION ALL SELECT 'watchers', migration_status, COUNT(*) FROM migration_mapping_watchers GROUP BY 2" | tee -a "$logdir/summary.txt"
+# run report: members proposed for assignees (B46) and watchers (B50) without membership, watchers still
+# without access after 14 (expected 0 once those members are pushed)
+grep -h "(B46)\|(B50)" "$logdir/04.log" | sed 's/^ *//' | tee -a "$logdir/summary.txt"
+mysql -N "$db" -e "SELECT 'watchers without access ([no-access], B50):', COUNT(*) FROM migration_mapping_watchers
+  WHERE notes LIKE '[no-access]%'" | tee -a "$logdir/summary.txt"
 # run report: select values Jira no longer offers (B37), issues waiting for a parent outside the run (B38)
 grep -h "(B37)\|\[unoffered\]" "$logdir/08-transform.log" | sed 's/^ *//' | tee -a "$logdir/summary.txt"
 grep -h "(B38)\|\[waiting\]" "$logdir/10-final.log" | sed 's/^ *//' | tee -a "$logdir/summary.txt"
