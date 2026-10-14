@@ -9,6 +9,7 @@
     }
   },
   "require": {
+    "php": ">=8.2",
     "guzzlehttp/guzzle": "^7.10",
     "ext-pdo": "*",
     "ext-mbstring": "*",
@@ -16,7 +17,10 @@
     "ext-json": "*",
     "league/html-to-markdown": "^5.1",
     "ext-dom": "*",
-    "ext-libxml": "*"
+    "ext-libxml": "*",
+    "ext-pdo_mysql": "*",
+    "ext-curl": "*",
+    "ext-openssl": "*"
   },
   "license": "GPL-3.0",
   "authors": [

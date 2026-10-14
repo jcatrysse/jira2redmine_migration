@@ -2,6 +2,15 @@
 
 declare(strict_types=1);
 
+// PHP version and extensions first, with a clear message (decision 23, docs/RUNBOOK.md "Prerequisites")
+require_once __DIR__ . '/lib/requirements.php';
+$requirementProblems = j2rRequirementProblems(PHP_VERSION, get_loaded_extensions());
+if ($requirementProblems !== []) {
+    fwrite(STDERR, '[ERROR] This PHP cannot run the migration scripts:' . PHP_EOL . '  - '
+        . implode(PHP_EOL . '  - ', $requirementProblems) . PHP_EOL . 'See docs/RUNBOOK.md, "Prerequisites".' . PHP_EOL);
+    exit(1);
+}
+
 require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/lib/jira_gateway.php';
 

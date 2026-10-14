@@ -5,6 +5,7 @@ parameters:
         - src
         - lib/jira_gateway.php
         - lib/verify.php
+        - lib/requirements.php
         - tests
     bootstrapFiles:
         - vendor/autoload.php
