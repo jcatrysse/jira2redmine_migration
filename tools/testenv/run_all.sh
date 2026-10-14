@@ -3,6 +3,7 @@
 #   tools/testenv/run_all.sh 51|70 LABEL
 # Logs per step go to $BASE/runs/<target>-<LABEL>/; the verify report is the last step.
 # STABILITY=1 reruns 08 to 15 after the run and reports whether Redmine's counts changed.
+# WORKFLOWS=1 proposes the workflows after verify and applies them (Jan, decision 13): preview, apply, preview.
 # RESTORE=1 runs the restore step after verify and proves Jan's decision 12 (temporary migration role).
 # BATCH=1 keeps Redmine and the staging database of the previous run: a later batch, run with every
 # project migrated so far plus the new ones in J2R_PROJECTS (the jira phases of 07 and 08 read only the
@@ -129,6 +130,16 @@ grep -h "(B38)\|\[waiting\]" "$logdir/10-final.log" | sed 's/^ *//' | tee -a "$l
 keys=$(echo "$J2R_PROJECTS" | tr 'a-z' 'A-Z')
 (cd "$REPO" && php tools/verify.php --projects="$keys" --sample=${SAMPLE:-25} --report="$logdir/verify.md") > "$logdir/verify.out" 2>&1
 sed -n '/| check/,/^\*\*/p' "$logdir/verify.md" | tee -a "$logdir/summary.txt"
+if [ -n "${WORKFLOWS:-}" ]; then
+  # the plan replaces the temporary open workflows of its trackers and roles; restore below must leave them
+  (cd "$REPO" && php tools/workflow_proposal.php --report="$logdir/workflow-proposal.md" \
+    && php tools/workflow_plan.php --out="$logdir/workflow-plan.json") > "$logdir/workflows.log" 2>&1
+  grep -E "^(Transitions|Plan):" "$logdir/workflows.log" | tee -a "$logdir/summary.txt"
+  apply() { (cd "$BASE/redmine$v" && RAILS_ENV=production bundle exec rails runner "$REPO/tools/apply_workflows.rb" "$logdir/workflow-plan.json" "$@") 2>&1 | tail -2 | tee -a "$logdir/workflows.log" | sed "s/^/workflows   /" | tee -a "$logdir/summary.txt"; }
+  apply
+  apply --confirm-push
+  apply
+fi
 if [ -n "${RESTORE:-}" ]; then
   # Jan's decision 12: after restore the watchers stay, an issue whose assignee lost the membership can be
   # edited, and the memberships equal 04's proposal.
@@ -137,4 +148,6 @@ if [ -n "${RESTORE:-}" ]; then
   echo "after restore:  $(counts)" | tee -a "$logdir/summary.txt"
   manual proof temporary_role_proof.rb
   (cd "$REPO" && php tools/testenv/membership_check.php) 2>&1 | tee "$logdir/membership_check.log" | tail -1 | tee -a "$logdir/summary.txt"
+  # restore must have left the applied workflows alone: nothing to change
+  [ -n "${WORKFLOWS:-}" ] && apply
 fi
