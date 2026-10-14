@@ -49,7 +49,7 @@ const BENCH_CONSTRUCTS = [
     'code block' => '/<pre\b|class="code\b/i',
     'panel' => '/class="panel(?! preformatted)|class="[^"]*\bpanelContent\b(?![^"]*preformatted)/i',
     'nested list' => '/<li\b[^>]*>(?:(?!<\/li>).)*<(?:ul|ol)\b/is',
-    'image' => '/<img\b(?![^>]*emoticon)(?![^>]*rendericon)/i',
+    'image' => '/<img\b(?![^>]*emoticon)(?![^>]*rendericon)(?![^>]*universal_avatar)/i',
     'attachment link' => '#<a\b[^>]*href="[^"]*/(?:secure/attachment|rest/api/\d+/attachment)/#i',
     'mention' => '/class="user-hover"/i',
     'issue link' => '#href="[^"]*/browse/[A-Z][A-Z0-9_]*-\d+#',

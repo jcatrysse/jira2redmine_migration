@@ -98,6 +98,11 @@ final class VerifyTest extends TestCase
         self::assertSame(0, preg_match($pattern, '<h1><a name=""></a></h1>'));
         self::assertSame(1, preg_match($pattern, '<h3><a name="Plan"></a><b>Plan</b></h3>'));
         self::assertSame(1, preg_match($pattern, '<h2>Plan</h2>'));
+        // the issue type icon of an issue macro is no image construct either
+        self::assertSame(1, preg_match("/'image' => '([^']+)'/", $bench, $image));
+        $icon = '<img class="icon" src="https://x/rest/api/2/universal_avatar/view/type/issuetype/avatar/1" />';
+        self::assertSame(0, preg_match($image[1], $icon));
+        self::assertSame(1, preg_match($image[1], '<img src="https://x/secure/attachment/5/plan.png" />'));
     }
 
     public function testTheIssueTypeIconOfAnIssueMacroIsNoImage(): void
