@@ -17,6 +17,7 @@ use Jira2Redmine\Roles\MembershipPlan;
 use Jira2Redmine\Roles\PermissionGrants;
 use Jira2Redmine\Roles\ProjectRolePrincipals;
 use Jira2Redmine\Roles\RoleMapping;
+use Jira2Redmine\Roles\WatcherMemberships;
 
 const MIGRATE_ROLES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -830,7 +831,7 @@ function runRoleTransformationPhase(PDO $pdo, array $config): array
     synchronizeMigrationMappingRoles($pdo);
     synchronizeMigrationMappingProjectRoleGroups($pdo);
 
-    $roleMapping = new RoleMapping(AssigneeMemberships::mappings($config['migration']['roles'] ?? []));
+    $roleMapping = new RoleMapping(WatcherMemberships::mappings($config['migration']['roles'] ?? []));
     $redmineRoleLookup = fetchRedmineRoleLookup($pdo);
     $roleTransformSummary = runRoleDefinitionTransformation($pdo, $redmineRoleLookup, $roleMapping);
 
@@ -941,6 +942,33 @@ function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo): void
         printf("  Proposed %d assignee(s) without membership as direct members (B46).%s", count($uncovered), PHP_EOL);
     }
     $actors = array_merge($actors, $uncovered);
+
+    // Watchers no membership covers (B50, Jan 2026-10-14): migrated, so the history shows who followed an issue.
+    $watcherRows = $pdo->query(<<<SQL
+        SELECT DISTINCT i.project_id, p.project_key, p.name AS project_name, w.account_id,
+               JSON_UNQUOTE(JSON_EXTRACT(w.raw_payload, '$.displayName')) AS display_name
+        FROM staging_jira_watchers w
+        JOIN staging_jira_issues i ON i.id = w.issue_id
+        LEFT JOIN staging_jira_projects p ON p.id = i.project_id
+        ORDER BY i.project_id, w.account_id
+    SQL);
+    $watchers = [];
+    foreach ($watcherRows !== false ? $watcherRows->fetchAll(PDO::FETCH_ASSOC) : [] as $row) {
+        $watchers[] = [
+            'project_id' => (string)$row['project_id'],
+            'project_key' => $row['project_key'] !== null ? (string)$row['project_key'] : null,
+            'project_name' => $row['project_name'] !== null ? (string)$row['project_name'] : null,
+            'account_id' => (string)$row['account_id'],
+            'display_name' => $row['display_name'] !== null ? (string)$row['display_name'] : null,
+        ];
+    }
+    $uncoveredWatchers = WatcherMemberships::uncovered($watchers, $actors, $members, ['atlassian-addons-project-access']);
+    if ($watchers === []) {
+        printf("  [note] No staged watchers: watchers without membership cannot be proposed (run 14 --phases=jira before 04).%s", PHP_EOL);
+    } elseif ($uncoveredWatchers !== []) {
+        printf("  Proposed %d watcher(s) without membership as direct members (B50).%s", count($uncoveredWatchers), PHP_EOL);
+    }
+    $actors = array_merge($actors, $uncoveredWatchers);
 
     $statement = $pdo->prepare(<<<SQL
         INSERT INTO migration_mapping_project_role_groups (
@@ -1550,8 +1578,12 @@ function runProjectRoleAssignmentTransformation(PDO $pdo, array $config, array $
                 $summary['manual_review']++;
             }
         } else {
-            // an assignee-only row says so in the review table (B46)
-            $newNotes = (int)$row['jira_role_id'] === AssigneeMemberships::ROLE_ID ? AssigneeMemberships::NOTE : null;
+            // an assignee-only or watcher-only row says so in the review table (B46, B50)
+            $newNotes = match ((int)$row['jira_role_id']) {
+                AssigneeMemberships::ROLE_ID => AssigneeMemberships::NOTE,
+                WatcherMemberships::ROLE_ID => WatcherMemberships::NOTE,
+                default => null,
+            };
         }
 
         $newAutomationHash = computeProjectRoleAssignmentAutomationHash(

@@ -353,14 +353,11 @@ foreach ($projectKeys as $projectKey) {
             }
         }
         $actualWatchers = array_map(static fn (array $w): string => (string)$w['id'], $rm['watchers'] ?? []);
-        // a watcher without access to the project (not a member, no Browse projects in Jira either) is not migrated (B50)
-        $noAccess = array_values(array_intersect($expectedWatchers, $noAccessWatchers[(string)$redmineId] ?? []));
-        if ($noAccess !== []) {
-            $record('watchers: no project access (expected absent)', array_intersect($noAccess, $actualWatchers) === [], $issueKey,
-                'present: ' . implode(', ', array_intersect($noAccess, $actualWatchers)));
-        }
-        $missingWatchers = array_diff($expectedWatchers, $actualWatchers, $noAccess);
-        $record('watchers', $missingWatchers === [], $issueKey, 'missing Redmine users: ' . implode(', ', $missingWatchers));
+        // a watcher without access to the project is migrated too (B50, Jan 2026-10-14): 04 makes it a member
+        $missingWatchers = array_diff($expectedWatchers, $actualWatchers);
+        $withoutAccess = array_intersect($missingWatchers, $noAccessWatchers[(string)$redmineId] ?? []);
+        $record('watchers', $missingWatchers === [], $issueKey, 'missing Redmine users: ' . implode(', ', $missingWatchers)
+            . ($withoutAccess !== [] ? ' (not a member: push the watcher-only membership of 04, then rerun 14)' : ''));
 
         // Relations between migrated issues.
         $related = [];

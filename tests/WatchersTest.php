@@ -33,7 +33,12 @@ final class WatchersTest extends TestCase
         self::assertStringStartsWith(Watchers::NO_ACCESS, Watchers::noAccessNote(215));
         $fourteen = (string)file_get_contents(__DIR__ . '/../14_migrate_watchers.php');
         self::assertTrue(str_contains($fourteen, 'Watchers::noAccessNote($redmineUserId)'), '14 cannot tell a watcher without access');
+        // Jan, 2026-10-14: they are migrated (04 makes them members), so verify expects them present
         $verify = (string)file_get_contents(__DIR__ . '/../tools/verify.php');
-        self::assertTrue(str_contains($verify, "'watchers: no project access (expected absent)'"), 'verify counts them as missing');
+        self::assertTrue(
+            str_contains($verify, '$missingWatchers = array_diff($expectedWatchers, $actualWatchers);'),
+            'verify lets a watcher without access be absent'
+        );
+        self::assertFalse(str_contains($verify, "'watchers: no project access"), 'verify lets a watcher without access be absent');
     }
 }

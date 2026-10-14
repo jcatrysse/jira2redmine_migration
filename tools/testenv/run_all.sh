@@ -64,9 +64,10 @@ manual workflows
 step 08-jira 08_migrate_custom_fields.php --phases=jira
 step 10-jira 10_migrate_issues.php --phases=jira
 step 09-jira 09_migrate_attachments.php --phases=jira
-# 04 after the issues are staged: it proposes their assignees without membership too (B46)
+step 14-jira 14_migrate_watchers.php --phases=jira
+# 04 after the issues and watchers are staged: it proposes assignees (B46) and watchers (B50) without membership too
 step 04 04_migrate_roles.php
-# activate locked users before 04's push: assignees among them get their membership (B46)
+# activate locked users before 04's push: assignees and watchers among them get their membership (B46, B50)
 manual members
 step 04-push 04_migrate_roles.php --phases=push --confirm-push
 step 08-transform 08_migrate_custom_fields.php --phases=usage,redmine,transform

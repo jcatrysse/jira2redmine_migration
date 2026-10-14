@@ -60,6 +60,9 @@ return [
             // Developer by default; a dedicated role that is assignable with minimal permissions (view issues)
             // keeps the assignment of a moved or departed person without access Jira did not give.
             'assignee_only_role' => 'Developer',
+            // B50 (Jan 2026-10-14): a watcher without access to the project becomes a direct member with this
+            // role, so Redmine keeps the watcher; Developer until Jan names the role.
+            'watcher_only_role' => 'Developer',
             'mappings' => [
                 'Administrators' => 'Manager',
                 // holds only app accounts (Jira apps), which are not migrated

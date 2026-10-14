@@ -41,10 +41,16 @@ final class AssigneeMemberships
      * @param list<array<string, mixed>> $actors role actors and permission grants (project_id, role_name, actor_id, actor_type)
      * @param array<string, list<string>> $groupMembers Jira group id => account ids
      * @param list<string> $noAccessRoles role names whose members get no membership (ignored roles)
+     * @param array{0: int, 1: string} $pseudoRole id and name of the rows' pseudo role (WatcherMemberships uses its own)
      * @return list<array<string, string|null>> actor rows (atlassian-user-role-actor of the pseudo role) for the uncovered assignees
      */
-    public static function uncovered(array $assignees, array $actors, array $groupMembers, array $noAccessRoles): array
-    {
+    public static function uncovered(
+        array $assignees,
+        array $actors,
+        array $groupMembers,
+        array $noAccessRoles,
+        array $pseudoRole = [self::ROLE_ID, self::ROLE_NAME]
+    ): array {
         $covered = [];
         foreach ($actors as $actor) {
             if (in_array((string)($actor['role_name'] ?? ''), $noAccessRoles, true)) {
@@ -75,8 +81,8 @@ final class AssigneeMemberships
                 'project_id' => $project,
                 'project_key' => $assignee['project_key'],
                 'project_name' => $assignee['project_name'],
-                'role_id' => (string)self::ROLE_ID,
-                'role_name' => self::ROLE_NAME,
+                'role_id' => (string)$pseudoRole[0],
+                'role_name' => $pseudoRole[1],
                 'actor_id' => $account,
                 'actor_display' => $assignee['display_name'],
                 'actor_type' => 'atlassian-user-role-actor',
