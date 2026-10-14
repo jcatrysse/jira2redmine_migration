@@ -174,6 +174,24 @@ final class WorkflowProposalTest extends TestCase
         self::assertFalse($result['project_rows']['XYZ|2|0|1|2|0']['ignored']);
     }
 
+    public function testADroppedConditionIsProposedWithoutIt(): void
+    {
+        // Jan, decision 19: FPS's field value condition is left out, the transition is proposed (no review)
+        $sources = [['project' => 'FPS', 'workflow' => 'W', 'issue_type' => '1', 'transitions' => [
+            ['name' => 'Accept', 'from' => ['1'], 'to' => '3', 'groups' => [], 'permissions' => [], 'assignee_only' => false,
+                'not_mapped' => ['condition ValueFieldCondition']],
+        ]]];
+
+        $kept = WorkflowProposal::build($sources, ['1' => 2], ['1' => 1, '3' => 2], ['FPS' => [8]], []);
+        $dropped = WorkflowProposal::build($sources, ['1' => 2], ['1' => 1, '3' => 2], ['FPS' => [8]], [], [
+            'dropped_conditions' => ['FPS' => ['ValueFieldCondition']],
+        ]);
+
+        self::assertSame(['condition ValueFieldCondition'], $kept['rows']['2|8|1|2|0']['notes']);
+        self::assertSame([], $dropped['rows']['2|8|1|2|0']['notes']);
+        self::assertSame([], $dropped['project_rows']['FPS|2|8|1|2|0']['notes']);
+    }
+
     public function testAPermissionConditionGoesToTheRolesThatHoldIt(): void
     {
         $transitions = [

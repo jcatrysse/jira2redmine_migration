@@ -17,6 +17,7 @@ use Jira2Redmine\CustomFields\FieldScope;
 use Jira2Redmine\CustomFields\UsedValues;
 use Jira2Redmine\CustomFields\DependingValueDependencies;
 use Jira2Redmine\CustomFields\UsageScopes;
+use Jira2Redmine\Jira\NotMigrated;
 
 const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -190,7 +191,7 @@ function main(array $config, array $cliOptions): void
     if (in_array('transform', $phasesToRun, true)) {
         printf("[%s] Starting custom field reconciliation & transform phase...%s", formatCurrentTimestamp(), PHP_EOL);
 
-        $transformSummary = runCustomFieldTransformationPhase($pdo);
+        $transformSummary = runCustomFieldTransformationPhase($pdo, $config['migration']['custom_fields']['not_migrated'] ?? []);
 
         printf(
             "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Ignored (unused): %d, Skipped: %d, Unchanged: %d.%s",
@@ -3094,7 +3095,7 @@ function extractIdListFromRedmineCustomField(mixed $value): ?string
 /**
  * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, ignored_unused: int, skipped: int, unchanged: int, status_counts: array<string, int>}
  */
-function runCustomFieldTransformationPhase(PDO $pdo): array
+function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): array
 {
     $usageScopes = new UsageScopes();
     $issueStatement = $pdo->query('SELECT project_id, issuetype_id, raw_payload FROM staging_jira_issues');
@@ -3454,13 +3455,17 @@ function runCustomFieldTransformationPhase(PDO $pdo): array
             $proposedIsFilter = $searchability['searchable'];
         }
 
-        if (($jiraProjectIds === [] || $jiraIssueTypeIds === []) && in_array($currentStatus, $allowedStatuses, true)) {
+        // Jan, decision 20: a field type he leaves out (the service desk fields) is IGNORED, not MANUAL
+        $isNotMigrated = NotMigrated::fieldType($notMigrated, $jiraSchemaCustom);
+        if (($isNotMigrated || $jiraProjectIds === [] || $jiraIssueTypeIds === []) && in_array($currentStatus, $allowedStatuses, true)) {
             $notesParts = [];
-            if ($currentNotes !== null && trim($currentNotes) !== '') {
+            if (!$isNotMigrated && $currentNotes !== null && trim($currentNotes) !== '') {
                 $notesParts[] = trim($currentNotes);
             }
 
-            $notesParts[] = 'Automatically ignored: jira_project_ids or jira_issue_type_ids is empty; no scope available for mapping.';
+            $notesParts[] = $isNotMigrated
+                ? NotMigrated::FIELD_NOTE
+                : 'Automatically ignored: jira_project_ids or jira_issue_type_ids is empty; no scope available for mapping.';
             $notes = implode(' ', array_unique($notesParts));
 
             $proposedPossibleValuesJson = encodeJsonColumn($proposedPossibleValues);

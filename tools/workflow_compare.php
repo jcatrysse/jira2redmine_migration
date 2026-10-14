@@ -15,6 +15,7 @@ declare(strict_types=1);
  */
 
 use Jira2Redmine\Http\ClientFactory;
+use Jira2Redmine\Workflows\DroppedConditions;
 use Jira2Redmine\Workflows\GroupConditions;
 use Jira2Redmine\Workflows\WorkflowComparison;
 
@@ -29,6 +30,7 @@ $staging = loadWorkflowStaging($pdo, $config['migration']['workflows']['group_ro
 $trackerOf = $staging['trackerOf'];
 $statusOf = $staging['statusOf'];
 $projectOf = $staging['redmineProjectOf'];
+$dropped = DroppedConditions::fromConfig($config['migration']['workflows']['dropped_conditions'] ?? null);
 
 // What Jira allows each role: per project, tracker, role and from-status the targets, each with the reasons the role
 // does not get it ([] = it does).
@@ -80,7 +82,7 @@ foreach ($staging['sources'] as $source) {
             if (($transition['assignee_only'] ?? false) === true) {
                 $reasons[] = 'only the assignee (Redmine offers it to the assignee)';
             }
-            foreach ($transition['not_mapped'] as $note) {
+            foreach (DroppedConditions::filter(array_values(array_map('strval', $transition['not_mapped'])), $source['project'], $dropped) as $note) {
                 $reasons[] = 'not carried: ' . $note;
             }
             foreach ($transition['from'] as $from) {

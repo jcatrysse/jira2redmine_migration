@@ -20,6 +20,7 @@ declare(strict_types=1);
  * and everything that cannot be mapped. It holds Jira workflow, group and status names: keep it local.
  */
 
+use Jira2Redmine\Workflows\DroppedConditions;
 use Jira2Redmine\Workflows\WorkflowProposal;
 use Jira2Redmine\Workflows\WorkflowScripts;
 
@@ -45,6 +46,8 @@ if ($staging['permissionRoles'] !== null) {
 // Jan's settings per project and group that is not a member (decision 14)
 $context['group_modes'] = $staging['groupModes'];
 $context['group_users_roles'] = $staging['groupUsersRoles'];
+// conditions Jan leaves out per project, the transition is proposed without them (decision 19)
+$context['dropped_conditions'] = DroppedConditions::fromConfig($config['migration']['workflows']['dropped_conditions'] ?? null);
 $trackerNames = $column('SELECT redmine_tracker_id, MIN(COALESCE(proposed_redmine_name, jira_issue_type_name)) FROM migration_mapping_trackers
     WHERE redmine_tracker_id IS NOT NULL GROUP BY redmine_tracker_id');
 $statusNames = $column('SELECT redmine_status_id, MIN(COALESCE(proposed_redmine_name, jira_status_name)) FROM migration_mapping_statuses

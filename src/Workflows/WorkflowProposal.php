@@ -38,7 +38,8 @@ final class WorkflowProposal
      *     screen_fields: Jira screen id => Jira field ids; field_rules: Jira field id => the field configurations
      *     that require it, out of how many; field_targets: Jira field id => Redmine field (attribute or custom field id);
      *     group_modes: project key => lower-case Jira group name => G, R or ignore (decision 14); group_users_roles:
-     *     project key => lower-case Jira group name => the role ids its users hold in the project
+     *     project key => lower-case Jira group name => the role ids its users hold in the project; dropped_conditions:
+     *     project key => Jira condition types left out on purpose (decision 19)
      * @return array{rows: array<string, array{tracker: int, role: int, old: int, new: int, assignee_only: bool,
      *     workflows: list<string>, projects: list<string>, transitions: list<string>, notes: list<string>, ignored: bool}>,
      *     field_permissions: array<string, array{tracker: int, role: int, status: int, field: string, rule: string,
@@ -109,7 +110,12 @@ final class WorkflowProposal
                 $screenNotes = $screen !== null
                     ? self::screenFields($screen, $tracker, $roles, $new, $source, $context, $fieldPermissions, $problems)
                     : [];
-                $notes = array_values(array_map('strval', array_merge($transition['not_mapped'], $permissionNotes, $screenNotes)));
+                $notMapped = DroppedConditions::filter(
+                    array_values(array_map('strval', $transition['not_mapped'])),
+                    $project,
+                    is_array($context['dropped_conditions'] ?? null) ? $context['dropped_conditions'] : []
+                );
+                $notes = array_merge($notMapped, $permissionNotes, $screenNotes);
                 $targets = array_map(static fn (int $role): array => [$role, $notes, false], $roles);
                 if ($groupNotes !== []) {
                     $targets[] = [self::NO_ROLE, array_merge($notes, $groupNotes, $ignoredNotes), false];

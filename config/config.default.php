@@ -73,6 +73,20 @@ return [
                 'Administer projects (permission scheme)' => 'Manager',
             ],
         ],
+        'projects' => [
+            // Jan, decision 22 (2026-10-14): Jira project keys that are not migrated; 01 marks them IGNORED and
+            // does not create them (TEST is a test project).
+            'not_migrated' => ['TEST'],
+        ],
+        'custom_fields' => [
+            // Jan, decision 20 (2026-10-14): Jira field types that are not migrated; 08 marks them IGNORED (not
+            // MANUAL), their values stay in Jira only. The service desk fields "Organizations" and "Request
+            // participants".
+            'not_migrated' => [
+                'com.atlassian.servicedesk:sd-customer-organizations',
+                'com.atlassian.servicedesk:sd-request-participants',
+            ],
+        ],
         // tools/workflow_plan.php (Jan, decision 13): 'project' gives each project its own Jira workflow through
         // redmine_project_workflows, with the union cleaned by Jan as the global workflow; 'union' writes only the
         // global workflow (Redmine without that plugin).
@@ -98,6 +112,9 @@ return [
             // gives nothing but the transitions to a user who sees the project's issues through another role.
             'group_role_name' => '%s (workflow)',
             'group_role_permissions' => ['edit_issues'],
+            // Jan, decision 19: Jira conditions Redmine cannot carry, left out on purpose per project key; the
+            // transition is proposed without them (FPS: "Screen" only with one option of a select field).
+            'dropped_conditions' => ['FPS' => ['ValueFieldCondition']],
         ],
         'trackers' => [
             // Optional Redmine status identifier to propose when creating new trackers via the extended API.

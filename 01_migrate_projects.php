@@ -11,6 +11,7 @@ use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Jira\ExtractionGuard;
+use Jira2Redmine\Jira\NotMigrated;
 
 const MIGRATE_PROJECTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -129,7 +130,7 @@ function main(array $config, array $cliOptions): void
             PHP_EOL
         );
 
-        $transformSummary = runProjectTransformationPhase($pdo);
+        $transformSummary = runProjectTransformationPhase($pdo, $config['migration']['projects']['not_migrated'] ?? []);
 
         printf(
             "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
@@ -441,7 +442,7 @@ function fetchAndStoreRedmineProjects(Client $client, PDO $pdo): int
 /**
  * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int, status_counts: array<string, int>}
  */
-function runProjectTransformationPhase(PDO $pdo): array
+function runProjectTransformationPhase(PDO $pdo, mixed $notMigrated = []): array
 {
     synchronizeMigrationMappingProjects($pdo);
 
@@ -516,6 +517,32 @@ function runProjectTransformationPhase(PDO $pdo): array
                 $projectKey ?? $jiraProjectId,
                 PHP_EOL
             );
+            continue;
+        }
+
+        // Jan, decision 22: a project he leaves out (TEST) is IGNORED, so 01 does not create it
+        if (NotMigrated::project($notMigrated, $projectKey)) {
+            $updateStatement->execute([
+                'redmine_project_id' => $currentRedmineId,
+                'migration_status' => 'IGNORED',
+                'notes' => NotMigrated::PROJECT_NOTE,
+                'proposed_identifier' => $currentIdentifier,
+                'proposed_name' => $currentName,
+                'proposed_description' => $currentDescription,
+                'proposed_is_public' => normalizeBooleanDatabaseValue($currentIsPublic),
+                'automation_hash' => computeProjectAutomationStateHash(
+                    $currentRedmineId,
+                    'IGNORED',
+                    $currentIdentifier,
+                    $currentName,
+                    $currentDescription,
+                    $currentIsPublic,
+                    NotMigrated::PROJECT_NOTE
+                ),
+                'mapping_id' => (int)$row['mapping_id'],
+            ]);
+            printf("  [not migrated] Jira project %s (migration.projects.not_migrated).%s", $projectKey, PHP_EOL);
+            $summary['skipped']++;
             continue;
         }
 
