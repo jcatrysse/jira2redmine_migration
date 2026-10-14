@@ -414,7 +414,7 @@ choices) is still open.
 
 | # | finding | where |
 |---|---|---|
-| M1 | 8 helper functions copied in all 16 scripts (CLI, config, DB, timestamps); Jira/Redmine clients 13 to 15 times | `^function` across `[0-9]*.php` |
+| M1 | 8 helper functions copied in all 16 scripts (CLI, config, DB, timestamps); Jira/Redmine clients 13 to 15 times | `^function` across `[0-9]*.php`. Clients: ClientFactory (phase 6); Extended API helpers and phase selection shared (B2, work list 11) |
 | M2 | No tests of any kind | repo |
 | M3 | 429 handling in 4 of 16 scripts (09, 11, 14, 16); in `10_migrate_issues.php` one 429 during the issue search fails the whole project | `10_migrate_issues.php:588` |
 | M4 | Gateway URL breaks the Jira client: `base_uri` plus a path with a leading slash (`/rest/api/3/...`) drops `/ex/jira/{cloudId}` | `createJiraClient`, every Jira call |
@@ -540,6 +540,13 @@ In this order. Each item records its result under "Results" when done.
     dry run are identical before and after, on the same staging data.
     **First part DONE** 2026-10-13: `src/` (ClientFactory, RetryPolicy, ConnectionFactory), QA tools;
     a full 5.1 run recorded before and after: 3,918 Redmine requests, 0 differing. Rest: M1 helpers.
+    **M1, B2 2026-10-14:** the Extended API helpers (40 copies in 04 to 12, 785 lines) moved to
+    `src/Redmine/ExtendedApi.php` without behaviour change (`e5e140d`); 08's own absolute paths replaced in a
+    separate commit (`10b810d`, F6: a Redmine under a sub-path); one phase rule for all 16 scripts,
+    `src/Cli/Phases.php` (`ec32074`, behaviour change for invalid options only: an unknown phase no longer runs
+    every phase in 09, 11, 13 to 16). Left: helpers whose copies behave differently (timestamps in UTC or local
+    time, JSON decoding of an empty body, PDO attributes, option parsing per script); each needs a choice, so
+    they move one by one with a test per difference.
 
 **Phase 7, fixes**
 

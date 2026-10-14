@@ -56,6 +56,8 @@ All notable changes to this project. Steps to take before and after a migration 
   (decision 23); runbook section "Prerequisites" (PHP, a temporary MySQL/MariaDB for staging, its removal).
 - `tools/testenv/core.sh` and `plugins.sh`: bring the test instances' core and plugins to their branch heads
   (forced refspec) and print the hashes.
+- Shared code (M1): `Jira2Redmine\Redmine\ExtendedApi` (prefix, paths, availability check, error summary) for
+  04 to 12, and `Jira2Redmine\Cli\Phases` for the phase selection of all 16 scripts.
 - Later batches: 08 adds new select values to fields an earlier batch created (B47) and enables them for
   the new projects and trackers (B53); `tools/relink_issue_links.php` rewrites links to issues of a later
   batch in texts Redmine did not change (B52), and its check counts the texts that still link a migrated
@@ -112,6 +114,9 @@ All notable changes to this project. Steps to take before and after a migration 
 - A GET whose transfer was cut off (cURL 18) is retried like a failed connection.
 - Heading anchors no longer turn a text into one HTML paragraph that Redmine shows as text.
 - Verify and bench: the issue type icon of an issue macro is not counted as an image.
+- An unknown phase in `--phases` or `--skip` stops a script; 09, 11 and 13 to 16 ran every phase instead. Phases
+  run in the script's order (02 and 03 followed the order given).
+- 08 calls the Extended API relative to the Redmine base URL, so a Redmine under a sub-path keeps it (F6).
 - 05 also reads Jira's status search (`GET /rest/api/3/statuses/search`) and adds the statuses the status
   list lacks when a staged project uses them (`GET /rest/api/3/statuses/{id}/projectUsages`); their
   transitions were dropped from the workflow proposal (B57).
