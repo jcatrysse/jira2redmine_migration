@@ -32,6 +32,23 @@ final class ExtendedApiTest extends TestCase
         self::assertSame('roles.json', ExtendedApi::path('/', 'roles.json'));
     }
 
+    public function testARedmineUnderASubPathKeepsIt(): void
+    {
+        // 08 built "/extended_api/..." (an absolute path): Guzzle then drops the base URL's path, so a Redmine at
+        // https://host/redmine/ got https://host/extended_api/... (F6); it now uses this class like 04 to 12
+        $history = [];
+        $stack = HandlerStack::create(new MockHandler([new Response(200, ['X-Redmine-Extended-API' => '1'])]));
+        $stack->push(\GuzzleHttp\Middleware::history($history));
+        $client = new Client(['handler' => $stack, 'base_uri' => 'https://host.example/redmine/']);
+
+        ExtendedApi::verifyAvailable($client, ExtendedApi::prefix(['extended_api' => ['prefix' => '/extended_api']]), 'custom_fields.json');
+
+        self::assertSame('https://host.example/redmine/extended_api/custom_fields.json', (string)$history[0]['request']->getUri());
+        $script = (string)file_get_contents(__DIR__ . '/../08_migrate_custom_fields.php');
+        self::assertStringNotContainsString('function buildExtendedApiPath(', $script);
+        self::assertStringContainsString('ExtendedApi::path($extendedApiPrefix', $script);
+    }
+
     public function testTheAvailabilityCheckNeedsThePluginsHeader(): void
     {
         $client = self::client(new Response(200, ['X-Redmine-Extended-API' => '1']));

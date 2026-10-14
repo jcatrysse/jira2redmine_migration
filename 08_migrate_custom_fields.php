@@ -163,7 +163,7 @@ function main(array $config, array $cliOptions): void
     if (in_array('redmine', $phasesToRun, true)) {
         $redmineConfig ??= extractArrayConfig($config, 'redmine');
         $redmineUseExtendedApi ??= ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
-        $redmineExtendedApiPrefix ??= $redmineUseExtendedApi ? resolveExtendedApiPrefix($redmineConfig) : null;
+        $redmineExtendedApiPrefix ??= $redmineUseExtendedApi ? ExtendedApi::prefix($redmineConfig) : null;
         $redmineClient = createRedmineClient($redmineConfig);
 
         printf("[%s] Starting Redmine custom field snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -2801,7 +2801,7 @@ function fetchAndStoreRedmineCustomFields(Client $client, PDO $pdo, bool $useExt
             throw new RuntimeException('Extended API requested for the Redmine snapshot but no prefix was provided.');
         }
 
-        verifyExtendedApiAvailability($client, $extendedApiPrefix, 'custom_fields.json');
+        ExtendedApi::verifyAvailable($client, $extendedApiPrefix, 'custom_fields.json');
     }
 
     try {
@@ -3023,7 +3023,7 @@ function fetchRedmineCustomFieldDetails(Client $client, int $customFieldId, bool
             throw new RuntimeException('Extended API prefix is required when useExtendedApi is true.');
         }
 
-        $resource = buildExtendedApiPath($extendedApiPrefix, $resource);
+        $resource = ExtendedApi::path($extendedApiPrefix, $resource);
         $queryString = http_build_query([
             'extended_api[mode]' => 'extended',
             'extended_api[fallback_to_native]' => false,
@@ -5334,7 +5334,7 @@ function addValuesToExistingEnumerationFields(PDO $pdo, Client $client, string $
                     return ['name' => $name, 'position' => ++$position, 'active' => true];
                 }, $missing);
                 $client->put(
-                    buildExtendedApiPath($extendedApiPrefix, sprintf('custom_fields/%d.json', $redmineId)),
+                    ExtendedApi::path($extendedApiPrefix, sprintf('custom_fields/%d.json', $redmineId)),
                     ['json' => ['custom_field' => ['enumerations' => $new]]]
                 );
             } else {
@@ -5630,10 +5630,10 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
         }
 
         $redmineClient = createRedmineClient($redmineConfig);
-        $extendedApiPrefix = resolveExtendedApiPrefix($redmineConfig);
-        verifyExtendedApiAvailability($redmineClient, $extendedApiPrefix, 'custom_fields.json');
+        $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
+        ExtendedApi::verifyAvailable($redmineClient, $extendedApiPrefix, 'custom_fields.json');
 
-        $endpoint = buildExtendedApiPath($extendedApiPrefix, 'custom_fields.json');
+        $endpoint = ExtendedApi::path($extendedApiPrefix, 'custom_fields.json');
 
         printf("  %d custom field(s) queued for creation via the extended API.%s", $pendingCount, PHP_EOL);
         foreach ($pendingFields as $field) {
@@ -6896,7 +6896,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
             $payload['custom_field']['tracker_ids'] = $trackers;
         }
 
-        $path = buildExtendedApiPath($extendedPrefix, sprintf('custom_fields/%d.json', $redmineId));
+        $path = ExtendedApi::path($extendedPrefix, sprintf('custom_fields/%d.json', $redmineId));
         $isDependingField = $format === 'depending_enumeration';
 
         if ($isDependingField) {
@@ -6958,7 +6958,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
 
             if (!$isDryRun && $parentRedmineId !== null) {
                 try {
-                    $parentPath = buildExtendedApiPath($extendedPrefix, sprintf('custom_fields/%d.json', $parentRedmineId));
+                    $parentPath = ExtendedApi::path($extendedPrefix, sprintf('custom_fields/%d.json', $parentRedmineId));
                     $client->put($parentPath, ['json' => $parentPayload]);
                     recordFieldScopeInSnapshot($pdo, $parentRedmineId, $projects, $trackers);
                 } catch (Throwable $exception) {
@@ -7300,53 +7300,6 @@ function decodeJsonResponse(ResponseInterface $response): mixed
     }
 }
 
-function resolveExtendedApiPrefix(array $redmineConfig): string
-{
-    $extendedConfig = isset($redmineConfig['extended_api']) && is_array($redmineConfig['extended_api'])
-        ? $redmineConfig['extended_api']
-        : [];
-
-    $prefix = isset($extendedConfig['prefix']) ? trim((string)$extendedConfig['prefix']) : '/extended_api';
-    if ($prefix === '') {
-        $prefix = '/extended_api';
-    }
-
-    return $prefix;
-}
-
-function buildExtendedApiPath(string $prefix, string $resource): string
-{
-    $normalizedPrefix = '/' . ltrim($prefix, '/');
-    $normalizedResource = ltrim($resource, '/');
-
-    return $normalizedPrefix . '/' . $normalizedResource;
-}
-
-function verifyExtendedApiAvailability(Client $client, string $prefix, string $resource): void
-{
-    $path = buildExtendedApiPath($prefix, $resource);
-
-    try {
-        $response = $client->get($path);
-    } catch (BadResponseException $exception) {
-        $response = $exception->getResponse();
-        $statusCode = $response ? $response->getStatusCode() : 0;
-        $reason = $response ? $response->getReasonPhrase() : 'unknown error';
-        throw new RuntimeException(
-            sprintf('Extended API availability check failed (%s): HTTP %d %s', $path, $statusCode, $reason),
-            0,
-            $exception
-        );
-    } catch (GuzzleException $exception) {
-        throw new RuntimeException('Failed to reach the extended API: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    $header = $response->getHeaderLine('X-Redmine-Extended-API');
-    if (trim($header) === '') {
-        throw new RuntimeException('Extended API response missing X-Redmine-Extended-API header. Verify the plugin installation.');
-    }
-}
-
 function verifyDependingCustomFieldsApi(Client $client): void
 {
     try {
@@ -7430,7 +7383,7 @@ function fetchRedmineCustomFieldEnumerations(
     ?string $extendedApiPrefix
 ): ?array {
     $path = $useExtendedApi && $extendedApiPrefix !== null
-        ? buildExtendedApiPath($extendedApiPrefix, sprintf('custom_fields/%d.json', $customFieldId))
+        ? ExtendedApi::path($extendedApiPrefix, sprintf('custom_fields/%d.json', $customFieldId))
         : sprintf('/custom_fields/%d.json', $customFieldId);
 
     try {
