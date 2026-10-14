@@ -741,3 +741,41 @@ Redmine's own: 7.0 writes a journal for a tag change (1,535 journals and 258 det
 What is not covered by these runs: the manual steps and decisions still open for Jan (memberships
 B31, select values B37, cross-project settings B38/B39, automation rules, service desk fields), the
 Apache configuration of the production servers (runbook appendix), and phase 6 rest (M1).
+
+**Phase 9 again with the overnight code, B2, 2026-10-14 (night) — green on both targets.** Scripts at
+9e64fe7 (5.1) and 632a000 (7.0; the difference is the bench and verify measurement only), Extended API
+c806a17, GEOS, SIS, OAC, fresh instances and staging, `STABILITY=1 run_all.sh 51|70 b2-final2|b2-final`.
+New since the run above: memberships from Jira's model (B31 a) with assignee-only members (B46) and
+04 after the issue extraction, watchers without project access (B50), the conversion fixes, retry on
+cut transfers (B48), the B37/B38 lists, 16's workflow scheme per project.
+
+| | Redmine 5.1 | Redmine 7.0 |
+|---|---|---|
+| verify (25 issues per project, 23 checks) | **PASS, 0 failures** | **PASS, 0 failures** |
+| issues created | 422 (+4 waiting: parents in GSPP 1, WIKI 3) | 422 (+4) |
+| journals pushed / skipped | 1,277 / 2,937 | 1,277 / 2,937 |
+| attachments, relations created | 576, 71 | 576, 71 |
+| memberships pushed by 04 (created / role added / present / failed) | 79 / 7 / 10 / 0 | 79 / 7 / 10 / 0 |
+| of which assignee-only members (B46) | 7 | 7 |
+| watchers stored / without project access (B50) | 922 / 38 | 922 / 38 |
+| verify: watchers without access, expected absent | 7 of 7 | 7 of 7 |
+| second pass of 08 to 15 | **nothing changed** | **nothing changed** |
+
+Watchers stored fell from 960 to 922: the 38 are users without Browse projects in Jira (not in the
+groups the permission schemes name), whom Redmine refuses as watchers; all 38 rows say `[no-access]`.
+
+**Workflow proposal (5.1 staging of this run, `tools/workflow_proposal.php`).** 26 Jira workflows over
+74 project and issue type pairs (all 15 projects 01 created): 827 rows proposed, 176 to review. Rules
+Redmine cannot apply, by rows: transition screens 96, a permission condition given to every role of
+the project 68 (CREATE_ISSUES 48, RESOLVE_ISSUES 18, ASSIGNABLE_USER 2), the post function "assign to
+the current user" 12. Not proposed: transitions from or to 9 Jira statuses without a Redmine status
+(not in Jira's status list that 05 reads, and no staged issue has them), transitions limited to groups that are not members of the project
+(TEST, ICT, SURV, GEOS, DOC). Five trackers are fed by 2 to 6 Jira workflows: Redmine has one workflow
+per tracker, so the proposal is their union. A hand edit (IGNORED) stayed on a rerun. Nothing is sent
+to Redmine: how to apply it is Jan's decision (open question).
+
+**Non member group (application-role grants), 5.1.** The final run proposed GSPP's and ROV's grants to
+every licensed user as 4 rows for "Non member users", MANUAL_INTERVENTION_REQUIRED. An anonymised grant
+on OAC, set READY as Jan would, was pushed (membership "Non member users", Developer); a logged-in
+non-member, non-admin user then has the role's rights and is not assignable, as the note says. The
+test memberships were removed again.
