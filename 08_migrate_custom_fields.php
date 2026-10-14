@@ -13,6 +13,7 @@ use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\CustomFields\MappingKeys;
 use Jira2Redmine\CustomFields\EnumerationGap;
+use Jira2Redmine\CustomFields\FieldScope;
 use Jira2Redmine\CustomFields\UsedValues;
 use Jira2Redmine\CustomFields\DependingValueDependencies;
 use Jira2Redmine\CustomFields\UsageScopes;
@@ -5378,14 +5379,29 @@ function collectCustomFieldUpdatePlan(PDO $pdo): array
             map.proposed_role_ids,
             map.proposed_project_ids,
             map.migration_status,
-            map.notes
+            map.notes,
+            map.jira_project_ids,
+            map.jira_issue_type_ids,
+            rf.id AS snapshot_id,
+            rf.project_ids AS redmine_project_ids,
+            rf.tracker_ids AS redmine_tracker_ids,
+            rf.is_for_all AS redmine_is_for_all
         FROM migration_mapping_custom_fields map
         LEFT JOIN migration_mapping_custom_fields parent
             ON parent.mapping_id = map.mapping_parent_custom_field_id
+        LEFT JOIN staging_redmine_custom_fields rf
+            ON rf.id = map.redmine_custom_field_id
         WHERE
             map.redmine_custom_field_id IS NOT NULL
             AND map.migration_status IN ('READY_FOR_UPDATE', 'CREATION_SUCCESS')
     SQL;
+    $projectLookup = buildJiraToRedmineProjectLookup($pdo);
+    $trackerLookup = buildJiraToRedmineTrackerLookup($pdo);
+    $jiraIds = static function (mixed $json): array {
+        $decoded = decodeJsonColumn($json);
+
+        return is_array($decoded) ? array_values(array_map('strval', $decoded)) : [];
+    };
 
     try {
         $statement = $pdo->query($sql);
@@ -5417,11 +5433,26 @@ function collectCustomFieldUpdatePlan(PDO $pdo): array
             continue;
         }
 
-        $proposedProjects = normalizeIntegerListColumn($row['proposed_project_ids'] ?? null);
-        $proposedTrackers = normalizeIntegerListColumn($row['proposed_tracker_ids'] ?? null);
+        // B53: the scope the Jira data gives now, against the field as Redmine has it (the snapshot of the
+        // redmine phase; the mapping's own proposal when there is none)
+        $proposedProjects = FieldScope::desired(
+            normalizeIntegerListColumn($row['proposed_project_ids'] ?? null),
+            $jiraIds($row['jira_project_ids'] ?? null),
+            $projectLookup
+        );
+        $proposedTrackers = FieldScope::desired(
+            normalizeIntegerListColumn($row['proposed_tracker_ids'] ?? null),
+            $jiraIds($row['jira_issue_type_ids'] ?? null),
+            $trackerLookup
+        );
 
-        $existingProjects = $snapshot[$redmineId]['project_ids'];
-        $existingTrackers = $snapshot[$redmineId]['tracker_ids'];
+        $inRedmine = $row['snapshot_id'] !== null;
+        $existingProjects = $inRedmine ? normalizeIntegerListColumn($row['redmine_project_ids'] ?? null) : $snapshot[$redmineId]['project_ids'];
+        $existingTrackers = $inRedmine ? normalizeIntegerListColumn($row['redmine_tracker_ids'] ?? null) : $snapshot[$redmineId]['tracker_ids'];
+        if ($inRedmine && (int)($row['redmine_is_for_all'] ?? 0) === 1) {
+            // a field for all projects needs no project list
+            $proposedProjects = $existingProjects;
+        }
 
         $mergedProjects = mergeIntegerLists($existingProjects, $proposedProjects);
         $mergedTrackers = mergeIntegerLists($existingTrackers, $proposedTrackers);
