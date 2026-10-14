@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Jira2Redmine\Jira\AutomationRules;
 use Jira2Redmine\Jira\WorkflowSearch;
 use PHPUnit\Framework\TestCase;
 
@@ -60,5 +61,16 @@ final class WorkflowSearchTest extends TestCase
             str_contains($script, "'/rest/api/3/automation/rules'"),
             '16 still calls /rest/api/3/automation/rules (404 classic, 401 scoped)'
         );
+    }
+
+    public function testTheExportSaysWhyAutomationRulesAreNotExported(): void
+    {
+        $script = (string)file_get_contents(__DIR__ . '/../16_export_workflows.php');
+
+        self::assertTrue(
+            str_contains($script, 'AutomationRules::SKIPPED'),
+            '16 skips the automation rules without a word in its log'
+        );
+        self::assertStringContainsString('not exported', AutomationRules::SKIPPED);
     }
 }

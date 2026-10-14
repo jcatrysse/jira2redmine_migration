@@ -9,6 +9,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Jira\AutomationRules;
 use Jira2Redmine\Jira\IssueTypeSchemes;
 use Jira2Redmine\Jira\Paging;
 use Jira2Redmine\Jira\WorkflowSearch;
@@ -96,8 +97,7 @@ function main(array $config, array $cliOptions): void
     exportIssueTypeScreenSchemes($jiraClient, $pdo);
     exportFieldConfigurations($jiraClient, $pdo);
     exportFieldConfigurationSchemes($jiraClient, $pdo);
-    // Automation rules are not in the Jira platform REST API: /rest/api/3/automation/rules answers 404
-    // to a classic token and 401 "scope does not match" to a read-scoped one, so they are not exported.
+    printf("[%s] %s%s", formatCurrentTimestamp(), AutomationRules::SKIPPED, PHP_EOL);
 }
 
 function printUsage(): void
