@@ -16,6 +16,7 @@ use Jira2Redmine\Redmine\IssueFinalUpdate;
 use Jira2Redmine\Redmine\IssueDates;
 use Jira2Redmine\Issues\AssigneeRule;
 use Jira2Redmine\Issues\OpenParentStatus;
+use Jira2Redmine\Issues\WaitingParents;
 use Jira2Redmine\Attachments\AttachmentNames;
 use Jira2Redmine\Attachments\IssueAttachmentState;
 use Jira2Redmine\Jira\ProjectSelection;
@@ -307,6 +308,7 @@ function main(array $config, array $cliOptions): void
             $subtaskBehavior,
             $subtaskOpenParentStatusId
         );
+        printWaitingParents($pdo);
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
@@ -2315,6 +2317,43 @@ function fetchIssueLinkReplacementMap(PDO $pdo): array
     $statement->closeCursor();
 
     return $issueMap;
+}
+
+/**
+ * Issues held back because their parent has no Redmine issue (B38): the parent is in a project outside
+ * the run, or never arrives. The run that migrates the parent's project links them.
+ */
+function printWaitingParents(PDO $pdo): void
+{
+    $statement = $pdo->query(<<<SQL
+        SELECT map.jira_issue_key AS issue_key,
+               JSON_UNQUOTE(JSON_EXTRACT(issue.raw_payload, '$.fields.parent.key')) AS parent_key
+        FROM migration_mapping_issues map
+        JOIN staging_jira_issues issue ON issue.id = map.jira_issue_id
+        LEFT JOIN migration_mapping_issues parent ON parent.jira_issue_id = map.jira_parent_issue_id
+        WHERE map.migration_status = 'READY_FOR_REWRITE'
+          AND map.jira_parent_issue_id IS NOT NULL
+          AND parent.redmine_issue_id IS NULL
+        ORDER BY map.jira_issue_key
+    SQL);
+    $report = WaitingParents::report($statement !== false ? $statement->fetchAll(PDO::FETCH_ASSOC) : []);
+    if ($report['lines'] === []) {
+        return;
+    }
+
+    $projects = [];
+    foreach ($report['per_project'] as $project => $count) {
+        $projects[] = sprintf('%s %d', $project, $count);
+    }
+    printf(
+        "  Issues waiting for a parent outside the run (B38): %d; parent projects: %s. The run that migrates that project links them.%s",
+        count($report['lines']),
+        implode(', ', $projects),
+        PHP_EOL
+    );
+    foreach ($report['lines'] as $line) {
+        printf("  [waiting] %s%s", $line, PHP_EOL);
+    }
 }
 
 /**
