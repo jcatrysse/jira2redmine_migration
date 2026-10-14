@@ -35,7 +35,11 @@ final class AssigneeMembershipsTest extends TestCase
     public function testRolesMapsThemAndTheRunStagesIssuesFirst(): void
     {
         $config = require __DIR__ . '/../config/config.default.php';
-        self::assertSame('Developer', $config['migration']['roles']['mappings'][AssigneeMemberships::ROLE_NAME] ?? null);
+        self::assertSame('Developer', AssigneeMemberships::mappings($config['migration']['roles'])[AssigneeMemberships::ROLE_NAME]);
+        $dedicated = AssigneeMemberships::mappings(['mappings' => ['Administrators' => 'Manager'], 'assignee_only_role' => 'Assignee']);
+        self::assertSame(['Administrators' => 'Manager', AssigneeMemberships::ROLE_NAME => 'Assignee'], $dedicated);
+        $script = (string)file_get_contents(__DIR__ . '/../04_migrate_roles.php');
+        self::assertTrue(str_contains($script, 'AssigneeMemberships::NOTE'), 'an assignee-only row does not say so');
         $run = (string)file_get_contents(__DIR__ . '/../tools/testenv/run_all.sh');
         self::assertLessThan(
             (int)strpos($run, 'step 04 04_migrate_roles.php'),

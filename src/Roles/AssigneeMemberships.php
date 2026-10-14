@@ -13,9 +13,27 @@ namespace Jira2Redmine\Roles;
  */
 final class AssigneeMemberships
 {
-    /** Pseudo Jira role of these rows; migration.roles.mappings maps the name (default Developer). */
+    /** Pseudo Jira role of these rows; migration.roles.assignee_only_role names its Redmine role (default Developer). */
     public const ROLE_ID = -4;
     public const ROLE_NAME = 'Assignee of issues (no membership)';
+
+    /** Note on these rows, READY: without them Redmine refuses the issues; Jan reviews them with the rest. */
+    public const NOTE = 'Assignee only, not in the project\'s permission groups: Redmine assigns issues to members only.';
+
+    /**
+     * migration.roles.mappings with the assignee-only role added.
+     *
+     * @param array<string, mixed> $rolesConfig migration.roles
+     * @return array<mixed>
+     */
+    public static function mappings(array $rolesConfig): array
+    {
+        $mappings = is_array($rolesConfig['mappings'] ?? null) ? $rolesConfig['mappings'] : [];
+        $role = $rolesConfig['assignee_only_role'] ?? 'Developer';
+        $mappings[self::ROLE_NAME] = is_string($role) && trim($role) !== '' ? trim($role) : 'Developer';
+
+        return $mappings;
+    }
 
     /**
      * @param list<array{project_id: string, project_key: ?string, project_name: ?string, account_id: string,

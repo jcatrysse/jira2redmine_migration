@@ -830,7 +830,7 @@ function runRoleTransformationPhase(PDO $pdo, array $config): array
     synchronizeMigrationMappingRoles($pdo);
     synchronizeMigrationMappingProjectRoleGroups($pdo);
 
-    $roleMapping = new RoleMapping($config['migration']['roles']['mappings'] ?? null);
+    $roleMapping = new RoleMapping(AssigneeMemberships::mappings($config['migration']['roles'] ?? []));
     $redmineRoleLookup = fetchRedmineRoleLookup($pdo);
     $roleTransformSummary = runRoleDefinitionTransformation($pdo, $redmineRoleLookup, $roleMapping);
 
@@ -1550,7 +1550,8 @@ function runProjectRoleAssignmentTransformation(PDO $pdo, array $config, array $
                 $summary['manual_review']++;
             }
         } else {
-            $newNotes = null;
+            // an assignee-only row says so in the review table (B46)
+            $newNotes = (int)$row['jira_role_id'] === AssigneeMemberships::ROLE_ID ? AssigneeMemberships::NOTE : null;
         }
 
         $newAutomationHash = computeProjectRoleAssignmentAutomationHash(

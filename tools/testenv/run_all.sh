@@ -66,9 +66,9 @@ step 10-jira 10_migrate_issues.php --phases=jira
 step 09-jira 09_migrate_attachments.php --phases=jira
 # 04 after the issues are staged: it proposes their assignees without membership too (B46)
 step 04 04_migrate_roles.php
-step 04-push 04_migrate_roles.php --phases=push --confirm-push
-# after 04: activate locked users; the memberships are 04's proposals (B31, Jan option a)
+# activate locked users before 04's push: assignees among them get their membership (B46)
 manual members
+step 04-push 04_migrate_roles.php --phases=push --confirm-push
 step 08-transform 08_migrate_custom_fields.php --phases=usage,redmine,transform
 step 08-push 08_migrate_custom_fields.php --phases=push --confirm-push
 step 09-pull 09_migrate_attachments.php --phases=pull --confirm-pull

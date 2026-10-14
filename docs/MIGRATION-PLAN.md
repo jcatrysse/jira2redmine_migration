@@ -162,9 +162,13 @@ Per item: what was done, the alternatives, why this one.
   sets READY. It does not make anyone assignable (Redmine assigns to User and Group members only).
   REST and Extended API create such a membership on 7.0 (201). Alternatives: (b) READY at once,
   (c) only a note (the earlier behaviour), (d) every licensed user as a direct member (expansion).
-- **B46, option (a): an issue's assignee that no membership covers is proposed as a direct member**
-  (pseudo role "Assignee of issues (no membership)" => Developer), in the same review table; 04 now
-  runs after the issues are staged. Without it Redmine refused 10 issues in GEOS, SIS and OAC and 47
+- **B46, option (a) with the coordinator's refinement: an issue's assignee that no membership covers
+  is proposed as a direct member** in the same review table, role `migration.roles.assignee_only_role`
+  (default Developer; alternative: a dedicated assignable role with minimal permissions, so a moved or
+  departed person keeps the assignment without access Jira did not give), note "Assignee only, not in
+  the project's permission groups", status READY (without these rows Redmine refuses the issues; Jan
+  reviews them before the push like every proposal). 04 now runs after the issues are staged; the
+  members step (activate locked users) runs before 04's push. Without it Redmine refused 10 issues in GEOS, SIS and OAC and 47
   in WIKI ("Assignee is invalid"): Jira keeps an assignee who lost the permission. Alternatives:
   (b) 10 creates such an issue unassigned and keeps the Jira assignee in the mapping notes and the run
   report (the assignee is lost in Redmine); (c) the old members step, limited to assignees. (a) keeps

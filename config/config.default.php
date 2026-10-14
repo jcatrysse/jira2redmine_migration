@@ -56,6 +56,10 @@ return [
             'default_redmine_role_id' => null,
             // Jira project role name => Redmine role name; null ignores the role (no membership).
             // Jira Cloud's own role names never match Redmine's; roles not listed are matched by their own name.
+            // Role of an issue's assignee that no membership covers (B46): Redmine assigns only to members.
+            // Developer by default; a dedicated role that is assignable with minimal permissions (view issues)
+            // keeps the assignment of a moved or departed person without access Jira did not give.
+            'assignee_only_role' => 'Developer',
             'mappings' => [
                 'Administrators' => 'Manager',
                 // holds only app accounts (Jira apps), which are not migrated
@@ -64,8 +68,6 @@ return [
                 'Browse projects (permission scheme)' => 'Developer',
                 'Assignable user (permission scheme)' => 'Developer',
                 'Administer projects (permission scheme)' => 'Manager',
-                // an issue's assignee without membership (B46): Redmine assigns only to members
-                'Assignee of issues (no membership)' => 'Developer',
             ],
         ],
         'trackers' => [
