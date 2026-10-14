@@ -52,4 +52,34 @@ final class UsedValuesTest extends TestCase
             '10 reads the options written at field creation only'
         );
     }
+
+    public function testTheReportHasOneLinePerFieldAndValue(): void
+    {
+        $kept = ['mode' => 'flat', 'values' => [...self::OFFERED['values'], ['id' => '20003', 'value' => 'Field']]];
+        $row = ['field_id' => 'customfield_1', 'field_name' => 'Department', 'format' => 'enumeration',
+            'offered' => self::OFFERED, 'kept' => $kept];
+        // the same field on another project or issue type, the value in other case
+        $again = ['kept' => ['mode' => 'flat', 'values' => [['value' => 'field']]]] + $row;
+        $other = ['field_id' => 'customfield_2', 'field_name' => 'Team', 'format' => 'list',
+            'offered' => self::OFFERED, 'kept' => self::OFFERED];
+
+        $lines = UsedValues::report([$row, $again, $other]);
+
+        self::assertSame(
+            [['field_id' => 'customfield_1', 'field_name' => 'Department', 'format' => 'enumeration', 'value' => 'Field']],
+            $lines
+        );
+    }
+
+    public function testRetiringDependsOnTheRedmineFormat(): void
+    {
+        self::assertStringContainsString('inactive', UsedValues::retireAdvice('enumeration'));
+        self::assertStringContainsString('possible values', UsedValues::retireAdvice('list'));
+        self::assertStringContainsString('by hand', UsedValues::retireAdvice(null));
+        $script = (string)file_get_contents(__DIR__ . '/../08_migrate_custom_fields.php');
+        self::assertTrue(
+            str_contains($script, 'printValuesJiraNoLongerOffers(collectValuesJiraNoLongerOffers($pdo));'),
+            '08 adds values Jira no longer offers without listing them for the run report'
+        );
+    }
 }

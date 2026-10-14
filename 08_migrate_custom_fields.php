@@ -222,6 +222,8 @@ function main(array $config, array $cliOptions): void
                 PHP_EOL
             );
         }
+
+        printValuesJiraNoLongerOffers(collectValuesJiraNoLongerOffers($pdo));
     } else {
         printf(
             "[%s] Skipping transform phase (disabled via CLI option).%s",
@@ -1953,6 +1955,79 @@ function backfillProjectIssueTypeFieldsFromIssues(PDO $pdo, string $extractedAt)
     }
 
     return $inserted + $updated;
+}
+
+/**
+ * Values Jira issues hold that the field no longer offers, kept on the Redmine field (B37), with the
+ * number of staged issues that hold each. To retire after the run, per Redmine format.
+ *
+ * @return list<array{field_id: string, field_name: string, format: ?string, value: string, issues: int}>
+ */
+function collectValuesJiraNoLongerOffers(PDO $pdo): array
+{
+    try {
+        $statement = $pdo->query(<<<SQL
+            SELECT f.jira_field_id, f.jira_field_name, f.schema_type, f.schema_custom, f.raw_field, f.allowed_values_json,
+                   m.proposed_field_format
+            FROM staging_jira_project_issue_type_fields f
+            LEFT JOIN migration_mapping_custom_fields m ON m.jira_field_id = f.jira_field_id
+            WHERE f.allowed_values_json IS NOT NULL
+        SQL);
+    } catch (PDOException $exception) {
+        throw new RuntimeException('Failed to read the field lists for the unoffered values report: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    $rows = [];
+    foreach ($statement !== false ? $statement->fetchAll(PDO::FETCH_ASSOC) : [] as $row) {
+        $raw = decodeJsonColumn($row['raw_field'] ?? null);
+        $offered = is_array($raw)
+            ? extractAllowedValuesDescriptorFromField($raw, $row['schema_type'] ?? null, $row['schema_custom'] ?? null)
+            : null;
+        $rows[] = [
+            'field_id' => (string)$row['jira_field_id'],
+            'field_name' => (string)$row['jira_field_name'],
+            'format' => isset($row['proposed_field_format']) ? (string)$row['proposed_field_format'] : null,
+            'offered' => normalizeAllowedValuesPayload($offered),
+            'kept' => normalizeAllowedValuesPayload(decodeJsonColumn($row['allowed_values_json'] ?? null)),
+        ];
+    }
+
+    $count = $pdo->prepare(<<<SQL
+        SELECT COUNT(*) FROM staging_jira_issues
+        WHERE JSON_VALID(raw_payload)
+          AND JSON_CONTAINS(JSON_EXTRACT(raw_payload, CONCAT('$.fields.', :field_id)), JSON_OBJECT('value', :value))
+    SQL);
+    if ($count === false) {
+        throw new RuntimeException('Failed to prepare the issue count for the unoffered values report.');
+    }
+
+    $lines = [];
+    foreach (UsedValues::report($rows) as $line) {
+        $count->execute(['field_id' => $line['field_id'], 'value' => $line['value']]);
+        $lines[] = $line + ['issues' => (int)$count->fetchColumn()];
+    }
+
+    return $lines;
+}
+
+/**
+ * @param list<array{field_id: string, field_name: string, format: ?string, value: string, issues: int}> $lines
+ */
+function printValuesJiraNoLongerOffers(array $lines): void
+{
+    printf("  Values Jira no longer offers, kept on the Redmine field (B37): %d.%s", count($lines), PHP_EOL);
+    foreach ($lines as $line) {
+        printf(
+            "  [unoffered] %s (%s) | %s | %d issue(s) | %s: %s%s",
+            $line['field_name'],
+            $line['field_id'],
+            $line['value'],
+            $line['issues'],
+            $line['format'] ?? 'no format',
+            UsedValues::retireAdvice($line['format']),
+            PHP_EOL
+        );
+    }
 }
 
 function loadJiraFieldMetadata(PDO $pdo): array
