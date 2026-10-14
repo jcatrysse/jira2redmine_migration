@@ -138,6 +138,24 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
 8. **Manual steps stay scripted** (2026-10-13, after the runbook): `manual_steps.rb`
    workflows/members/restore; no Extended API import mode.
 9. **Attachment prune off during the run** is a runbook step; no code change (2026-10-13).
+10. **Project memberships (B31): option (a), a proposal Jan reviews** (2026-10-13, relayed by the
+    coordinator). 04 proposes per project from the permission scheme: a group with Browse projects
+    becomes a group member with Developer, a group with Administer projects Manager; users in the
+    Administrators project role direct members with Manager; groups in project roles group members;
+    atlassian-addons-project-access IGNORED; no expansion from a user to the user's groups. Jan
+    reviews and edits `migration_mapping_project_role_groups` before `--confirm-push`; the
+    automation hash keeps his edits; only READY rows are pushed. The `members` step only activates
+    locked users. Done (B2, 2026-10-14): commits `f3443eb`, `17b8ec5`; review query in the runbook.
+
+## Decided overnight (2026-10-13/14), for Jan to confirm
+
+Taken by B2 on the coordinator's instruction (recommended option, no waiting); each can be reversed.
+
+- **Assignable user is proposed too** (B31 extension): a group with Assignable user in the
+  permission scheme is proposed as group member with Developer, because Redmine assigns issues only
+  to members. In the test projects it adds 2 groups that Browse projects does not give (they are
+  Jan's to keep or set IGNORED in the review). A grant to an application role ("every licensed
+  user", GSPP and ROV) is not proposed; 04 prints it as `[note]`.
 
 ## Measured on 2026-10-13 (reading the code, nothing run yet)
 
@@ -512,15 +530,7 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
   once the real answer is seen); workflow/search, fieldconfiguration and fieldconfigurationscheme are
   deprecated; `/rest/api/3/automation/rules` is not a Jira platform endpoint (16 already skips it on
   404). Logged as B25. **Confirmed and fixed (B2)**: see B25 to B28.
-- **Project memberships (B31), open, put to Jan 2026-10-13 by B2.** Jira's project roles hold almost
-  nothing at GEOxyz ("Administrators": 36 users in 8 projects and 2 groups; the add-ons role: 240 app
-  accounts); project access is granted to groups in the permission schemes (Browse projects 22 times
-  to a group, Assignable user 23 times; the token can read them). Options: (a, recommended) 04 follows
-  Jira: groups with Browse projects become group members with Developer, groups with Administer
-  projects Manager, project role users direct members, no expansion to a user's groups; the `members`
-  step then only activates locked users; (b) 04 migrates the project role actors only (done, see B31)
-  and the `members` step gives everyone else Developer; (c) keep 04's old expansion. Meanwhile (b) is
-  implemented and used in the test runs.
+- ~~Project memberships (B31)~~ **Jan: option (a)**, see decision 10.
 - **B37, B38/B39 (put to Jan 2026-10-13 by B2):** a select value Jira no longer offers: (a, recommended,
   implemented) added to the Redmine field, (b) mapped to an existing value by config, (c) left empty.
   Parents and links across projects: (a, recommended, test runs) Redmine settings "cross-project
@@ -605,7 +615,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B27 | Paging advances by the requested page size; Jira caps workflow/search at 50 when asked for 100 | 14 of 64 workflows skipped | **fixed** in 16 (`src/Jira/Paging.php`); 11 pages comments and changelog the same way, Jira honours 100 there today (checked), latent |
 | B28 | `issuetypescheme/project` nests the scheme (`issueTypeScheme.id`, `projectIds`); 16 read flat keys | 0 project to scheme rows | **fixed**, 15 rows |
 | B30 | Jira returns project role URLs on the gateway; 04 uses their path, the gateway rewrite added `/ex/jira/{cloudId}` a second time | all 45 role requests 401, 04 extracted no actor and exited 0 with warnings | **fixed** in `lib/jira_gateway.php` (a prefixed path keeps one prefix), 278 actors |
-| B31 | 04 gave a project role held by a user to every group the user is in | one admin in a 254-member group made it admin (Manager) of 8 projects, 143 group assignments | **fixed** for what both options share: user actors are direct members, group actors their group; `migration.roles.mappings` (Administrators => Manager, add-ons role ignored); app accounts IGNORED; a pushed membership stays recorded on a rerun. Result: 36 users and 2 groups (max 6 members) Manager, as in Jira. Base access: open question for Jan |
+| B31 | 04 gave a project role held by a user to every group the user is in | one admin in a 254-member group made it admin (Manager) of 8 projects, 143 group assignments | **fixed** for what both options share: user actors are direct members, group actors their group; `migration.roles.mappings` (Administrators => Manager, add-ons role ignored); app accounts IGNORED; a pushed membership stays recorded on a rerun. Result: 36 users and 2 groups (max 6 members) Manager, as in Jira. Base access: **Jan option (a)**, decision 10: proposals from the permission schemes, reviewed before the push; the push adds a role to an existing membership (PUT) instead of a second POST (422). 5.1: 89 proposals, 2 hand edits kept on a rerun, 88 pushed, 0 failed |
 | B32 | 03 adds group members only once the groups exist; the runbook ran it once | 754 members AWAITING_GROUP, no group had members | runbook and `run_all.sh`: a second pass (551 members added; 203 wait for accounts that are not migrated) |
 | B33 | A download that fails (a dropped tunnel to api.atlassian.com, two runs in parallel) is FAILED; the transform requeued it and cleared the reason; 10 holds the issue back | 7.0: 2 of 576 files, GEOS-23 not created, no visible cause | **fixed**: 09 tries failed files once more in the same pull, prints each failure with its reason and keeps it when requeued (`src/Attachments/PullRetry.php`); 10 no longer waits for a switched-off attachment (`IssueAttachmentState`) |
 | B34 | 12 marks a refused relation CREATION_FAILED without its automation hash | every later transform takes it for a hand edit ("preserved manual overrides") and never retries; 17 relations after the relation types were added | **fixed** (`src/Relations/RelationState.php`); proof on 5.1: 17 failed, a plain rerun created all 17. Test env: `setup.sh` now installs the relation types (B18) |
