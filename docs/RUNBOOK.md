@@ -265,6 +265,9 @@ bundle exec rails runner /path/tools/apply_workflows.rb /path/plan.json --confir
 - The runner replaces the temporary open workflows of its trackers and roles and takes them out of
   `restore`'s list, so the order of `restore` and the runner does not matter. A second run changes
   nothing. Statuses Jira has but no issue uses (9 at GEOxyz) are skipped.
+- Check against Jira (test instances): `php tools/workflow_compare.php --sets=sets.json`, then
+  `SETS=sets.json OUT=answers.json bundle exec rails runner tools/testenv/workflow_fingerprint.rb`, then
+  `php tools/workflow_compare.php --answers=answers.json`: every difference must have a named category.
 
 ## Choices for Jan (plan work list 15, decided 2026-10-13)
 

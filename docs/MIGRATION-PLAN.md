@@ -1025,6 +1025,27 @@ whose assignee is no member: 101 of 101 edited and saved, the same assignee refu
 project rows; a second run +0 -0; the workflows step, the runner, restore (12,262 removed), then +0 -0;
 GEOS Task (Developer, from In Progress) 4 statuses without "Create RMA", LABO Task 10 with it.
 
+**Workflows against Jira, 5.1 and 7.0, 2026-10-14** (`tools/workflow_compare.php` with
+`workflow_fingerprint.rb`, code `c822b66`, plugin v0.1.6). For every migrated project, tracker and role (04's
+memberships) and every status, the statuses Redmine offers against what the project's Jira workflows allow that
+role: 136 sets, 5,848 answers, the same on both targets.
+
+| category | 5.1 | 7.0 |
+|---|---:|---:|
+| equal (a transition Jira allows the role, offered) | 1,202 | 1,202 |
+| group condition: the group is not a member of the project (review rows for Jan) | 454 | 454 |
+| group condition: the role is not one the group holds | 319 | 319 |
+| permission condition: the role does not hold the permission (rule 4) | 9 | 9 |
+| current status (Redmine lists it with the targets) | 539 | 539 |
+| default status of a new issue (Redmine adds it when no creation transition applies) | 41 | 41 |
+| **unexpected** | **0** | **0** |
+
+The FPS field value condition sits on a transition that is also limited to a group that is not a member, so
+it counts there. On the way the check found two faults, both fixed: a project role its own Jira workflow
+gives nothing fell back to the global union (703 transitions Jira does not have, 18 sets; `0664ed2`, now 21
+own empty workflows), and the fingerprint itself measured every status as the first on 7.0 (`update_column`
+returns false there; `5903798`).
+
 **Plugin upgrade rehearsal on 5.1, 2026-10-14** (redmine_project_workflows v0.0.3 `d61b1de` to v0.1.6
 `f2c1c2f`, on the state the runner wrote with the old version). Migrations 004 to 007 ran; 004 made 115
 scopes from the 115 project sets, rows unchanged (1,092 global, 1,202 project). `workflow_fingerprint.rb`
