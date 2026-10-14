@@ -49,8 +49,6 @@ php 02_migrate_users.php    && php 02_migrate_users.php    --phases=push --confi
 php 03_migrate_groups.php   && php 03_migrate_groups.php   --phases=push --confirm-push
 # members wait for their group: a second pass once the groups exist
 php 03_migrate_groups.php --skip=jira && php 03_migrate_groups.php --phases=push --confirm-push
-php 04_migrate_roles.php    # review the proposed memberships (below), then:
-php 04_migrate_roles.php    --phases=push --confirm-push
 php 05_migrate_statuses.php && php 05_migrate_statuses.php --phases=push --confirm-push
 php 06_migrate_priorities.php && php 06_migrate_priorities.php --phases=push --confirm-push
 php 07_migrate_trackers.php && php 07_migrate_trackers.php --phases=push --confirm-push
@@ -71,6 +69,9 @@ Check the summary line of each (`Matched / Ready / Manual`):
 
 ### Review the proposed memberships (04, before its push)
 
+04 runs after the jira phases of 08, 10 and 09 (section 2): it reads the staged issues for their
+assignees.
+
 Jira gives project access in two places, and 04 proposes a Redmine membership for both (B31, Jan
 option a), in `migration_mapping_project_role_groups`, one row per project, Jira role and principal:
 
@@ -81,6 +82,7 @@ option a), in `migration_mapping_project_role_groups`, one row per project, Jira
 | a group with Administer projects | `Administer projects (permission scheme)` | group | Manager |
 | a user or group in the project role Administrators | `Administrators` | user / group | Manager |
 | the project role atlassian-addons-project-access (Jira apps) | `atlassian-addons-project-access` | user | IGNORED |
+| an issue's assignee that none of the above makes a member (Jira keeps an assignee who lost the permission; Redmine refuses the issue, B46) | `Assignee of issues (no membership)` | user | Developer |
 | a permission granted to an application role ("every licensed user") | the permission's pseudo role, `jira_group_id` `jira-application-role` | group: Redmine's built-in "Non member users" | the mapped role, status MANUAL_INTERVENTION_REQUIRED until you set READY_FOR_ASSIGNMENT: it gives the role to every logged-in user who is not a member (it does not make them assignable) |
 
 The three permission-scheme names are pseudo roles (`jira_role_id` -1, -3, -2); `migration.roles.mappings`
@@ -125,6 +127,8 @@ migrated stays on that list: link it by hand or leave it.
 php 08_migrate_custom_fields.php --phases=jira
 php 10_migrate_issues.php --phases=jira
 php 09_migrate_attachments.php --phases=jira
+php 04_migrate_roles.php    # after the issues are staged (B46); review the proposed memberships (section 1), then:
+php 04_migrate_roles.php    --phases=push --confirm-push
 php 08_migrate_custom_fields.php --phases=usage,redmine,transform
 php 08_migrate_custom_fields.php --phases=push --confirm-push
 php 09_migrate_attachments.php --phases=pull --confirm-pull

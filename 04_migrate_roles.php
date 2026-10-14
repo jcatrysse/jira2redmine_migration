@@ -10,6 +10,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Roles\AssigneeMemberships;
 use Jira2Redmine\Roles\AssignmentHash;
 use Jira2Redmine\Roles\AssignmentStatus;
 use Jira2Redmine\Roles\MembershipPlan;
@@ -908,6 +909,38 @@ function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo): void
             'actor_type' => 'atlassian-group-role-actor',
         ];
     }
+
+    // Assignees no membership covers (B46): proposed as direct members, so Redmine accepts them.
+    $members = [];
+    $memberRows = $pdo->query('SELECT group_id, account_id FROM staging_jira_group_members');
+    foreach ($memberRows !== false ? $memberRows->fetchAll(PDO::FETCH_ASSOC) : [] as $member) {
+        $members[(string)$member['group_id']][] = (string)$member['account_id'];
+    }
+    $assigneeRows = $pdo->query(<<<SQL
+        SELECT DISTINCT i.project_id, p.project_key, p.name AS project_name, i.assignee_account_id AS account_id,
+               JSON_UNQUOTE(JSON_EXTRACT(i.raw_payload, '$.fields.assignee.displayName')) AS display_name
+        FROM staging_jira_issues i
+        LEFT JOIN staging_jira_projects p ON p.id = i.project_id
+        WHERE i.assignee_account_id IS NOT NULL AND i.assignee_account_id <> ''
+        ORDER BY i.project_id, i.assignee_account_id
+    SQL);
+    $assignees = [];
+    foreach ($assigneeRows !== false ? $assigneeRows->fetchAll(PDO::FETCH_ASSOC) : [] as $row) {
+        $assignees[] = [
+            'project_id' => (string)$row['project_id'],
+            'project_key' => $row['project_key'] !== null ? (string)$row['project_key'] : null,
+            'project_name' => $row['project_name'] !== null ? (string)$row['project_name'] : null,
+            'account_id' => (string)$row['account_id'],
+            'display_name' => $row['display_name'] !== null ? (string)$row['display_name'] : null,
+        ];
+    }
+    $uncovered = AssigneeMemberships::uncovered($assignees, $actors, $members, ['atlassian-addons-project-access']);
+    if ($assignees === []) {
+        printf("  [note] No staged issues: assignees without membership cannot be proposed (run 10 --phases=jira before 04).%s", PHP_EOL);
+    } elseif ($uncovered !== []) {
+        printf("  Proposed %d assignee(s) without membership as direct members (B46).%s", count($uncovered), PHP_EOL);
+    }
+    $actors = array_merge($actors, $uncovered);
 
     $statement = $pdo->prepare(<<<SQL
         INSERT INTO migration_mapping_project_role_groups (

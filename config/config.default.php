@@ -64,6 +64,8 @@ return [
                 'Browse projects (permission scheme)' => 'Developer',
                 'Assignable user (permission scheme)' => 'Developer',
                 'Administer projects (permission scheme)' => 'Manager',
+                // an issue's assignee without membership (B46): Redmine assigns only to members
+                'Assignee of issues (no membership)' => 'Developer',
             ],
         ],
         'trackers' => [

@@ -56,10 +56,6 @@ step 03-push 03_migrate_groups.php --phases=push --confirm-push
 # group members wait for their group: a second pass once the push above created the groups (B32)
 step 03-members 03_migrate_groups.php --skip=jira
 step 03-members-push 03_migrate_groups.php --phases=push --confirm-push
-step 04 04_migrate_roles.php
-step 04-push 04_migrate_roles.php --phases=push --confirm-push
-# after 04: activate locked users; the memberships are 04's proposals (B31, Jan option a)
-manual members
 for s in 05_migrate_statuses 06_migrate_priorities 07_migrate_trackers; do
   step "${s:0:2}" "$s.php"
   step "${s:0:2}-push" "$s.php" --phases=push --confirm-push
@@ -68,6 +64,11 @@ manual workflows
 step 08-jira 08_migrate_custom_fields.php --phases=jira
 step 10-jira 10_migrate_issues.php --phases=jira
 step 09-jira 09_migrate_attachments.php --phases=jira
+# 04 after the issues are staged: it proposes their assignees without membership too (B46)
+step 04 04_migrate_roles.php
+step 04-push 04_migrate_roles.php --phases=push --confirm-push
+# after 04: activate locked users; the memberships are 04's proposals (B31, Jan option a)
+manual members
 step 08-transform 08_migrate_custom_fields.php --phases=usage,redmine,transform
 step 08-push 08_migrate_custom_fields.php --phases=push --confirm-push
 step 09-pull 09_migrate_attachments.php --phases=pull --confirm-pull
