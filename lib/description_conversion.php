@@ -6,6 +6,7 @@ use GuzzleHttp\Client;
 use League\HTMLToMarkdown\HtmlConverter;
 use League\HTMLToMarkdown\Converter\TableConverter;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
+use Jira2Redmine\Text\Safelinks;
 
 /**
  * Markdown autolinks (<https://...>, <mailto:...>, <name@domain>) look like tags to DOMDocument, which
@@ -97,6 +98,9 @@ function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
         },
         $markdown
     );
+
+    // mailed comments: Outlook's safe-link wrapper around every link
+    $markdown = Safelinks::unwrap((string)$markdown);
 
     return $markdown !== '' ? $markdown : null;
 }
@@ -396,7 +400,7 @@ function convertDescriptionToMarkdown(
 
     if ($adfJson !== '') {
         $node = $adfToMd->convert($adfJson);
-        $md   = trim($node->toMarkdown());
+        $md   = trim(Safelinks::unwrap($node->toMarkdown()));
         if ($md !== '') return $md;
     }
 
