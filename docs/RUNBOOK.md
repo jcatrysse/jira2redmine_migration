@@ -234,6 +234,11 @@ bundle exec rails runner /path/tools/apply_workflows.rb /path/plan.json         
 bundle exec rails runner /path/tools/apply_workflows.rb /path/plan.json --confirm-push  # apply
 ```
 
+- Mode (`migration.workflows.mode`): `project` (Jan, 2026-10-14) needs redmine_project_workflows and gives
+  each project exactly its own Jira workflow; the union (rows with `redmine_project_id` 0, cleaned by Jan)
+  is the global workflow for projects without their own. `union` writes only the global workflow. On the
+  plugin's 7.0 branch the runner makes the plugin's scopes itself; on its 5.1 version a project role
+  without transitions follows the global workflow (the plugin cannot store an empty one).
 - Only PROPOSED rows are applied. A REVIEW row waits for a decision: set it to PROPOSED or IGNORED.
   A row edited by hand keeps its edit when the proposal is made again.
 - `migration_mapping_workflow_transitions`: per tracker and role, the runner sets exactly the PROPOSED
