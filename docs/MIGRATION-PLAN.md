@@ -1092,6 +1092,38 @@ stuck, other transitions may still leave the status. Configuration and counts on
 - FPS's 2 transitions were no review rows: Accepted and Rejected were missing from staging (B57, now fixed:
   8 review rows for the group). FPS has 0 issues the read token can see.
 
+**Option G automated: what it takes (prepared, not built; coordinator 2026-10-14).** The proposal already gives
+a transition limited to a group to the roles 04's membership rows give that group in the project
+(`loadWorkflowStaging`: `groupRoles` from `migration_mapping_project_role_groups`). So G needs no change in
+the proposal or the runner: once 04 makes the group a member with its own role, the group's transitions are
+PROPOSED for that role and the review rows are gone. What to build:
+
+1. **Jan's choice in the config**, not in a review table: a production run starts on an empty staging
+   database, so hand edits there are lost. `migration.workflows.group_roles` lists the cases per project key
+   (`'DOC' => ['DOC Support']`, ...), `group_role_name` names the role (`'%s (workflow)'`), and
+   `group_role_permissions` gives its permissions (`['edit_issues']`). Redmine uses a role's workflow only if
+   the role has "Edit issues" or "Add issues" (`Role#consider_workflow?`). The role does not get
+   "View issues" and is not assignable.
+2. **04 transform**: per listed case, one membership row for the group (principal `group`, a pseudo Jira role
+   -6 "Workflow group (option G)", like B31's pseudo roles), with the group's own role name as its target.
+   This takes a small change: the target role comes from the row instead of the name mapping. The row is
+   READY_FOR_ASSIGNMENT, because the config holds Jan's decision. A listed group that is no Jira group, or a
+   project 01 did not stage, becomes MANUAL with a note.
+3. **04 push**: create the role if no Redmine role has that name, with `POST /extended_api/roles.json` (name,
+   permissions, assignable false; the same Extended API on 5.1 and 7.0), then the group membership as today.
+   Repeatable: the role is matched by name.
+4. **Unchanged**: the proposal (the rows become PROPOSED through `groupRoles`), the runner (the role gets its
+   own project workflow like any other), the members step and restore (they touch only the temporary role),
+   the membership check (it expects 04's proposal, which now includes these rows) and the comparison (its
+   expected side uses the same `groupRoles`, so these answers move from "group not a member" to equal).
+5. **Tests and proof**: unit tests for the case rows and the role payload; then on 5.1 and 7.0 a DOC Task
+   from "New": a DOC Support user is offered "In Progress", a Developer outside the group is not; a second
+   run of 04 and of the runner changes nothing. About half a day with the proofs on both targets.
+
+R and I fit the same config later: `roles` gives the transitions to the roles the group's users hold
+(computed from 04's rows and the group members), `ignore` makes the rows IGNORED. For the four G cases the
+effect on users is none beyond the transitions: all their users are members already.
+
 **Plugin upgrade rehearsal on 5.1, 2026-10-14** (redmine_project_workflows v0.0.3 `d61b1de` to v0.1.6
 `f2c1c2f`, on the state the runner wrote with the old version). Migrations 004 to 007 ran; 004 made 115
 scopes from the 115 project sets, rows unchanged (1,092 global, 1,202 project). `workflow_fingerprint.rb`
