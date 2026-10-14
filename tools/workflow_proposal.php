@@ -43,8 +43,9 @@ $trackerNames = $column('SELECT redmine_tracker_id, MIN(COALESCE(proposed_redmin
 $statusNames = $column('SELECT redmine_status_id, MIN(COALESCE(proposed_redmine_name, jira_status_name)) FROM migration_mapping_statuses
     WHERE redmine_status_id IS NOT NULL GROUP BY redmine_status_id') + [0 => '(new issue)'];
 $roleNames = $column('SELECT id, name FROM staging_redmine_roles') + [WorkflowProposal::NO_ROLE => '(no role: group not a member)'];
-$redmineProjectOf = array_map('intval', $column("SELECT jira_project_key, redmine_project_id FROM migration_mapping_projects
-    WHERE redmine_project_id IS NOT NULL AND migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')"));
+$redmineProjectOf = array_map('intval', $column("SELECT p.project_key, m.redmine_project_id FROM migration_mapping_projects m
+    JOIN staging_jira_projects p ON p.id = m.jira_project_id
+    WHERE m.redmine_project_id IS NOT NULL AND m.migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')"));
 
 // Roles per project, per group, per Jira project role and of the application role, from 04's memberships.
 $projectRoles = [];

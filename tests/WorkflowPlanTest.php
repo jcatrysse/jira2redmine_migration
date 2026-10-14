@@ -50,4 +50,14 @@ final class WorkflowPlanTest extends TestCase
             'script' => 'x']], $plan['scripts']);
         self::assertSame(['transitions' => 2, 'field_permissions' => 1, 'scripts' => 0], $plan['waiting']);
     }
+
+    public function testTheProposalFindsTheRedmineProjectThroughTheStagedJiraProject(): void
+    {
+        // migration_mapping_projects has no project key: the proposal stopped on "Unknown column jira_project_key"
+        $schema = (string)file_get_contents(__DIR__ . '/../database/schema.sql');
+        $table = substr($schema, (int)strpos($schema, 'CREATE TABLE `migration_mapping_projects`'), 1500);
+        self::assertStringNotContainsString('`jira_project_key`', substr($table, 0, (int)strpos($table, ') COMMENT')));
+        $tool = (string)file_get_contents(__DIR__ . '/../tools/workflow_proposal.php');
+        self::assertStringContainsString('JOIN staging_jira_projects p ON p.id = m.jira_project_id', $tool);
+    }
 }
