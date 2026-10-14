@@ -104,7 +104,7 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
 | | |
 |---|---|
 | Branch | `redmine70-migration` (from `main` at `1de1fc9`) |
-| Phase | 2 to 5 and 8 done, 6 first part and 7 largely done; B2 (2026-10-13): new token proven, 03, 04 and 16 run with it, full runs with all fixes on both targets in progress |
+| Phase | 2 to 5, 8 and 9 done (phase 9 green on 5.1 and 7.0, B2, 2026-10-14); 6 first part and 7 largely done; open: decisions for Jan, bench step 3, phase 6 rest |
 | Scripts | 16 scripts, ~39,000 lines of PHP, no shared library, no tests |
 | Targets | Redmine 5.1 and 7.0; the scripts stay dual-target (unlike the plugins, 5.1 is not dropped) |
 | Extended API | to be made compatible with Redmine 5.1, 6.1 and 7.0 (own repo, own branch) |
@@ -651,6 +651,34 @@ number (B44, fixed after this run), one empty rich text field and one checksum t
 later read (verify fixes). By accident `run_all.sh` was edited while this run used it; bash then
 repeated 13 and 14 and ran 11 to 15 once more.
 
-**Phase 9: final runs** (filled in below when they finish).
+**Phase 9: final runs, B2, 2026-10-14 — green on both targets.** Scripts at b556cc6, Extended API
+`redmine70-migration` c806a17 on both (the version Jan merges into `main` once the gate is green; the
+gate is green), GEOS, SIS and OAC, no attachment sample, fresh instances and staging
+(`STABILITY=1 run_all.sh 51|70 b2-phase9`):
 
-(earlier: empty)
+| | Redmine 5.1 | Redmine 7.0 |
+|---|---|---|
+| verify (25 issues per project, 22 checks) | **PASS, 0 failures** | **PASS, 0 failures** |
+| presence / counts tracker+status | 75/75, 30/30 | 75/75, 30/30 |
+| comments, journals without duplicates | 254, 75/75 | 254, 75/75 |
+| custom fields with a value | 380 | 380 |
+| attachments name+size / sha256 | 75 / 136 | 75 / 136 |
+| relations, watchers | 35, 75 | 35, 75 |
+| issues created | 422 (+4 waiting for a parent outside the run) | 422 (+4) |
+| journals pushed / skipped (no content) | 1,277 / 2,937 | 1,277 / 2,937 |
+| attachments | 576 | 576 |
+| relations created / outside the run | 71 / 49 | 71 / 49 |
+| watchers stored | 960 | 960 |
+| custom fields created | 34 | 34 |
+| project memberships from roles (04) | 38 | 38 |
+| second pass of 08 to 15 | **nothing changed** | **nothing changed** |
+| script time, structure to 16 | 1,278 s | 1,255 s |
+
+Longest steps: 11 (journals, Jira extraction included) about 460 s, 14 (watchers, read back) about
+185 s, 09 (pull 95 s, push 136 s for 1.5 GB), 10 about 110 s. Differences between the targets are
+Redmine's own: 7.0 writes a journal for a tag change (1,535 journals and 258 details against 1,489 and
+212) and adds 27 watchers itself (1,140 against 1,113).
+
+What is not covered by these runs: the manual steps and decisions still open for Jan (memberships
+B31, select values B37, cross-project settings B38/B39, automation rules, service desk fields), the
+Apache configuration of the production servers (runbook appendix), and phase 6 rest (M1).
