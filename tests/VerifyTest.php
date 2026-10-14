@@ -116,6 +116,16 @@ final class VerifyTest extends TestCase
         );
     }
 
+    public function testALinkToTheIssuesOwnParentIsNotExpectedAsARelation(): void
+    {
+        // the open WIKI failure: a "To Wiki" link from a subtask to its parent, left to the hierarchy by 12 (B40)
+        $verify = (string)file_get_contents(__DIR__ . '/../tools/verify.php');
+        $skip = strpos($verify, 'RelationState::linksAncestor((string)$jiraId, (string)$other, $parentOf)');
+        self::assertNotFalse($skip, 'verify expects a relation Redmine refuses');
+        self::assertLessThan((int)strpos($verify, "\$record('relations', in_array("), $skip);
+        self::assertTrue(Jira2Redmine\Relations\RelationState::linksAncestor('591', '588', ['591' => '588', '588' => '1065']));
+    }
+
     public function testTheBenchCountsOnlyHeadingsWithText(): void
     {
         $bench = (string)file_get_contents(__DIR__ . '/../tools/conversion_bench.php');

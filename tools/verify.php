@@ -26,6 +26,7 @@ declare(strict_types=1);
 
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
+use Jira2Redmine\Relations\RelationState;
 
 require_once __DIR__ . '/../lib/verify.php';
 $config = require __DIR__ . '/../bootstrap.php';
@@ -87,6 +88,10 @@ $openParents = verifyOpenParents($pdo->query(
         EXISTS (SELECT 1 FROM staging_jira_issues c WHERE c.parent_issue_id = m.jira_issue_id) AS is_parent
      FROM migration_mapping_issues m'
 ), $maps['status']);
+// Jira's hierarchy: a link between an issue and its own parent or subtask is held by it (B40).
+$parentRows = $pdo->query('SELECT id, parent_issue_id FROM staging_jira_issues WHERE parent_issue_id IS NOT NULL');
+/** @var array<int|string, int|string> $parentOf */
+$parentOf = $parentRows !== false ? $parentRows->fetchAll(PDO::FETCH_KEY_PAIR) : [];
 // Attachments left out by the test option attachments.test_sample are expected to be absent.
 $skippedBySample = verifyMap($pdo, sprintf(
     "SELECT jira_attachment_id, notes FROM migration_mapping_attachments WHERE notes = '%s'",
@@ -368,6 +373,11 @@ foreach ($projectKeys as $projectKey) {
             $other = $link['outwardIssue']['id'] ?? $link['inwardIssue']['id'] ?? null;
             $otherRedmine = $other !== null ? ($maps['issue'][(string)$other] ?? null) : null;
             if ($otherRedmine === null) {
+                continue;
+            }
+            // Redmine does not relate an issue to its own parent or subtask; 12 leaves it to the hierarchy (B40)
+            if (RelationState::linksAncestor((string)$jiraId, (string)$other, $parentOf)) {
+                $record('relations: parent or subtask (held by the hierarchy, B40)', true, $issueKey . ' link ' . $link['id']);
                 continue;
             }
             $record('relations', in_array($otherRedmine, $related, true), $issueKey . ' link ' . $link['id'], 'to Redmine #' . $otherRedmine);
