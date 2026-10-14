@@ -37,9 +37,13 @@ echo 3.3.6 > "$BASE/redmine70/.ruby-version"
 while IFS=$'\t' read -r repo branch; do
   for v in 51 70; do
     b=$branch; [ $v = 70 ] && b=redmine70-migration
-    # 5.x of redmine_custom_workflows requires Redmine 6 (v3.1.1); v2.1.2 is the last release for 5.1
-    [ $v = 51 ] && [ "$repo" = redmine_custom_workflows ] && b=v2.1.2
+    # 5.x and master of redmine_custom_workflows are v3.1.1 (Redmine 6); production 5.1 runs commit 0398974
+    # (2.1.3 devel, the coordinator, 2026-10-14)
+    [ $v = 51 ] && [ "$repo" = redmine_custom_workflows ] && b=03989743d72289afa84d62747a447b13a062fd2d
     src="$BASE/p$v/$repo"
+    if [ ! -d "$src" ] && [[ $b =~ ^[0-9a-f]{40}$ ]]; then
+      git clone -q --filter=blob:none "https://github.com/jcatrysse/$repo.git" "$src" && git -C "$src" checkout -q --detach "$b"
+    fi
     [ -d "$src" ] || git clone -q --depth 1 -b "$b" "https://github.com/jcatrysse/$repo.git" "$src"
     # Redmine requires the directory to carry the plugin id
     id=$(grep -hoE "Plugin\.register\s*\(?\s*:?['\"]?[a-z_0-9]+" "$src/init.rb" | head -1 | sed -E "s/.*register\s*\(?\s*:?['\"]?//")

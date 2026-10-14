@@ -2,8 +2,8 @@
 # Brings the plugins of a test instance to their branch heads, as core.sh does for the core: a fetch with a forced
 # refspec (branches get rewritten upstream), then the branch head, and the hash per plugin. Branches: 7.0 runs every
 # plugin on redmine70-migration; 5.1 runs what production will run: plugins-5.1.tsv, except redmine_custom_workflows
-# (tag v2.1.2, the last release for Redmine 5.1) and redmine_project_workflows (its new version on
-# redmine70-migration, which supports 5.1, 6.1 and 7.0; Jan, decision 13).
+# (commit 0398974, "2.1.3 devel", what production 5.1 runs; its 5.x and master need Redmine 6) and
+# redmine_project_workflows (its new version on redmine70-migration, which supports 5.1, 6.1 and 7.0; decision 13).
 # With --migrate: bundle install, plugins:migrate and a restart when a plugin changed. The baseline dump that
 # run_all.sh restores holds the old plugin schema: refresh it afterwards (see docs/RUNBOOK.md, test instances).
 # A local change to a tracked file stops it (checkout without --force).
@@ -27,7 +27,7 @@ changed=0
 while IFS=$'\t' read -r repo branch; do
   ref=$branch
   [ "$v" = 70 ] && ref=redmine70-migration
-  [ "$v" = 51 ] && [ "$repo" = redmine_custom_workflows ] && ref=v2.1.2
+  [ "$v" = 51 ] && [ "$repo" = redmine_custom_workflows ] && ref=03989743d72289afa84d62747a447b13a062fd2d
   [ "$v" = 51 ] && [ "$repo" = redmine_project_workflows ] && ref=redmine70-migration
   dir=
   for d in "$BASE/redmine$v/plugins"/*/; do
@@ -40,7 +40,10 @@ while IFS=$'\t' read -r repo branch; do
     exit 1
   fi
   before=$(git -C "$dir" rev-parse --short HEAD)
-  if git -C "$dir" ls-remote --exit-code --tags origin "refs/tags/$ref" > /dev/null 2>&1; then
+  if [[ $ref =~ ^[0-9a-f]{40}$ ]]; then
+    git -C "$dir" fetch -q --depth 1 origin "$ref"
+    git -C "$dir" checkout -q --detach "$ref"
+  elif git -C "$dir" ls-remote --exit-code --tags origin "refs/tags/$ref" > /dev/null 2>&1; then
     git -C "$dir" fetch -q --depth 1 origin "+refs/tags/$ref:refs/tags/$ref"
     git -C "$dir" checkout -q --detach "refs/tags/$ref"
   else
