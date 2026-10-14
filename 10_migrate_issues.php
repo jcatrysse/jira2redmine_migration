@@ -17,6 +17,7 @@ use Jira2Redmine\Redmine\IssueDates;
 use Jira2Redmine\Issues\AssigneeRule;
 use Jira2Redmine\Issues\OpenParentStatus;
 use Jira2Redmine\Issues\WaitingParents;
+use Jira2Redmine\Text\Relink;
 use Jira2Redmine\Attachments\AttachmentNames;
 use Jira2Redmine\Attachments\IssueAttachmentState;
 use Jira2Redmine\Jira\ProjectSelection;
@@ -1955,6 +1956,7 @@ function runIssuePushPhase(
             'migration_status' => $finalStatus,
             'notes' => $finalNotes,
         ]);
+        recordPushedDescription($pdo, $mappingId, isset($issuePayload['description']) ? (string)$issuePayload['description'] : null);
     }
 
     // Issues created above wait for the link rewrite too, so ask again instead of reusing the list
@@ -2047,6 +2049,7 @@ function runIssuePushPhase(
                 'migration_status' => 'CREATION_SUCCESS',
                 'notes' => null,
             ]);
+            recordPushedDescription($pdo, $mappingId, $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null);
             printf("  [skip] Jira issue %s: description and parent already up to date.%s", $jiraIssueKey, PHP_EOL);
             continue;
         }
@@ -2100,6 +2103,7 @@ function runIssuePushPhase(
                             'notes' => null,
                         ]);
 
+                        recordPushedDescription($pdo, $mappingId, $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null);
                         printf("  [updated] Jira issue %s → Redmine issue #%d%s", $jiraIssueKey, $redmineIssueId, PHP_EOL);
                         continue;
                     } catch (Throwable $retryException) {
@@ -2159,8 +2163,21 @@ function runIssuePushPhase(
             'notes' => null,
         ]);
 
+        recordPushedDescription($pdo, $mappingId, $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null);
         printf("  [updated] Jira issue %s → Redmine issue #%d%s", $jiraIssueKey, $redmineIssueId, PHP_EOL);
     }
+}
+
+/**
+ * The description as Redmine has it after the push: its hash lets the relink step (B52) see later edits.
+ */
+function recordPushedDescription(PDO $pdo, int $mappingId, ?string $description): void
+{
+    $statement = $pdo->prepare('UPDATE migration_mapping_issues SET pushed_text_hash = :h WHERE mapping_id = :m');
+    if ($statement === false) {
+        throw new RuntimeException('Failed to prepare the pushed description hash update.');
+    }
+    $statement->execute(['h' => Relink::hash($description), 'm' => $mappingId]);
 }
 
 function shouldRetryWithOpenedParent(

@@ -14,6 +14,7 @@ use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Attachments\AttachmentNames;
 use Jira2Redmine\Journals\JournalStatus;
+use Jira2Redmine\Text\Relink;
 const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.1';
 const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
 const JIRA_RATE_LIMIT_BASE_DELAY_MS = 1000;
@@ -1233,7 +1234,7 @@ function processCommentPush(
 
         if ($journalId !== null) {
             // success, mark and continue
-            markJournalPushSuccess($pdo, $mappingId, $journalId);
+            markJournalPushSuccess($pdo, $mappingId, $journalId, $note);
             printf("  [journal] (extended api) Jira %s %s → Redmine issue #%d, journal #%d%s",
                 'comment',
                 $jiraCommentId,
@@ -1261,7 +1262,7 @@ function processCommentPush(
         return;
     }
 
-    markJournalPushSuccess($pdo, $mappingId, $journalId);
+    markJournalPushSuccess($pdo, $mappingId, $journalId, $note);
 }
 
 /**
@@ -1512,7 +1513,10 @@ function fetchLatestJournalId(Client $client, int $redmineIssueId, ?string $toke
     return $latestId;
 }
 
-function markJournalPushSuccess(PDO $pdo, int $mappingId, ?int $journalId): void
+/**
+ * @param string|null $pushedNotes the comment as sent: its hash lets the relink step (B52) see later edits
+ */
+function markJournalPushSuccess(PDO $pdo, int $mappingId, ?int $journalId, ?string $pushedNotes = null): void
 {
     $sql = <<<SQL
         UPDATE migration_mapping_journals
@@ -1520,6 +1524,7 @@ function markJournalPushSuccess(PDO $pdo, int $mappingId, ?int $journalId): void
             redmine_journal_id = :redmine_journal_id,
             migration_status = 'SUCCESS',
             notes = NULL,
+            pushed_text_hash = COALESCE(:pushed_text_hash, pushed_text_hash),
             last_updated_at = CURRENT_TIMESTAMP
         WHERE mapping_id = :mapping_id
     SQL;
@@ -1531,6 +1536,7 @@ function markJournalPushSuccess(PDO $pdo, int $mappingId, ?int $journalId): void
 
     $statement->execute([
         'redmine_journal_id' => $journalId,
+        'pushed_text_hash' => $pushedNotes !== null ? Relink::hash($pushedNotes) : null,
         'mapping_id' => $mappingId,
     ]);
     $statement->closeCursor();

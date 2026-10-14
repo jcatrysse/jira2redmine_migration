@@ -665,6 +665,7 @@ CREATE TABLE `migration_mapping_issues` (
                                             `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'READY_FOR_REWRITE', 'READY_FOR_FINAL_UPDATE', 'UPDATE_FAILED', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
                                             `notes` TEXT,
                                             `automation_hash` CHAR(64) NULL,
+                                            `pushed_text_hash` CHAR(64) NULL COMMENT 'hash of the text as pushed (B52 relink: edits in Redmine are left alone)',
                                             `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                             `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                                             UNIQUE KEY `uk_jira_issue_id` (`jira_issue_id`),
@@ -762,6 +763,7 @@ CREATE TABLE `migration_mapping_journals` (
                                               `proposed_created_on` DATETIME NULL,
                                               `proposed_updated_on` DATETIME NULL,
                                               `automation_hash` VARCHAR(64) NULL,
+                                              `pushed_text_hash` CHAR(64) NULL COMMENT 'hash of the text as pushed (B52 relink: edits in Redmine are left alone)',
                                               `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                               `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                                               UNIQUE KEY `uk_jira_journal_entity` (`jira_entity_id`, `entity_type`)

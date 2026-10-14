@@ -125,6 +125,18 @@ links it. Every 10 run lists the issues still waiting, with the parent's key, pe
 (`Issues waiting for a parent outside the run (B38)`, `[waiting]` lines); a parent that is never
 migrated stays on that list: link it by hand or leave it.
 
+For production one run with all projects is recommended: a link from an earlier batch to an issue of a
+later batch stays a Jira link (B52). If batches are needed, after the last one (opt-in):
+
+```bash
+php tools/relink_issue_links.php                # preview
+php tools/relink_issue_links.php --confirm-push # rewrite
+```
+
+It rewrites those links in descriptions and comments ("#123", or "text (#123)"), only where Redmine's text
+is still what the migration pushed (10 and 11 store a hash of it); a text edited in Redmine since is
+left alone and listed as `[edited]`.
+
 ## 2. Custom fields, issues and attachments
 
 ```bash
