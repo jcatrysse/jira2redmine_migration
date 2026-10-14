@@ -40,9 +40,13 @@ final class WorkflowProposalTest extends TestCase
         self::assertSame(['1', '3'], $transitions[2]['from']);
         self::assertTrue($transitions[2]['assignee_only']);
         self::assertSame(['CLOSE_ISSUES'], $transitions[2]['permissions']);
-        // the resolution clean-up has no Redmine counterpart and nothing to do; the assignment has
-        $notMapped = ['post function AssignToCurrentUserFunction', 'transition screen "Resolve screen"'];
-        self::assertSame($notMapped, $transitions[2]['not_mapped']);
+        // the resolution clean-up has no Redmine counterpart and nothing to do; the assignment and the screen
+        // are applied by the runner (Jan, decision 13): a custom workflow script and field permissions
+        self::assertSame([], $transitions[2]['not_mapped']);
+        self::assertTrue($transitions[2]['assign_to_current_user']);
+        self::assertSame(['id' => '3', 'name' => 'Resolve screen'], $transitions[2]['screen']);
+        self::assertFalse($transitions[1]['assign_to_current_user']);
+        self::assertNull($transitions[1]['screen']);
     }
 
     public function testTheProposalIsPerTrackerAndRole(): void
@@ -78,7 +82,7 @@ final class WorkflowProposalTest extends TestCase
         self::assertStringContainsString('tracker #2: 2 Jira workflows', implode("\n", $result['problems']));
     }
 
-    public function testAGroupWithoutMembershipIsReported(): void
+    public function testAGroupWithoutMembershipIsAReviewRow(): void
     {
         $result = WorkflowProposal::build(
             [['project' => 'ABC', 'workflow' => 'W', 'issue_type' => '1', 'transitions' => [
@@ -91,8 +95,86 @@ final class WorkflowProposalTest extends TestCase
             []
         );
 
-        self::assertSame([], $result['rows']);
-        $problem = 'ABC, workflow "W": group "Nobody" is not a member of the project; its transitions go to no role';
+        // Jan, decision 13: a review row with the group, he decides per case (role 0 is never applied)
+        self::assertSame(['2|0|1|2|0'], array_keys($result['rows']));
+        self::assertSame(WorkflowProposal::NO_ROLE, $result['rows']['2|0|1|2|0']['role']);
+        self::assertSame(
+            ['Jira limits it to group "Nobody", which is not a member of ABC: set review_role_id and PROPOSED, or IGNORED'],
+            $result['rows']['2|0|1|2|0']['notes']
+        );
+        $problem = 'ABC, workflow "W": group "Nobody" is not a member of the project; review row with role 0';
         self::assertSame([$problem], $result['problems']);
+    }
+
+    public function testAPermissionConditionGoesToTheRolesThatHoldIt(): void
+    {
+        $transitions = [
+            ['name' => 'Create', 'from' => ['0'], 'to' => '1', 'groups' => [], 'permissions' => ['CREATE_ISSUES'],
+                'assignee_only' => false, 'not_mapped' => []],
+            ['name' => 'Resolve', 'from' => ['1'], 'to' => '3', 'groups' => [], 'permissions' => ['RESOLVE_ISSUES'],
+                'assignee_only' => false, 'not_mapped' => []],
+        ];
+        $result = WorkflowProposal::build(
+            [['project' => 'ABC', 'workflow' => 'W', 'issue_type' => '1', 'transitions' => $transitions]],
+            ['1' => 2],
+            ['1' => 1, '3' => 2],
+            ['ABC' => [3, 4]],
+            [],
+            ['permission_roles' => ['ABC' => ['CREATE_ISSUES' => [4], 'RESOLVE_ISSUES' => []]]]
+        );
+
+        // only Developer (4) holds CREATE_ISSUES: Manager (3) gets no creation; nobody holds RESOLVE_ISSUES
+        self::assertSame(['2|4|0|1|0'], array_keys($result['rows']));
+        self::assertSame([], $result['rows']['2|4|0|1|0']['notes'], 'an applied rule needs no review');
+        self::assertContains(
+            'ABC, workflow "W": no role of the project holds RESOLVE_ISSUES; transition "Resolve" goes to no role',
+            $result['problems']
+        );
+    }
+
+    public function testRequiredScreenFieldsAndTheAssignmentArePlanned(): void
+    {
+        $sources = [['project' => 'ABC', 'workflow' => 'ABC workflow', 'issue_type' => '10001',
+            'transitions' => JiraTransitions::fromWorkflow(self::WORKFLOW)]];
+        $context = [
+            'permission_roles' => ['ABC' => ['CLOSE_ISSUES' => [3, 4]]],
+            'screen_fields' => ['3' => ['customfield_1', 'resolution', 'assignee', 'customfield_2']],
+            'field_rules' => [
+                'customfield_1' => ['required_in' => ['Default', 'ABC'], 'configurations' => 2],
+                'resolution' => ['required_in' => [], 'configurations' => 2],
+                'assignee' => ['required_in' => ['ABC'], 'configurations' => 2],
+                'customfield_2' => ['required_in' => ['Default', 'ABC'], 'configurations' => 2],
+            ],
+            'field_targets' => ['customfield_1' => '23', 'resolution' => null, 'assignee' => 'assigned_to_id', 'customfield_2' => null],
+        ];
+        $result = WorkflowProposal::build($sources, ['10001' => 2], ['1' => 1, '3' => 2, '6' => 5], ['ABC' => [3, 4]], [], $context);
+
+        // the screen of "Close" (to status 5): a field required everywhere, one required in one configuration only
+        self::assertSame(
+            ['2|3|5|23', '2|3|5|assigned_to_id', '2|4|5|23', '2|4|5|assigned_to_id'],
+            array_keys($result['field_permissions'])
+        );
+        self::assertSame('required', $result['field_permissions']['2|3|5|23']['rule']);
+        self::assertSame([], $result['field_permissions']['2|3|5|23']['notes']);
+        self::assertSame(['required in Jira field configurations ABC only'], $result['field_permissions']['2|4|5|assigned_to_id']['notes']);
+        self::assertContains(
+            'screen "Resolve screen": field customfield_2 is required in Jira and has no Redmine field',
+            $result['problems']
+        );
+        // "assign to the current user" on the global Close: one script for tracker 2, status 5, from every other status
+        self::assertSame(['2|5'], array_keys($result['scripts']));
+        self::assertSame([1, 2], $result['scripts']['2|5']['old']);
+        self::assertSame(['Close'], $result['scripts']['2|5']['transitions']);
+        // and the transition itself needs no review any more
+        self::assertSame([], $result['rows']['2|3|2|5|1']['notes']);
+
+        // without the field configurations the screen's required fields are unknown: the transition is reviewed
+        unset($context['field_rules']);
+        $unknown = WorkflowProposal::build($sources, ['10001' => 2], ['1' => 1, '3' => 2, '6' => 5], ['ABC' => [3, 4]], [], $context);
+        self::assertSame(
+            ['transition screen "Resolve screen": its required fields are unknown (screens or field configurations not exported by 16)'],
+            $unknown['rows']['2|3|2|5|1']['notes']
+        );
+        self::assertSame([], $unknown['field_permissions']);
     }
 }

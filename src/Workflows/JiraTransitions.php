@@ -20,8 +20,9 @@ final class JiraTransitions
     /**
      * @param array<mixed> $workflow
      * @return list<array{name: string, from: list<string>, to: string, groups: list<string>, permissions: list<string>,
-     *     assignee_only: bool, not_mapped: list<string>}>
-     *     from: Jira status ids, "0" for the creation of an issue; groups: empty when anyone may
+     *     assignee_only: bool, assign_to_current_user: bool, screen: ?array{id: string, name: string}, not_mapped: list<string>}>
+     *     from: Jira status ids, "0" for the creation of an issue; groups: empty when anyone may; the post function
+     *     "assign to the current user" and the transition screen are applied by the runner (Jan, decision 13)
      */
     public static function fromWorkflow(array $workflow): array
     {
@@ -47,6 +48,7 @@ final class JiraTransitions
 
             $rules = is_array($transition['rules'] ?? null) ? $transition['rules'] : [];
             $read = ['groups' => [], 'permissions' => [], 'assignee_only' => false, 'not_mapped' => []];
+            $assignToCurrentUser = false;
             self::readConditions($rules['conditionsTree'] ?? null, $read);
             foreach ($rules['validators'] ?? [] as $validator) {
                 $kind = (string)($validator['type'] ?? '');
@@ -63,11 +65,17 @@ final class JiraTransitions
                     // Redmine has no resolution field: Jira's resolution clean-up has nothing to do
                     continue;
                 }
+                if ($kind === 'AssignToCurrentUserFunction') {
+                    // a redmine_custom_workflows script per tracker and status (decision 13)
+                    $assignToCurrentUser = true;
+                    continue;
+                }
                 $read['not_mapped'][] = 'post function ' . $kind . ($field !== '' ? ' (' . $field . ')' : '');
             }
-            if (is_array($transition['screen'] ?? null) && isset($transition['screen']['name'])) {
-                $read['not_mapped'][] = 'transition screen "' . $transition['screen']['name'] . '"';
-            }
+            // the fields the screen makes required become Redmine field permissions (decision 13)
+            $screen = is_array($transition['screen'] ?? null) && isset($transition['screen']['id'])
+                ? ['id' => (string)$transition['screen']['id'], 'name' => (string)($transition['screen']['name'] ?? '')]
+                : null;
 
             $result[] = [
                 'name' => (string)($transition['name'] ?? ''),
@@ -76,6 +84,8 @@ final class JiraTransitions
                 'groups' => array_values(array_unique($read['groups'])),
                 'permissions' => array_values(array_unique(array_filter($read['permissions']))),
                 'assignee_only' => $read['assignee_only'],
+                'assign_to_current_user' => $assignToCurrentUser,
+                'screen' => $screen,
                 'not_mapped' => array_values(array_unique($read['not_mapped'])),
             ];
         }

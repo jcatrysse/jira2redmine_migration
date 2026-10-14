@@ -903,6 +903,7 @@ CREATE TABLE `migration_mapping_workflow_transitions` (
                                                     `redmine_old_status_id` INT NOT NULL COMMENT '0: the creation of an issue',
                                                     `redmine_new_status_id` INT NOT NULL,
                                                     `only_assignee` BOOLEAN NOT NULL DEFAULT 0,
+                                                    `review_role_id` INT NULL COMMENT 'role 0 rows (group not a member): the role Jan gives the transition',
                                                     `jira_workflows` TEXT NULL,
                                                     `jira_projects` TEXT NULL,
                                                     `jira_transitions` TEXT NULL,
@@ -1025,6 +1026,49 @@ CREATE TABLE `staging_jira_field_configurations` (
                                                       `raw_payload` JSON NOT NULL,
                                                       `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) COMMENT='Raw Jira field configurations.';
+
+CREATE TABLE `staging_jira_field_configuration_items` (
+                                                      `configuration_id` VARCHAR(255) NOT NULL,
+                                                      `field_id` VARCHAR(255) NOT NULL,
+                                                      `is_required` BOOLEAN NOT NULL DEFAULT 0,
+                                                      `is_hidden` BOOLEAN NOT NULL DEFAULT 0,
+                                                      `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                      PRIMARY KEY (`configuration_id`, `field_id`)
+) COMMENT='Whether each field configuration requires or hides a field (16); transition screens to field permissions (decision 13).';
+
+CREATE TABLE `migration_mapping_workflow_field_permissions` (
+                                                    `id` INT AUTO_INCREMENT PRIMARY KEY,
+                                                    `redmine_tracker_id` INT NOT NULL,
+                                                    `redmine_role_id` INT NOT NULL,
+                                                    `redmine_status_id` INT NOT NULL COMMENT 'the status the issue is saved with',
+                                                    `field_name` VARCHAR(64) NOT NULL COMMENT 'Redmine attribute (assigned_to_id) or custom field id',
+                                                    `rule` ENUM('required', 'readonly') NOT NULL DEFAULT 'required',
+                                                    `jira_field_id` VARCHAR(255) NULL,
+                                                    `jira_workflows` TEXT NULL,
+                                                    `jira_projects` TEXT NULL,
+                                                    `migration_status` ENUM('PROPOSED', 'REVIEW', 'IGNORED') NOT NULL DEFAULT 'PROPOSED',
+                                                    `notes` TEXT NULL,
+                                                    `automation_hash` CHAR(64) NULL,
+                                                    `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                    UNIQUE KEY `uk_field_permission` (`redmine_tracker_id`, `redmine_role_id`, `redmine_status_id`, `field_name`)
+) COMMENT='Redmine field permissions from the fields Jira transition screens require (tools/workflow_proposal.php), for review.';
+
+CREATE TABLE `migration_mapping_workflow_scripts` (
+                                                    `id` INT AUTO_INCREMENT PRIMARY KEY,
+                                                    `redmine_tracker_id` INT NOT NULL,
+                                                    `redmine_status_id` INT NOT NULL COMMENT 'the status the transition leads to',
+                                                    `redmine_old_status_ids` TEXT NOT NULL COMMENT 'comma separated; 0: the creation of an issue',
+                                                    `redmine_project_ids` TEXT NULL COMMENT 'comma separated: the projects whose Jira workflow has the post function',
+                                                    `jira_workflows` TEXT NULL,
+                                                    `jira_projects` TEXT NULL,
+                                                    `jira_transitions` TEXT NULL,
+                                                    `script` TEXT NOT NULL COMMENT 'redmine_custom_workflows before_save script',
+                                                    `migration_status` ENUM('PROPOSED', 'REVIEW', 'IGNORED') NOT NULL DEFAULT 'PROPOSED',
+                                                    `notes` TEXT NULL,
+                                                    `automation_hash` CHAR(64) NULL,
+                                                    `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                    UNIQUE KEY `uk_workflow_script` (`redmine_tracker_id`, `redmine_status_id`)
+) COMMENT='Jira post function "assign to the current user" as redmine_custom_workflows scripts (tools/workflow_proposal.php), for review.';
 
 CREATE TABLE `staging_jira_field_configuration_schemes` (
                                                              `scheme_id` VARCHAR(255) NOT NULL PRIMARY KEY,

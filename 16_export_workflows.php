@@ -97,6 +97,7 @@ function main(array $config, array $cliOptions): void
     exportScreenSchemes($jiraClient, $pdo);
     exportIssueTypeScreenSchemes($jiraClient, $pdo);
     exportFieldConfigurations($jiraClient, $pdo);
+    exportFieldConfigurationItems($jiraClient, $pdo);
     exportFieldConfigurationSchemes($jiraClient, $pdo);
     printf("[%s] %s%s", formatCurrentTimestamp(), AutomationRules::SKIPPED, PHP_EOL);
 }
@@ -872,6 +873,42 @@ function exportFieldConfigurations(Client $client, PDO $pdo): void
     }
 
     printf("[%s] Field configurations exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+}
+
+/**
+ * Whether each field configuration requires a field: the fields a transition screen requires become Redmine
+ * field permissions in the workflow proposal (Jan, decision 13).
+ */
+function exportFieldConfigurationItems(Client $client, PDO $pdo): void
+{
+    $configurations = $pdo->query('SELECT configuration_id FROM staging_jira_field_configurations ORDER BY configuration_id');
+    $statement = $pdo->prepare(<<<SQL
+        INSERT INTO staging_jira_field_configuration_items (configuration_id, field_id, is_required, is_hidden)
+        VALUES (:configuration_id, :field_id, :is_required, :is_hidden)
+        ON DUPLICATE KEY UPDATE is_required = VALUES(is_required), is_hidden = VALUES(is_hidden), extracted_at = CURRENT_TIMESTAMP
+    SQL);
+    if ($configurations === false || $statement === false) {
+        throw new RuntimeException('Failed to prepare the field configuration item export.');
+    }
+
+    $count = 0;
+    foreach ($configurations->fetchAll(PDO::FETCH_COLUMN) as $configurationId) {
+        $path = sprintf('/rest/api/3/fieldconfiguration/%s/fields', rawurlencode((string)$configurationId));
+        foreach (fetchPagedItems($client, $path, 'values') as $item) {
+            if (!isset($item['id'])) {
+                continue;
+            }
+            $statement->execute([
+                'configuration_id' => (string)$configurationId,
+                'field_id' => (string)$item['id'],
+                'is_required' => ($item['isRequired'] ?? false) === true ? 1 : 0,
+                'is_hidden' => ($item['isHidden'] ?? false) === true ? 1 : 0,
+            ]);
+            $count++;
+        }
+    }
+
+    printf("[%s] Field configuration items exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
 }
 
 function exportFieldConfigurationSchemes(Client $client, PDO $pdo): void
