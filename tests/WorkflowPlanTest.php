@@ -108,5 +108,10 @@ final class WorkflowPlanTest extends TestCase
         self::assertGreaterThan($enable, $again, 'the changes are computed before enable deletes the rows without a scope');
         self::assertGreaterThan($again, $write);
         self::assertStringContainsString('add, remove = compute.call(missing_scopes.to_set)', $runner, 'the preview counts them as gone');
+        // the scopes and the rules in one transaction: a scope without its rules is an own, empty workflow
+        $transaction = (int)strpos($runner, 'ActiveRecord::Base.transaction do');
+        self::assertGreaterThan(0, $transaction);
+        self::assertLessThan($enable, $transaction, 'enable commits its scopes before the rules are written');
+        self::assertGreaterThan($enable, (int)strpos($runner, "ENV['J2R_TEST_FAIL_BEFORE_RULES']"));
     }
 }

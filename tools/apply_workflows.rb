@@ -115,18 +115,23 @@ puts "#{confirm ? 'Applying' : 'Preview'} (#{mode}): transitions +#{add.size} -#
      "waiting for review: #{plan['waiting'].map { |k, v| "#{k} #{v}" }.join(', ')}"
 exit unless confirm
 
-if missing_scopes.any?
-  # the plugin's own writer: an own workflow without copying the generic rules (they follow below)
-  admin = User.where(admin: true, status: User::STATUS_ACTIVE).order(:id).first
-  missing_scopes.each do |project_id, tracker_id, role_id|
-    RedmineProjectWorkflows::Services::ScopeWriter.enable(project_ids: [project_id], tracker_ids: [tracker_id],
-                                                         role_ids: [role_id], rule_type: 'transitions',
-                                                         copy_generic: false, user: admin)
-  end
-  # enable deleted the rows without a scope: the changes again, from what is there now
-  add, remove = compute.call(Set.new)
-end
+# All or nothing: a scope without its rules is an own, EMPTY workflow (no status change possible), so the
+# scopes and the rules are written in one transaction; the plugin's enable joins it (session C).
 ActiveRecord::Base.transaction do
+  if missing_scopes.any?
+    # the plugin's own writer: an own workflow without copying the generic rules (they follow below)
+    admin = User.where(admin: true, status: User::STATUS_ACTIVE).order(:id).first
+    missing_scopes.each do |project_id, tracker_id, role_id|
+      RedmineProjectWorkflows::Services::ScopeWriter.enable(project_ids: [project_id], tracker_ids: [tracker_id],
+                                                           role_ids: [role_id], rule_type: 'transitions',
+                                                           copy_generic: false, user: admin)
+    end
+    # enable deleted the rows without a scope: the changes again, from what is there now
+    add, remove = compute.call(Set.new)
+  end
+  # test runs only: a failure between the scopes and the rules must leave no empty scope behind
+  raise 'J2R_TEST_FAIL_BEFORE_RULES set: nothing is written' if ENV['J2R_TEST_FAIL_BEFORE_RULES'] == '1'
+
   WorkflowTransition.where(id: remove).delete_all if remove.any?
   add.each_slice(5000) { |slice| WorkflowRule.insert_all(slice) }
   permissions.each(&:save!)
