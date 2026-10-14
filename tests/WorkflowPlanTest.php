@@ -90,8 +90,11 @@ final class WorkflowPlanTest extends TestCase
         $schema = (string)file_get_contents(__DIR__ . '/../database/schema.sql');
         $table = substr($schema, (int)strpos($schema, 'CREATE TABLE `migration_mapping_projects`'), 1500);
         self::assertStringNotContainsString('`jira_project_key`', substr($table, 0, (int)strpos($table, ') COMMENT')));
+        // the proposal and the check against Jira read it in lib/workflow_staging.php
+        $staging = (string)file_get_contents(__DIR__ . '/../lib/workflow_staging.php');
+        self::assertStringContainsString('JOIN staging_jira_projects p ON p.id = m.jira_project_id', $staging);
         $tool = (string)file_get_contents(__DIR__ . '/../tools/workflow_proposal.php');
-        self::assertStringContainsString('JOIN staging_jira_projects p ON p.id = m.jira_project_id', $tool);
+        self::assertStringContainsString('loadWorkflowStaging($pdo)', $tool);
     }
 
     public function testTheRunnerChecksIdsAndComputesTheChangesAfterThePluginsEnable(): void

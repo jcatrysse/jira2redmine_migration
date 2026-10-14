@@ -20,12 +20,11 @@ declare(strict_types=1);
  * and everything that cannot be mapped. It holds Jira workflow, group and status names: keep it local.
  */
 
-use Jira2Redmine\Roles\PermissionGrants;
-use Jira2Redmine\Workflows\JiraTransitions;
 use Jira2Redmine\Workflows\WorkflowProposal;
 use Jira2Redmine\Workflows\WorkflowScripts;
 
 $config = require __DIR__ . '/../bootstrap.php';
+require_once __DIR__ . '/../lib/workflow_staging.php';
 $options = getopt('', ['report::']);
 $reportPath = (string)($options['report'] ?? rtrim((string)$config['paths']['tmp'], '/') . '/workflow-proposal.md');
 $pdo = new PDO((string)$config['database']['dsn'], (string)$config['database']['username'], (string)$config['database']['password'], [
@@ -34,69 +33,20 @@ $pdo = new PDO((string)$config['database']['dsn'], (string)$config['database']['
 ]);
 $column = static fn (string $sql): array => $pdo->query($sql)->fetchAll(PDO::FETCH_KEY_PAIR);
 
-// Mappings of the structure scripts.
-$trackerOf = array_map('intval', $column("SELECT jira_issue_type_id, redmine_tracker_id FROM migration_mapping_trackers
-    WHERE redmine_tracker_id IS NOT NULL AND migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')"));
-$statusOf = array_map('intval', $column('SELECT jira_status_id, redmine_status_id FROM migration_mapping_statuses WHERE redmine_status_id IS NOT NULL'));
+// Mappings, roles, permission holders and the projects' Jira workflows (lib/workflow_staging.php).
+$staging = loadWorkflowStaging($pdo);
+['trackerOf' => $trackerOf, 'statusOf' => $statusOf, 'redmineProjectOf' => $redmineProjectOf, 'projectRoles' => $projectRoles,
+    'groupRoles' => $groupRoles, 'sources' => $sources] = $staging;
+$problems = $staging['problems'];
+$context = [];
+if ($staging['permissionRoles'] !== null) {
+    $context['permission_roles'] = $staging['permissionRoles'];
+}
 $trackerNames = $column('SELECT redmine_tracker_id, MIN(COALESCE(proposed_redmine_name, jira_issue_type_name)) FROM migration_mapping_trackers
     WHERE redmine_tracker_id IS NOT NULL GROUP BY redmine_tracker_id');
 $statusNames = $column('SELECT redmine_status_id, MIN(COALESCE(proposed_redmine_name, jira_status_name)) FROM migration_mapping_statuses
     WHERE redmine_status_id IS NOT NULL GROUP BY redmine_status_id') + [0 => '(new issue)'];
 $roleNames = $column('SELECT id, name FROM staging_redmine_roles') + [WorkflowProposal::NO_ROLE => '(no role: group not a member)'];
-$redmineProjectOf = array_map('intval', $column("SELECT p.project_key, m.redmine_project_id FROM migration_mapping_projects m
-    JOIN staging_jira_projects p ON p.id = m.jira_project_id
-    WHERE m.redmine_project_id IS NOT NULL AND m.migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')"));
-
-// Roles per project, per group, per Jira project role and of the application role, from 04's memberships.
-$projectRoles = [];
-$groupRoles = [];
-$jiraRoleRoles = [];
-$applicationRoles = [];
-foreach (
-    $pdo->query("SELECT jira_project_key, jira_role_id, principal_type, jira_group_id, jira_group_name, redmine_role_id
-    FROM migration_mapping_project_role_groups
-    WHERE redmine_role_id IS NOT NULL AND migration_status IN ('READY_FOR_ASSIGNMENT', 'ASSIGNMENT_RECORDED')") as $row
-) {
-    $project = (string)$row['jira_project_key'];
-    $role = (int)$row['redmine_role_id'];
-    $projectRoles[$project][] = $role;
-    $jiraRoleRoles[$project][(string)$row['jira_role_id']][] = $role;
-    if ($row['jira_group_id'] === PermissionGrants::APPLICATION_ROLE) {
-        $applicationRoles[$project][] = $role;
-    } elseif ($row['principal_type'] === 'group' && $row['jira_group_name'] !== null) {
-        $groupRoles[$project][mb_strtolower((string)$row['jira_group_name'], 'UTF-8')][] = $role;
-    }
-}
-$unique = static fn (array $r): array => array_values(array_unique($r));
-$projectRoles = array_map($unique, $projectRoles);
-$groupRoles = array_map(static fn (array $g): array => array_map($unique, $g), $groupRoles);
-
-// Rule 4: the roles of the holders of each permission in each project (04 stages the holders).
-$context = [];
-$problems = [];
-$holders = $pdo->query('SELECT project_key, permission, holder_type, holder_id, holder_name FROM staging_jira_project_permission_holders')
-    ->fetchAll();
-if ($holders !== []) {
-    $permissionRoles = [];
-    foreach ($holders as $holder) {
-        $project = (string)$holder['project_key'];
-        $roles = match ((string)$holder['holder_type']) {
-            'group' => $groupRoles[$project][mb_strtolower((string)$holder['holder_name'], 'UTF-8')] ?? [],
-            'projectRole' => $jiraRoleRoles[$project][(string)$holder['holder_id']] ?? [],
-            'applicationRole' => $applicationRoles[$project] ?? [],
-            default => null,
-        };
-        if ($roles === null) {
-            $problems[] = sprintf('%s: %s granted to a %s, not mapped to a role', $project, $holder['permission'], $holder['holder_type']);
-            continue;
-        }
-        $permissionRoles[$project][(string)$holder['permission']] = $unique(array_merge(
-            $permissionRoles[$project][(string)$holder['permission']] ?? [],
-            $roles
-        ));
-    }
-    $context['permission_roles'] = $permissionRoles;
-}
 
 // Rule 3: the fields on each screen, which field configurations require them, and their Redmine field.
 $screenFields = [];
@@ -124,33 +74,6 @@ $context['field_targets'] = array_map('strval', $column("SELECT jira_field_id, r
     'summary' => 'subject', 'timeoriginalestimate' => 'estimated_hours', 'timetracking' => 'estimated_hours',
     'parent' => 'parent_issue_id', 'startdate' => 'start_date',
 ];
-
-// Workflows of the migrated projects: issue type => workflow through the project's workflow scheme.
-$workflows = [];
-foreach ($pdo->query("SELECT workflow_name, raw_payload FROM staging_jira_workflows WHERE source = 'search'") as $row) {
-    $workflows[(string)$row['workflow_name']] = JiraTransitions::fromWorkflow(json_decode((string)$row['raw_payload'], true) ?: []);
-}
-$sources = [];
-$sql = "SELECT p.jira_project_id, i.jira_project_key, i.jira_issue_type_id, s.default_workflow, s.issue_type_mappings
-    FROM migration_mapping_projects p
-    JOIN staging_jira_issue_type_projects i ON i.jira_project_id = p.jira_project_id
-    LEFT JOIN staging_jira_workflow_scheme_projects s ON s.project_id = p.jira_project_id
-    WHERE p.redmine_project_id IS NOT NULL AND p.migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')
-    ORDER BY i.jira_project_key, i.jira_issue_type_id";
-foreach ($pdo->query($sql) as $row) {
-    if ($row['default_workflow'] === null) {
-        $problems[] = sprintf('%s: no workflow scheme exported (run 16 again)', $row['jira_project_key']);
-        continue;
-    }
-    $mappings = json_decode((string)$row['issue_type_mappings'], true) ?: [];
-    $name = (string)($mappings[$row['jira_issue_type_id']] ?? $row['default_workflow']);
-    if (!isset($workflows[$name])) {
-        $problems[] = sprintf('%s: workflow "%s" not exported', $row['jira_project_key'], $name);
-        continue;
-    }
-    $sources[] = ['project' => (string)$row['jira_project_key'], 'workflow' => $name, 'issue_type' => (string)$row['jira_issue_type_id'],
-        'transitions' => $workflows[$name]];
-}
 
 $proposal = WorkflowProposal::build($sources, $trackerOf, $statusOf, $projectRoles, $groupRoles, $context);
 $problems = array_values(array_unique(array_merge($problems, $proposal['problems'])));
