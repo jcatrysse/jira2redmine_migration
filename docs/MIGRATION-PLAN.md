@@ -150,16 +150,30 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
 Taken by B2 on the coordinator's instruction (recommended option, no waiting); each can be reversed.
+Per item: what was done, the alternatives, why this one.
 
-- **Assignable user is proposed too** (B31 extension): a group with Assignable user in the
-  permission scheme is proposed as group member with Developer, because Redmine assigns issues only
-  to members. In the test projects it adds 2 groups that Browse projects does not give (they are
-  Jan's to keep or set IGNORED in the review). A grant to an application role ("every licensed
-  user", GSPP and ROV) is not proposed; 04 prints it as `[note]`.
+- **Assignable user is proposed too** (B31 extension, coordinator agreed): a group with Assignable
+  user in the permission scheme is proposed as group member with Developer, because Redmine assigns
+  issues only to members. In the test projects it adds 2 groups that Browse projects does not give.
+  Alternative: Browse projects only (those groups' issues then need B46's assignee rows).
+- **A grant to an application role ("every licensed user", GSPP and ROV) is proposed for Redmine's
+  built-in group "Non member users"** with the mapped role, as MANUAL_INTERVENTION_REQUIRED with a
+  note: it gives the role to every logged-in user who is not a member, so it is pushed only once Jan
+  sets READY. It does not make anyone assignable (Redmine assigns to User and Group members only).
+  REST and Extended API create such a membership on 7.0 (201). Alternatives: (b) READY at once,
+  (c) only a note (the earlier behaviour), (d) every licensed user as a direct member (expansion).
+- **B46, option (a): an issue's assignee that no membership covers is proposed as a direct member**
+  (pseudo role "Assignee of issues (no membership)" => Developer), in the same review table; 04 now
+  runs after the issues are staged. Without it Redmine refused 10 issues in GEOS, SIS and OAC and 47
+  in WIKI ("Assignee is invalid"): Jira keeps an assignee who lost the permission. Alternatives:
+  (b) 10 creates such an issue unassigned and keeps the Jira assignee in the mapping notes and the run
+  report (the assignee is lost in Redmine); (c) the old members step, limited to assignees. (a) keeps
+  the assignee and follows Jan's review model.
 - **Automation rules: no export through the automation API.** 16 logs why it skips them
   (`AutomationRules::SKIPPED`). Recommendation: export the rules by hand from Jira (Export rules,
   JSON), keep the file outside the repository and use it as the checklist for what to rebuild in
-  Redmine (runbook, section 0).
+  Redmine (runbook, section 0). Alternative: an export through Atlassian's automation API (own
+  token and scope, not the platform API), to rebuild them as custom workflows.
 - **B37, option (a): a select value Jira no longer offers is added to the Redmine field.** After the
   run it is retired per Redmine format: an enumeration (key/value, 08's format for every select) value
   is made inactive, a plain list value is removed from the possible values. Checked on 5.1 and 7.0
@@ -167,19 +181,28 @@ Taken by B2 on the coordinator's instruction (recommended option, no waiting); e
   formats: the issues that keep the value show it, the edit form still offers it on those issues
   (selected), a save keeps it (browser saved, REST PUT 204), and no other issue can get it (REST 422
   "is not included in the list"). 08's transform lists every such value with its issue count
-  (`[unoffered]` lines, run summary). Runbook section 2.
+  (`[unoffered]` lines, run summary). Runbook section 2. Alternatives: (b) map the value to an
+  existing one by configuration, (c) leave the field empty on those issues.
 - **B38, option (a): "Allow cross-project subtasks: with all projects" (and B39: cross-project issue
   relations) as a runbook step that stays on after the migration.** An issue whose parent is in a
   later batch waits READY_FOR_REWRITE and is linked by the batch that migrates the parent's project;
   every 10 run lists the issues still waiting with the parent's key, per parent project, so a parent
   that never arrives is seen. Batches run with every project migrated so far plus the new ones (the
   jira phases of 07 and 08 replace their staging tables with the run's projects). Runbook section 1.
+  Alternatives: (b) a relation instead of a parent across projects, (c) leave such parents out and
+  log them.
+- **Service desk fields "Organizations" and "Request participants"**: 0 values in GEOS, SIS, OAC and
+  WIKI (measured in the 7.0 staging); 08 keeps them MANUAL. Recommendation: Request participants become
+  watchers (the nearest Redmine notion: people who follow the request and get its mail), Organizations
+  a key/value list field from the used values (as label fields, B45); build it when a project in scope
+  uses them. Alternatives: (b) a text field with the names, (c) not migrated.
 - **Conversion choices (quality work):** a status lozenge becomes inline code (`` `Closed` ``): a
-  separate label close to Jira's box, which cannot mix with bold or links next to it as `**` can; a
-  link to a migrated issue with its own text reads "text (#123)" (the text was lost), with the key as
-  text it stays "#123"; a link to an issue outside the migration keeps its Jira link with the key as
-  text, readable after Jira closes and clickable while it is open; Outlook safe links in mailed
-  comments become the link itself (the wrapper expires and carries the recipient's address).
+  separate label close to Jira's box, which cannot mix with bold or links next to it as `**` can
+  (alternative: bold); a link to a migrated issue with its own text reads "text (#123)" (the text was
+  lost), with the key as text it stays "#123"; a link to an issue outside the migration keeps its Jira
+  link with the key as text, readable after Jira closes and clickable while it is open (alternative:
+  the key as plain text); Outlook safe links in mailed comments become the link itself (the wrapper
+  expires and carries the recipient's address).
 
 ## Measured on 2026-10-13 (reading the code, nothing run yet)
 
@@ -648,6 +671,10 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B43 | 08's purge of mappings without a Jira field deleted the synthetic `cascading_parent:` rows on every transform; after a rerun of 08 nothing recreated them | 10 lost the parent field of 3 cascading fields; issues created after the rerun lost their parent value (41 verify failures in the healed WIKI run) | **fixed** (`MappingKeys`) |
 | B44 | The spacing clean-up joined digits after a reference; two clean-ups turned "user 5" into a mention | a mention followed by a number pointed to another user ("user#332 4 lines" became "user#3324": 8 journals in the SURV run, 7 comments in the data); "#12 3" would become "#123" | **fixed**, PHPUnit cases from anonymised input |
 | B45 | 08 took the values of app fields without allowed values (label manager fields) only in the jira phase, before 10 staged the issues | 5 fields MANUAL, not migrated | **fixed** with B37 (usage phase): 34 fields created instead of 30. "Organizations" and "Request participants" (service desk) are now seen and MANUAL; not migrated before either |
+| B46 | With 04's memberships from Jira's model (B31 a), Redmine refused issues whose assignee no membership covers | "Assignee is invalid": 10 issues in GEOS, SIS, OAC (5.1), 47 in the WIKI batch (7.0); Jira keeps an assignee who lost the permission | **fixed** (option a, decided overnight): 04 proposes such an assignee as a direct member (Developer) in the review table; 04 runs after the issues are staged. Every refused (project, assignee) is in the proposal: 6 of 6 (5.1), 9 of 9 (7.0) |
+| B47 | A later batch: a select value its issues hold never reached a field created by an earlier batch | 294 WIKI issues MANUAL ("could not be normalised"); 08's push updated an existing field's projects and trackers, not its values | **fixed**: 08's push adds the missing values to a field the migration created (Extended API) and refreshes the snapshot 10 reads; a field that existed before is listed, not changed |
+| B48 | A Jira user page cut off mid-transfer (cURL 18) | 02's extraction stopped in the WIKI batch; the retry covered failed connections only | **fixed**: every transport failure of a GET is retried |
+| B49 | Heading anchors (`<a name>`) left as HTML in the Markdown | the link passes wrapped the whole text in `<p>`: Redmine showed `###`, `**`, `&gt;` (13 of 2,214 texts) | **fixed**: anchors dropped before conversion; 3 texts left (literal MediaWiki HTML, another class) |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
