@@ -23,14 +23,22 @@ final class WorkflowPlan
      * @param list<array<string, mixed>> $fieldPermissions rows of migration_mapping_workflow_field_permissions
      * @param list<array<string, mixed>> $scripts rows of migration_mapping_workflow_scripts
      * @param string $mode project or union
+     * @param list<array{0: int, 1: int, 2: int}> $projectSets every project, tracker and role of the projects with their own
+     *     workflow (mode project): a set without approved transitions is managed too, an own empty workflow, so the
+     *     role does not fall back to the global union (18 sets on 7.0 offered transitions Jira does not have)
      * @return array{mode: string, transitions: list<array{project_id: ?int, tracker_id: int, role_id: int, old_status_id: int,
      *     new_status_id: int, author: bool, assignee: bool}>, managed: list<array{0: ?int, 1: int, 2: int}>,
      *     field_permissions: list<array{tracker_id: int, role_id: int,
      *     old_status_id: int, field_name: string, rule: string}>, scripts: list<array{name: string, tracker_id: int, status_id: int,
      *     project_ids: list<int>, script: string}>, waiting: array{transitions: int, field_permissions: int, scripts: int}}
      */
-    public static function fromRows(array $transitions, array $fieldPermissions, array $scripts, string $mode = 'project'): array
-    {
+    public static function fromRows(
+        array $transitions,
+        array $fieldPermissions,
+        array $scripts,
+        string $mode = 'project',
+        array $projectSets = []
+    ): array {
         if (!in_array($mode, ['project', 'union'], true)) {
             throw new \InvalidArgumentException('migration.workflows.mode is project or union, not ' . $mode);
         }
@@ -65,6 +73,11 @@ final class WorkflowPlan
             if (!isset($seen[$key])) {
                 $seen[$key] = true;
                 $plan['transitions'][] = $transition;
+            }
+        }
+        if ($mode === 'project') {
+            foreach ($projectSets as [$project, $tracker, $role]) {
+                $managed[(int)$project . '|' . (int)$tracker . '|' . (int)$role] ??= [(int)$project, (int)$tracker, (int)$role];
             }
         }
         ksort($managed);

@@ -76,7 +76,13 @@ final class WorkflowPlanTest extends TestCase
         // Manager in project 11 is managed with nothing: an own, empty workflow (7.0), the global one on 5.1
         self::assertSame([[null, 2, 4], [11, 2, 3], [11, 2, 4]], $project['managed']);
 
-        $union = WorkflowPlan::fromRows($rows, [], [], 'union');
+        // a role the project's own workflow gives nothing (DOC's Manager on Sub-task): managed as well, an own empty
+        // workflow; without it the role fell back to the global union (703 transitions Jira does not have, 7.0)
+        $withSets = WorkflowPlan::fromRows($rows, [], [], 'project', [[11, 2, 4], [11, 2, 5], [11, 6, 4]]);
+        self::assertSame([[null, 2, 4], [11, 2, 3], [11, 2, 4], [11, 2, 5], [11, 6, 4]], $withSets['managed']);
+        self::assertSame($project['transitions'], $withSets['transitions']);
+
+        $union = WorkflowPlan::fromRows($rows, [], [], 'union', [[11, 2, 5]]);
         self::assertSame([null], array_column($union['transitions'], 'project_id'));
         self::assertSame([[null, 2, 4]], $union['managed']);
 

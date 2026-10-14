@@ -12,6 +12,7 @@ declare(strict_types=1);
 use Jira2Redmine\Workflows\WorkflowPlan;
 
 $config = require __DIR__ . '/../bootstrap.php';
+require_once __DIR__ . '/../lib/workflow_staging.php';
 $options = getopt('', ['out:']);
 $out = (string)($options['out'] ?? rtrim((string)$config['paths']['tmp'], '/') . '/workflow-plan.json');
 $pdo = new PDO((string)$config['database']['dsn'], (string)$config['database']['username'], (string)$config['database']['password'], [
@@ -20,11 +21,25 @@ $pdo = new PDO((string)$config['database']['dsn'], (string)$config['database']['
 ]);
 $rows = static fn (string $table): array => $pdo->query("SELECT * FROM $table ORDER BY id")->fetchAll();
 
+// every project, tracker and role of the projects with their own workflow: one without approved transitions is an
+// own, empty workflow, not the global one
+$staging = loadWorkflowStaging($pdo);
+$projectSets = [];
+foreach ($staging['sources'] as $source) {
+    $project = $staging['redmineProjectOf'][$source['project']] ?? null;
+    $tracker = $staging['trackerOf'][$source['issue_type']] ?? null;
+    if ($project !== null && $tracker !== null) {
+        foreach ($staging['projectRoles'][$source['project']] ?? [] as $role) {
+            $projectSets[] = [$project, $tracker, $role];
+        }
+    }
+}
 $plan = WorkflowPlan::fromRows(
     $rows('migration_mapping_workflow_transitions'),
     $rows('migration_mapping_workflow_field_permissions'),
     $rows('migration_mapping_workflow_scripts'),
-    (string)($config['migration']['workflows']['mode'] ?? 'project')
+    (string)($config['migration']['workflows']['mode'] ?? 'project'),
+    $projectSets
 );
 file_put_contents($out, json_encode($plan, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT));
 printf(
