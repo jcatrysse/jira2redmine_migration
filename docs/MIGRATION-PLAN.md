@@ -782,9 +782,10 @@ What is not covered by these runs: the manual steps and decisions still open for
 B31, select values B37, cross-project settings B38/B39, automation rules, service desk fields), the
 Apache configuration of the production servers (runbook appendix), and phase 6 rest (M1).
 
-**Phase 9 again with the overnight code, B2, 2026-10-14 (night) — green on both targets.** Scripts at
-9e64fe7 (5.1) and 632a000 (7.0; the difference is the bench and verify measurement only), Extended API
-c806a17, GEOS, SIS, OAC, fresh instances and staging, `STABILITY=1 run_all.sh 51|70 b2-final2|b2-final`.
+**Phase 9 again with the overnight code, B2, 2026-10-14 (night) — green on both targets.** Final runs at
+5ef122b on both targets (`STABILITY=1 run_all.sh 51|70 b2-final4|b2-final3`; the earlier runs at
+9e64fe7 and 632a000 gave the same numbers), Extended API c806a17, GEOS, SIS, OAC, fresh instances and
+staging. Later commits change only the bench, verify's measure and documentation.
 New since the run above: memberships from Jira's model (B31 a) with assignee-only members (B46) and
 04 after the issue extraction, watchers without project access (B50), the conversion fixes, retry on
 cut transfers (B48), the B37/B38 lists, 16's workflow scheme per project.
