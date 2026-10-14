@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * Text conversion bench (docs/MIGRATION-PLAN.md, "Text conversion protocol", step 2 and 4).
  *
- *   php tools/conversion_bench.php --redmine=/path/to/redmine [--report=FILE] [--keys-out=FILE]
+ *   php tools/conversion_bench.php --redmine=/path/to/redmine [--report=FILE] [--keys-out=FILE] [--details=FILE]
  *
  * For every staged issue description and comment, three Markdown versions are rendered by Redmine's own
  * CommonMark formatter and compared with Jira's rendered HTML:
@@ -24,7 +24,7 @@ require_once __DIR__ . '/../lib/verify.php';
 $config = require __DIR__ . '/../bootstrap.php';
 require_once __DIR__ . '/../lib/description_conversion.php';
 
-$options = getopt('', ['redmine:', 'report::', 'keys-out::', 'limit::']);
+$options = getopt('', ['redmine:', 'report::', 'keys-out::', 'limit::', 'details::']);
 if (!isset($options['redmine'])) {
     fwrite(STDERR, "Usage: php tools/conversion_bench.php --redmine=/path/to/redmine [--report=FILE] [--keys-out=FILE] [--limit=N]\n");
     exit(2);
@@ -34,6 +34,9 @@ $tmp = rtrim((string)$config['paths']['tmp'], '/');
 @mkdir($tmp, 0775, true);
 $reportPath = (string)($options['report'] ?? $tmp . '/conversion-bench.md');
 $limit = isset($options['limit']) ? (int)$options['limit'] : null;
+// --details: one JSON line per item and path with the full measure, to classify the losses (holds Jira words: keep it local)
+$detailsPath = isset($options['details']) ? (string)$options['details'] : null;
+$details = [];
 
 $pdo = new PDO((string)$config['database']['dsn'], (string)$config['database']['username'], (string)$config['database']['password'], [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -220,6 +223,13 @@ foreach ($items as $id => $item) {
         if ($images < $expectedLinks['images']) {
             $defects[$path]['fewer images'] = ($defects[$path]['fewer images'] ?? 0) + 1;
         }
+        if ($detailsPath !== null) {
+            $details[] = json_encode([
+                'id' => $id, 'label' => $item['label'], 'path' => $path, 'lossy' => $lossy, 'coverage' => $coverage['coverage'],
+                'missing' => $coverage['missing'], 'links' => $links, 'expected' => $expectedLinks, 'images' => $images,
+                'elements' => $missingElements, 'residue' => $residue, 'constructs' => $constructs,
+            ], JSON_UNESCAPED_UNICODE);
+        }
         if ($lossy && $path !== 'adf') {
             $losses[] = [$path, $item['label'], sprintf('%.1f%%', 100 * $coverage['coverage']),
                 sprintf('links %d/%d images %d/%d %s', $links['links'], $expectedLinks['links'], $images, $expectedLinks['images'],
@@ -276,4 +286,7 @@ foreach ($losses as $loss) {
     $lines[] = '| ' . implode(' | ', array_map(static fn (string $c): string => str_replace(['|', "\n"], ['\|', ' '], $c), $loss)) . ' |';
 }
 file_put_contents($reportPath, implode("\n", $lines) . "\n");
+if ($detailsPath !== null) {
+    file_put_contents($detailsPath, implode("\n", $details) . "\n");
+}
 fwrite(STDOUT, implode("\n", array_slice($lines, 0, 8)) . "\nReport: " . $reportPath . "\n");
