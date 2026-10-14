@@ -47,7 +47,11 @@ Findings). Advies: niet migreren vanuit `main`; de fixes staan op `redmine70-mig
 
 **Te beslissen of te bevestigen (aanbeveling eerst)**
 1. Workflows: 439 rijen voor een overgang die Jira beperkt tot een groep die geen lid is van het project
-   (vooral ICT Support in ICT, DOC Support in DOC): `review_role_id` en PROPOSED, of IGNORED. De unie
+   (vooral ICT Support in ICT, DOC Support in DOC): `review_role_id` en PROPOSED, of IGNORED. Aanbeveling
+   per geval (tabel in Results): G, de groep lid met een eigen rol met alleen die overgangen, voor DOC,
+   GEOS (Survey Support), ICT (ICT Support) en FPS, geen enkel nieuw lid; R, de rollen die de groep al
+   heeft, voor GEOxyz-Jira-User (iedereen zit erin); IGNORED voor atlassian-addons-admin (geen users);
+   TEST/Survey Support: R of IGNORED, testproject. De unie
    opkuisen per tracker (het rapport toont per overgang workflows, projecten en issues in de status).
    De extractie van de transitieschermen houden (aanbevolen, levert 0 regels) of weghalen.
 2. Bevestigen: Assignable user als Developer; Non member-groep pas na jouw READY; B37 oude
@@ -872,6 +876,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B54 | A link with an old issue key stays a Jira link: a renamed project ("DATA-12" for GEOS-12; GEOS was once DATA) or an issue moved to another project (new number) | the rewrite knew the current keys only; 3 GEOS comments | **fixed** (decided overnight, coordinator): 10 and 11 ask Jira once per key in a link that is no staged issue (GET issue/{key}?fields=key) and keep the answer in staging_jira_issue_key_aliases; every rewrite (10, 11, relink) uses one map with the old keys |
 | B55 | verify expected a relation for a link between an issue and its own parent or subtask, which 12 leaves to the hierarchy (B40) | 1 WIKI failure (link 11351: a subtask's "To Wiki" link to its parent) | **fixed** in verify (`e0fe77b`), with a test |
 | B56 | verify counted the address of link markup a user typed ("[label\|url]") as Jira text; B42 makes it a link with that label | 1 WIKI failure (comment 29072, 49% of the words) | **fixed** in verify and the bench (`b71306f`), with a test; the comment measures 100% |
+| B57 | 05 reads the statuses from GET /rest/api/3/status, which does not list the 25 statuses Jira's status search (GET /rest/api/3/statuses/search) adds; 9 of them are in FPS's workflow (Accepted, Rejected, Re-Open, ...), no other migrated project uses one | FPS's workflow transitions to or from them are not proposed (reported as "no Redmine status"); FPS has 0 issues the read token can see, so nothing is lost now | open: 05 also reads the status search (GET, paged); only needed if FPS is migrated with issues |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
@@ -1045,6 +1050,47 @@ it counts there. On the way the check found two faults, both fixed: a project ro
 gives nothing fell back to the global union (703 transitions Jira does not have, 18 sets; `0664ed2`, now 21
 own empty workflows), and the fingerprint itself measured every status as the first on 7.0 (`update_column`
 returns false there; `5903798`).
+
+**Transitions limited to a group that is not a member: the options per case, 2026-10-14** (for Jan's
+decision on the 439 review rows / 454 answers above; Jira read with GET only, memberships from 7.0 after the
+full run, which are 04's). Per project and Jira group: the Jira transitions (a transition limited to two
+such groups counts for both), two or three examples, the group's users who are project members and their
+roles, and the cost of each option. **R**: the transitions go to the roles those users hold; counted: project
+members outside the group who gain them. **G**: the Redmine group becomes a project member with an own role
+that has only these transitions; counted: group users who are no member today and would become one. **I**:
+IGNORED; counted: Jira issues today in the from-statuses (those issue types), an upper bound of who gets
+stuck, other transitions may still leave the status. Configuration and counts only.
+
+| project | Jira group | transitions / trackers | examples (from > to) | group users who are members: roles | R | G | I | recommendation |
+|---|---|---:|---|---|---:|---:|---:|---|
+| DOC | DOC Support | 19 / 6 | New > In Progress; In Progress > Closed; Reopened > In Progress | 18 of 18: Manager 3, Developer 18 | 201 | 0 | 385 | **G** |
+| FPS | GEOxyz- Crewing approvers | 2 / 2 | Ready for review > Accepted; Ready for review > Rejected | 7 of 7: Manager 2, Developer 6 | 5 | 0 | 0 | **G** (once B57 is fixed) |
+| GEOS | Survey Support | 3 / 6 | To Wiki > Closed; Waiting Site Info > In Progress; In Progress > Waiting Site Info | 20 of 20: Manager 3, Developer 20 | 199 | 0 | 15 | **G** |
+| GEOS | atlassian-addons-admin | 1 / 6 | To Wiki > Closed | no users | 0 | 0 | 0 | **I** |
+| ICT | GEOxyz-Jira-User | 2 / 7 | Closed > Reopened | 7 of 219: Manager 6, Developer 4 | 0 | 212 | 2 | **R** |
+| ICT | ICT Support | 18 / 7 | Waiting Site Info > In Progress; New > Assigned; Reopened > In Progress | 4 of 4: Manager 3, Developer 4 | 3 | 0 | 0 | **G** |
+| LLE | GEOxyz-Jira-User | 1 / 3 | Closed > Reopened | 13 of 219: Manager 5, Developer 11 | 0 | 206 | 0 | **R** |
+| SIS | GEOxyz-Jira-User | 1 / 1 | Closed > Reopened | 37 of 219: Manager 5, Developer 36 | 0 | 182 | 6 | **R** |
+| SOIL | atlassian-addons-admin | 1 / 5 | To Wiki > Closed | no users | 0 | 0 | 1 | **I** |
+| SURV | atlassian-addons-admin | 5 / 5 | To Wiki > Closed; Labo Task > Closed; Labo Defective Equipment > Closed | no users | 0 | 0 | 0 | **I** |
+| TEST | GEOxyz-Jira-User | 2 / 4 | Closed > Reopened | 3 of 219: Manager 2, Developer 3 | 0 | 216 | 0 | **R** |
+| TEST | Survey Support | 13 / 4 | Reopened > Closed; New > In Consideration; To Supplier > Closed | 1 of 20: Manager 1, Developer 1 | 2 | 19 | 0 | none clear: R (2 extra) or I, a test project |
+
+- **G** is exact where the group's users are all members already (DOC, FPS, GEOS Survey Support, ICT
+  Support: through GEOxyz-Jira-User, Datalab Support, GEOxyz-Crewing, ICT DEV or jira-admins-geoxyz): no
+  new membership, nobody outside the group gains a transition. The own role must hold "Edit issues" (or "Add
+  issues"): Redmine ignores the workflow of a role without either (`Role#consider_workflow?`, 5.1 and 7.0).
+  For a user who is a member through another role that adds nothing beyond the transitions; a group user who
+  is no member gets no issue without "View issues". Today the role and the group membership are manual
+  (create the role, add the group to the project, set `review_role_id` to the role and PROPOSED); the runner
+  then gives that role its own project workflow like any other.
+- **R** is exact for GEOxyz-Jira-User (all 219 licensed users): in ICT, LLE, SIS and TEST every project
+  member is in it, so nobody gains what Jira does not give; G would add 182 to 216 members.
+- **I** for atlassian-addons-admin: the group has no users, the transitions are for Jira apps
+  (automation); Redmine has no such caller. An admin gets only the union of the roles' transitions, so
+  SOIL's 1 issue in "To Wiki" needs another transition out of it or a manual close.
+- FPS's 2 transitions are no review rows today: Accepted and Rejected are missing from staging (B57), so the
+  proposal reports them as "status has no Redmine status". FPS has 0 issues the read token can see.
 
 **Plugin upgrade rehearsal on 5.1, 2026-10-14** (redmine_project_workflows v0.0.3 `d61b1de` to v0.1.6
 `f2c1c2f`, on the state the runner wrote with the old version). Migrations 004 to 007 ran; 004 made 115
