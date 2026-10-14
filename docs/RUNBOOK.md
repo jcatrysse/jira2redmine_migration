@@ -223,6 +223,35 @@ check the group memberships; switch prune, LDAP sync and stealth mode back on.
 - **Never run `rake redmine:watchers:prune` after the migration**: it deletes every watcher without
   access to the issue, the historical watchers the migration kept on purpose.
 
+### Apply the workflows (Jan, decision 13)
+
+```bash
+php tools/workflow_proposal.php            # writes the three review tables and a local report
+# review, then:
+php tools/workflow_plan.php --out=/path/plan.json
+# in the Redmine root (needs redmine_custom_workflows for the scripts):
+bundle exec rails runner /path/tools/apply_workflows.rb /path/plan.json                 # preview
+bundle exec rails runner /path/tools/apply_workflows.rb /path/plan.json --confirm-push  # apply
+```
+
+- Only PROPOSED rows are applied. A REVIEW row waits for a decision: set it to PROPOSED or IGNORED.
+  A row edited by hand keeps its edit when the proposal is made again.
+- `migration_mapping_workflow_transitions`: per tracker and role, the runner sets exactly the PROPOSED
+  transitions; a tracker and role whose rows are all IGNORED gets none. A row with role 0 is a transition
+  Jira limits to a group that is not a member of the project: set `review_role_id` to the role that gets
+  it and PROPOSED, or IGNORED. Trackers fed by several Jira workflows get their union (decision 13).
+- A transition with a permission condition goes only to the roles that hold the permission in the
+  project's Jira permission scheme (04 stages the holders); without them the rows are REVIEW.
+- `migration_mapping_workflow_field_permissions`: a field a transition screen shows and Jira requires,
+  as a Redmine field permission ("required" for the status the issue is saved with). GEOxyz's Jira has
+  none: the only screen in use (Resolve Issue Screen) has no required field.
+- `migration_mapping_workflow_scripts`: Jira's post function "assign to the current user", as a
+  redmine_custom_workflows script per tracker and status (`j2r: ...`), limited to the projects whose
+  Jira workflow has it. Apply it after the import: the script runs on every save.
+- The runner replaces the temporary open workflows of its trackers and roles and takes them out of
+  `restore`'s list, so the order of `restore` and the runner does not matter. A second run changes
+  nothing. Statuses Jira has but no issue uses (9 at GEOxyz) are skipped.
+
 ## Choices for Jan (plan work list 15, decided 2026-10-13)
 
 | manual step today | options | recommendation |
