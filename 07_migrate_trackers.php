@@ -12,6 +12,7 @@ use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\Redmine\Names;
+use Jira2Redmine\Cli\Phases;
 
 const MIGRATE_TRACKERS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -2121,47 +2122,7 @@ function parseCommandLineOptions(array $argv): array
 
 function determinePhasesToRun(array $cliOptions): array
 {
-    $phases = array_keys(AVAILABLE_PHASES);
-
-    $selected = determinePhaseList($cliOptions['phases']);
-    $skipped = determinePhaseList($cliOptions['skip']);
-
-    if ($selected !== []) {
-        $phases = array_values(array_intersect($phases, $selected));
-    }
-
-    if ($skipped !== []) {
-        $phases = array_values(array_diff($phases, $skipped));
-    }
-
-    if ($phases === []) {
-        throw new RuntimeException('No phases selected after applying --phases and --skip filters.');
-    }
-
-    return $phases;
-}
-
-function determinePhaseList(?string $list): array
-{
-    if ($list === null || trim($list) === '') {
-        return [];
-    }
-
-    $phases = [];
-    foreach (explode(',', $list) as $candidate) {
-        $normalized = strtolower(trim($candidate));
-        if ($normalized === '') {
-            continue;
-        }
-
-        if (!array_key_exists($normalized, AVAILABLE_PHASES)) {
-            throw new RuntimeException(sprintf('Unknown phase: %s', $candidate));
-        }
-
-        $phases[] = $normalized;
-    }
-
-    return array_values(array_unique($phases));
+    return Phases::select(array_keys(AVAILABLE_PHASES), $cliOptions['phases'] ?? null, $cliOptions['skip'] ?? null);
 }
 
 function extractArrayConfig(array $config, string $key): array

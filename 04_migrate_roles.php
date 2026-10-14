@@ -20,6 +20,7 @@ use Jira2Redmine\Roles\ProjectRolePrincipals;
 use Jira2Redmine\Roles\RoleMapping;
 use Jira2Redmine\Roles\WatcherMemberships;
 use Jira2Redmine\Roles\WorkflowGroupRoles;
+use Jira2Redmine\Cli\Phases;
 
 const MIGRATE_ROLES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -2772,51 +2773,7 @@ function printVersion(): void
  */
 function determinePhasesToRun(array $cliOptions): array
 {
-    $phases = array_keys(AVAILABLE_PHASES);
-
-    $selected = determinePhaseList($cliOptions['phases']);
-    $skipped = determinePhaseList($cliOptions['skip']);
-
-    if ($selected !== []) {
-        $phases = array_values(array_intersect($phases, $selected));
-    }
-
-    if ($skipped !== []) {
-        $phases = array_values(array_diff($phases, $skipped));
-    }
-
-    if ($phases === []) {
-        throw new RuntimeException('No phases selected after applying --phases and --skip filters.');
-    }
-
-    return $phases;
-}
-
-/**
- * @param ?string $list
- * @return array<int, string>
- */
-function determinePhaseList(?string $list): array
-{
-    if ($list === null || trim($list) === '') {
-        return [];
-    }
-
-    $phases = [];
-    foreach (explode(',', $list) as $candidate) {
-        $normalized = strtolower(trim($candidate));
-        if ($normalized === '') {
-            continue;
-        }
-
-        if (!array_key_exists($normalized, AVAILABLE_PHASES)) {
-            throw new RuntimeException(sprintf('Unknown phase: %s', $candidate));
-        }
-
-        $phases[] = $normalized;
-    }
-
-    return array_values(array_unique($phases));
+    return Phases::select(array_keys(AVAILABLE_PHASES), $cliOptions['phases'] ?? null, $cliOptions['skip'] ?? null);
 }
 
 /**

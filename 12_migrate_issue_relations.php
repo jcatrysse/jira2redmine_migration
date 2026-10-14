@@ -12,6 +12,7 @@ use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\Relations\RelationState;
+use Jira2Redmine\Cli\Phases;
 
 const MIGRATE_RELATIONS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -774,31 +775,7 @@ function mergeNotes(?string $current, ?string $addition): ?string
 
 function determinePhasesToRun(array $cliOptions): array
 {
-    $defaultPhases = array_keys(AVAILABLE_PHASES);
-
-    $phases = isset($cliOptions['phases']) && is_string($cliOptions['phases']) && $cliOptions['phases'] !== ''
-        ? array_map('trim', explode(',', (string)$cliOptions['phases']))
-        : $defaultPhases;
-
-    $skips = isset($cliOptions['skip']) && is_string($cliOptions['skip']) && $cliOptions['skip'] !== ''
-        ? array_map('trim', explode(',', (string)$cliOptions['skip']))
-        : [];
-
-    $phases = array_values(array_filter($phases, static function ($phase) use ($skips) {
-        if ($phase === '') {
-            return false;
-        }
-
-        return !in_array($phase, $skips, true);
-    }));
-
-    foreach ($phases as $phase) {
-        if (!array_key_exists($phase, AVAILABLE_PHASES)) {
-            throw new RuntimeException(sprintf('Unknown phase "%s". Supported phases: %s', $phase, implode(', ', array_keys(AVAILABLE_PHASES))));
-        }
-    }
-
-    return $phases;
+    return Phases::select(array_keys(AVAILABLE_PHASES), $cliOptions['phases'] ?? null, $cliOptions['skip'] ?? null);
 }
 
 /**

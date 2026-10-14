@@ -10,6 +10,7 @@ use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Redmine\IssueTags;
+use Jira2Redmine\Cli\Phases;
 
 const MIGRATE_TAGS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -413,24 +414,7 @@ function extractErrorBody(ResponseInterface $response): string
  */
 function determinePhasesToRun(array $cliOptions): array
 {
-    $defaultPhases = array_keys(AVAILABLE_PHASES);
-
-    $phases = $defaultPhases;
-    if (isset($cliOptions['phases']) && is_string($cliOptions['phases']) && $cliOptions['phases'] !== '') {
-        $phases = array_map('trim', explode(',', $cliOptions['phases']));
-    }
-
-    if (isset($cliOptions['skip']) && is_string($cliOptions['skip']) && $cliOptions['skip'] !== '') {
-        $skip = array_map('trim', explode(',', $cliOptions['skip']));
-        $phases = array_values(array_diff($phases, $skip));
-    }
-
-    $phases = array_values(array_intersect($phases, $defaultPhases));
-    if ($phases === []) {
-        $phases = $defaultPhases;
-    }
-
-    return $phases;
+    return Phases::select(array_keys(AVAILABLE_PHASES), $cliOptions['phases'] ?? null, $cliOptions['skip'] ?? null);
 }
 
 /**

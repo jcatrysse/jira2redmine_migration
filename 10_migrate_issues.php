@@ -22,6 +22,7 @@ use Jira2Redmine\Text\Relink;
 use Jira2Redmine\Attachments\AttachmentNames;
 use Jira2Redmine\Attachments\IssueAttachmentState;
 use Jira2Redmine\Jira\ProjectSelection;
+use Jira2Redmine\Cli\Phases;
 
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -4920,44 +4921,7 @@ function parseCommandLineOptions(array $argv): array
  */
 function determinePhasesToRun(array $cliOptions): array
 {
-    $phases = array_keys(AVAILABLE_PHASES);
-
-    if ($cliOptions['phases'] !== null) {
-        $phases = parsePhaseList($cliOptions['phases']);
-    }
-
-    if ($cliOptions['skip'] !== null) {
-        $skip = parsePhaseList($cliOptions['skip']);
-        $phases = array_values(array_diff($phases, $skip));
-    }
-
-    if ($phases === []) {
-        throw new RuntimeException('No phases selected to run.');
-    }
-
-    return $phases;
-}
-
-/**
- * @return array<int, string>
- */
-function parsePhaseList(string $phaseList): array
-{
-    $phases = [];
-    foreach (explode(',', $phaseList) as $phase) {
-        $normalized = strtolower(trim($phase));
-        if ($normalized === '') {
-            continue;
-        }
-
-        if (!array_key_exists($normalized, AVAILABLE_PHASES)) {
-            throw new RuntimeException(sprintf('Unknown phase "%s". Valid phases: %s', $normalized, implode(', ', array_keys(AVAILABLE_PHASES))));
-        }
-
-        $phases[] = $normalized;
-    }
-
-    return array_values(array_unique($phases));
+    return Phases::select(array_keys(AVAILABLE_PHASES), $cliOptions['phases'] ?? null, $cliOptions['skip'] ?? null);
 }
 
 function printUsage(): void

@@ -16,6 +16,7 @@ use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\Attachments\AttachmentNames;
 use Jira2Redmine\Journals\JournalStatus;
 use Jira2Redmine\Text\Relink;
+use Jira2Redmine\Cli\Phases;
 const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.1';
 const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
 const JIRA_RATE_LIMIT_BASE_DELAY_MS = 1000;
@@ -2187,24 +2188,7 @@ function extractArrayConfig(array $config, string $key): array
  */
 function determinePhasesToRun(array $cliOptions): array
 {
-    $defaultPhases = array_keys(AVAILABLE_PHASES);
-
-    $phases = $defaultPhases;
-    if (isset($cliOptions['phases']) && is_string($cliOptions['phases']) && $cliOptions['phases'] !== '') {
-        $phases = array_map('trim', explode(',', $cliOptions['phases']));
-    }
-
-    if (isset($cliOptions['skip']) && is_string($cliOptions['skip']) && $cliOptions['skip'] !== '') {
-        $skip = array_map('trim', explode(',', $cliOptions['skip']));
-        $phases = array_values(array_diff($phases, $skip));
-    }
-
-    $phases = array_values(array_intersect($phases, $defaultPhases));
-    if ($phases === []) {
-        $phases = $defaultPhases;
-    }
-
-    return $phases;
+    return Phases::select(array_keys(AVAILABLE_PHASES), $cliOptions['phases'] ?? null, $cliOptions['skip'] ?? null);
 }
 
 /**

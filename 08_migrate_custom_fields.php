@@ -19,6 +19,7 @@ use Jira2Redmine\CustomFields\UsedValues;
 use Jira2Redmine\CustomFields\DependingValueDependencies;
 use Jira2Redmine\CustomFields\UsageScopes;
 use Jira2Redmine\Jira\NotMigrated;
+use Jira2Redmine\Cli\Phases;
 
 const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -7200,40 +7201,7 @@ function encodeJsonColumn(mixed $value): ?string
 }
 function determinePhasesToRun(array $cliOptions): array
 {
-    $requestedPhases = [];
-    $skippedPhases = [];
-
-    if (!empty($cliOptions['phases'])) {
-        $requestedPhases = array_filter(array_map('trim', explode(',', (string)$cliOptions['phases'])));
-    }
-
-    if (!empty($cliOptions['skip'])) {
-        $skippedPhases = array_filter(array_map('trim', explode(',', (string)$cliOptions['skip'])));
-    }
-
-    if ($requestedPhases === []) {
-        $requestedPhases = array_keys(AVAILABLE_PHASES);
-    }
-
-    $phases = [];
-    foreach ($requestedPhases as $phase) {
-        $normalizedPhase = strtolower($phase);
-        if (!isset(AVAILABLE_PHASES[$normalizedPhase])) {
-            throw new RuntimeException(sprintf('Unknown phase "%s".', $phase));
-        }
-
-        if (in_array($normalizedPhase, $skippedPhases, true)) {
-            continue;
-        }
-
-        $phases[] = $normalizedPhase;
-    }
-
-    if ($phases === []) {
-        throw new RuntimeException('No phases selected after applying --phases/--skip filters.');
-    }
-
-    return $phases;
+    return Phases::select(array_keys(AVAILABLE_PHASES), $cliOptions['phases'] ?? null, $cliOptions['skip'] ?? null);
 }
 
 /**

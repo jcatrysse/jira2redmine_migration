@@ -11,6 +11,7 @@ use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Users\JiraAccount;
+use Jira2Redmine\Cli\Phases;
 
 const MIGRATE_USERS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -728,31 +729,7 @@ function extractRedmineErrorMessage(?ResponseInterface $response, string $fallba
  */
 function determinePhasesToRun(array $cliOptions): array
 {
-    $availablePhaseKeys = array_keys(AVAILABLE_PHASES);
-    $phasesToRun = $availablePhaseKeys;
-
-    if (array_key_exists('phases', $cliOptions) && $cliOptions['phases'] !== null) {
-        if ($cliOptions['phases'] === '') {
-            throw new RuntimeException('The --phases option was provided without any values.');
-        }
-
-        $phasesToRun = normalizePhaseList($cliOptions['phases'], $availablePhaseKeys);
-    }
-
-    if (array_key_exists('skip', $cliOptions) && $cliOptions['skip'] !== null) {
-        if ($cliOptions['skip'] === '') {
-            throw new RuntimeException('The --skip option was provided without any values.');
-        }
-
-        $phasesToSkip = normalizePhaseList($cliOptions['skip'], $availablePhaseKeys);
-        $phasesToRun = array_values(array_diff($phasesToRun, $phasesToSkip));
-    }
-
-    if ($phasesToRun === []) {
-        throw new RuntimeException('No phases remain to execute after applying the provided CLI options.');
-    }
-
-    return $phasesToRun;
+    return Phases::select(array_keys(AVAILABLE_PHASES), $cliOptions['phases'] ?? null, $cliOptions['skip'] ?? null);
 }
 
 /**
@@ -852,39 +829,6 @@ function parseCommandLineOptions(array $argv): array
     }
 
     return [$options, $positionalArguments];
-}
-
-/**
- * @param string $value
- * @param array<int, string> $availablePhases
- * @return array<int, string>
- */
-function normalizePhaseList(string $value, array $availablePhases): array
-{
-    $segments = preg_split('/[\s,]+/', trim($value)) ?: [];
-    $segments = array_filter($segments, static fn(string $segment): bool => $segment !== '');
-
-    if ($segments === []) {
-        throw new RuntimeException(
-            sprintf('No valid phases supplied. Valid phases: %s', implode(', ', $availablePhases))
-        );
-    }
-
-    $normalized = [];
-    foreach ($segments as $segment) {
-        $normalizedSegment = strtolower($segment);
-        if (!in_array($normalizedSegment, $availablePhases, true)) {
-            throw new RuntimeException(
-                sprintf('Unknown phase "%s". Valid phases: %s', $segment, implode(', ', $availablePhases))
-            );
-        }
-
-        if (!in_array($normalizedSegment, $normalized, true)) {
-            $normalized[] = $normalizedSegment;
-        }
-    }
-
-    return $normalized;
 }
 
 function printUsage(): void
