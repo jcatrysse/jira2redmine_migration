@@ -282,6 +282,9 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
     5.1 test instance v0.0.3 (`d61b1de`, its default branch), 7.0 v0.1.6 (`f2c1c2f`, `redmine70-migration`);
     5.1 moves to the new version once session C confirms it supports 5.1. The runner writes the new
     version's model (scopes) whenever the plugin has the scope table.
+    Session C confirmed (v0.1.6 supports 5.1, 6.1 and 7.0): **the 5.1 test instance moved to v0.1.6 on
+    2026-10-14 as an upgrade on top of the migrated state** (rehearsal of production, Results). Runs
+    before that on 5.1 used v0.0.3 (final7 and earlier), from then on v0.1.6; 7.0 used v0.1.6 throughout.
     **Built** (`20cc6e8`, `7f1d898`, `8ff9e11`): rule 3 after all, from the field configurations 16 now
     exports (0 rows on this Jira); `tools/workflow_plan.php` and `tools/apply_workflows.rb` (preview,
     `--confirm-push`, repeatable); `WORKFLOWS=1` in `run_all.sh`. Runbook section 5. Information for Jan:
@@ -984,6 +987,15 @@ project/tracker/role sets (14 projects) and 6 "assign to the current user" scrip
 +0 -0; GEOS Task (Developer, from In Progress) offers 4 statuses, not "Create RMA", LABO Task offers it
 (10); the workflows step (111,819 opened), the runner (99,557 of them replaced), restore (12,262 removed),
 then the preview: +0 -0. 439 rows wait for Jan: transitions limited to a group that is not a member.
+
+**Plugin upgrade rehearsal on 5.1, 2026-10-14** (redmine_project_workflows v0.0.3 `d61b1de` to v0.1.6
+`f2c1c2f`, on the state the runner wrote with the old version). Migrations 004 to 007 ran; 004 made 115
+scopes from the 115 project sets, rows unchanged (1,092 global, 1,202 project). `workflow_fingerprint.rb`
+(for every project set, tracker, role and status the statuses Redmine offers): 4,945 answers, identical
+before and after; GEOS Task still without "Create RMA", LABO Task with it; the runner's preview +0 -0.
+Migration 006 printed "another plugin still registers manage_project_workflow" (passed to session C).
+Session C's runner remarks: (b) reproduced (a scope removed, its 38 rows left without one: the old runner
+needed two runs) and fixed (`e0afb7f`, one run); (a) unknown ids now stop the run.
 
 **Workflow proposal (5.1 staging of this run, `tools/workflow_proposal.php`).** 26 Jira workflows over
 74 project and issue type pairs (all 15 projects 01 created): 827 rows proposed, 176 to review. Rules
