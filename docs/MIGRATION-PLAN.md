@@ -4,8 +4,9 @@
 
 **Stand.** Phase 9 is groen op 5.1 en 7.0 met de eindcode (`5ef122b`): verify 23 checks, 0 failures, een
 tweede pass van 08 tot 15 verandert niets. GEOS, SIS en OAC: 426 issues, 422 aangemaakt, 4 wachten op
-een parent in GSPP of WIKI. De cumulatieve WIKI-batch op 7.0 (1.883 issues) loopt nog: zie Results.
-Alles staat op `redmine70-migration`. Jira bleef read-only: alleen GET-calls, de schrijfprobe gaf 401
+een parent in GSPP of WIKI. De cumulatieve WIKI-batch op 7.0: 1.883 issues, 1.882 aangemaakt, 1 wacht
+op GSPP; verify 23 checks met 2 open punten in WIKI (een relatie, een commentaar). Alles staat op
+`redmine70-migration`. Jira bleef read-only: alleen GET-calls, de schrijfprobe gaf 401
 "scope does not match".
 
 **Vannacht gebouwd en bewezen**
@@ -22,9 +23,8 @@ Alles staat op `redmine70-migration`. Jira bleef read-only: alleen GET-calls, de
   bleven 294 WIKI-issues hangen) en zet bestaande velden aan voor de nieuwe projecten (B53; anders
   verdwenen 48 waarden stil). Wachtende issues worden gekoppeld zodra het parent-project binnenkomt (B38,
   bewezen: van 92 naar 1, de laatste wacht op GSPP).
-- **Conversie.** Pipeline zonder verlies in GEOS, SIS en OAC: 1.432 van 1.444 (99,2%; met de oude meting
-  97,6%). Over de vier projecten vóór de fixes: 96,2%; het cijfer met WIKI na de fixes volgt in de
-  tabel bij "Text conversion protocol". Issue links gesplitst: de eigen linktekst viel weg (gefixt,
+- **Conversie.** Pipeline zonder verlies: GEOS, SIS en OAC 1.432 van 1.444 (99,2%; met de oude meting
+  97,6%); met WIKI erbij 4.566 van 4.648 (98,2%), vóór de fixes 96,2%. Issue links gesplitst: de eigen linktekst viel weg (gefixt,
   "tekst (#id)"), de key wordt `#id` (by design), een link buiten de migratie blijft een Jira-link met de
   key als tekst. Ook gefixt: headings, status-lozenges (inline code), Outlook safelinks (30 naar 0).
 - **Workflows.** `tools/workflow_proposal.php` maakt een reviewtabel en een lokaal rapport: 26 Jira-
@@ -55,8 +55,9 @@ Advies: niet migreren vanuit `main`. De fixes staan op `redmine70-migration`, el
    lid voorstellen, zoals bij B46 (geeft toegang die Jira niet geeft).
 3. **B52, links naar een latere batch**: een link uit batch 1 naar een issue van batch 2 blijft een
    Jira-link. (a, aanbevolen) voor productie één run met alle projecten, dan speelt het niet; (b) de
-   opt-in stap `tools/relink_issue_links.php` na de laatste batch (gebouwd): alleen teksten waarvan de
-   links nu kloppen en die in Redmine niet gewijzigd zijn; (c) laten zo (key leesbaar, link werkt zolang
+   opt-in stap `tools/relink_issue_links.php` na de laatste batch (gebouwd en bewezen: 2 commentaren
+   omgezet, een in Redmine gewijzigd commentaar met rust gelaten): alleen teksten waarvan de links nu
+   kloppen en die in Redmine niet gewijzigd zijn; (c) laten zo (key leesbaar, link werkt zolang
    Jira bestaat). Ook nieuw, **B54**: links met een oude issue-key (GEOS heette ooit DATA, of een verplaatst
    issue) worden nu ook omgezet.
 4. Automation rules: (a, aanbevolen) één keer met de hand exporteren uit Jira (JSON), buiten deze
@@ -576,7 +577,7 @@ nested list, mailto, img), and no visible Markdown syntax (`**`, `\|`, `](`, `|-
 | GEOS, SIS, OAC, WIKI (WIKI batch staging) | before the fixes / old measure | 3,636 of 3,781 (96.2%) |
 | GEOS, SIS, OAC (5.1 final run) | after the fixes / old measure | 1,410 of 1,444 (97.6%) |
 | GEOS, SIS, OAC (5.1 final run) | after the fixes / corrected measure | 1,432 of 1,444 (99.2%) |
-| GEOS, SIS, OAC, WIKI (7.0 final batch) | after the fixes / corrected measure | @@FOUR@@ |
+| GEOS, SIS, OAC, WIKI (7.0 final batch) | after the fixes / corrected measure | 4,566 of 4,648 (98.2%) |
 
 - **Issue links, split as asked** (73 lossy items with an issue link before the fixes): the link's own
   text was dropped in 44 (the only cause in 26): **fixed**, "text (#123)"; the Jira key replaced by
@@ -595,6 +596,10 @@ nested list, mailto, img), and no visible Markdown syntax (`**`, `\|`, `](`, `|-
   link label is not linked again (on the Redmine pages of the 7 issues concerned, "](" shows 0 times),
   and a mention of a login that is an e-mail address (all 417 logins are) is a link (on SIS-21's page
   both such mentions render as links with the name).
+- Four projects after the fixes: issue link 250/286 (was 144/215), heading 13/13 (was 5/12), status
+  lozenge 8/14 (was 3/14). The 36 lossy items with an issue link: key replaced by `#id` 20 (only cause
+  in 18), MediaWiki and other text 17, a link's own text 5 (never the only cause), a target outside the
+  migration 2. Other WIKI classes: literal MediaWiki HTML (`<tag>` shown, 6), `**` shown (4).
 - Remaining in GEOS/SIS/OAC (12 of 1,444): the Jira key replaced by `#id` (5, by design), `**` shown
   inside raw HTML (3), a word glued to an attachment reference (2), one table row and one literal link
   markup shown as text.
@@ -891,8 +896,25 @@ the current user" 12. Not proposed: transitions from or to 9 Jira statuses witho
 per tracker, so the proposal is their union. A hand edit (IGNORED) stayed on a rerun. Nothing is sent
 to Redmine: how to apply it is Jan's decision (open question).
 
-**Non member group (application-role grants), 5.1.** The final run proposed GSPP's and ROV's grants to
+**Cumulative WIKI batch on 7.0 with the final code** (`STABILITY=1 run_all.sh 70 b2-final3`, then
+`BATCH=1 J2R_PROJECTS=geos,sis,oac,wiki run_all.sh 70 b2-final3-wiki`, code 5ef122b): 1,883 issues, 1,882
+created, 1 waiting for its parent in GSPP (B38: 92 waiting before the parents arrived, now 1); 0 issues
+refused for their assignee (B46: 19 assignee-only members); the 294 issues with a value Jira no longer
+offers created (B47, B51); the 7 fields of the first batch enabled for WIKI (B53). Verify (100 issues,
+23 checks): custom fields 440/440 (48 failures before B53), counts 4/4 and 83/83, presence 100/100;
+2 failures left, open for the next session: one WIKI relation (Jira link 11351) and one WIKI comment
+(29072) whose missing words are an old intranet wiki URL (MediaWiki class).
+
+**Relink after the last batch (B52) and old keys (B54), 5.1.** A GEOS run with the final code stored the
+pushed-text hash of all 97 descriptions and 547 comments; a preview found none "edited", so the hashes
+match what Redmine keeps. B54: 9 unknown keys in links asked of Jira, 3 are old keys of GEOS issues
+(DATA-n). The relink preview found those 3 comments; one was then edited in Redmine; `--confirm-push`
+rewrote the other 2 (Redmine now shows `#id`, no Jira link) and left the edited one alone; a second
+preview found nothing left.
+
+**Non member group (application-role grants), 5.1 and 7.0.** The final run proposed GSPP's and ROV's grants to
 every licensed user as 4 rows for "Non member users", MANUAL_INTERVENTION_REQUIRED. An anonymised grant
 on OAC, set READY as Jan would, was pushed (membership "Non member users", Developer); a logged-in
 non-member, non-admin user then has the role's rights and is not assignable, as the note says. The
-test memberships were removed again.
+test memberships were removed again. Same on 7.0 (membership created through the push, user not
+assignable, removed).
