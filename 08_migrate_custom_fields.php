@@ -5273,7 +5273,8 @@ function addValuesToExistingEnumerationFields(PDO $pdo, Client $client, string $
     $allowed = $pdo->prepare('SELECT allowed_values_json FROM staging_jira_project_issue_type_fields WHERE jira_field_id = :field');
     $updateMapping = $pdo->prepare('UPDATE migration_mapping_custom_fields SET redmine_custom_field_enumerations = :e WHERE mapping_id = :id');
     $updateSnapshot = $pdo->prepare(
-        "UPDATE staging_redmine_custom_fields SET raw_payload = JSON_SET(raw_payload, '$.custom_field.enumerations', CAST(:e AS JSON)) WHERE id = :id"
+        // JSON_EXTRACT(:e, '$') passes the list as JSON on MySQL and MariaDB alike (MariaDB has no JSON cast)
+        "UPDATE staging_redmine_custom_fields SET raw_payload = JSON_SET(raw_payload, '$.custom_field.enumerations', JSON_EXTRACT(:e, '$')) WHERE id = :id"
     );
     if ($rows === false || $allowed === false || $updateMapping === false || $updateSnapshot === false) {
         throw new RuntimeException('Failed to prepare the statements to add values to existing fields.');
@@ -5309,20 +5310,31 @@ function addValuesToExistingEnumerationFields(PDO $pdo, Client $client, string $
             );
             continue;
         }
-        printf("  [values] Redmine custom field #%d: adding %s (held by the issues, B47).%s", $redmineId, implode(', ', $missing), PHP_EOL);
         if (!$apply) {
+            printf("  [values] Redmine custom field #%d lacks %s (held by the issues, B47); the push adds them.%s", $redmineId, implode(', ', $missing), PHP_EOL);
             continue;
         }
 
-        $position = count($enumerations);
-        $new = array_map(static function (string $name) use (&$position): array {
-            return ['name' => $name, 'position' => ++$position, 'active' => true];
-        }, $missing);
         try {
-            $client->put(
-                buildExtendedApiPath($extendedApiPrefix, sprintf('custom_fields/%d.json', $redmineId)),
-                ['json' => ['custom_field' => ['enumerations' => $new]]]
-            );
+            // the snapshot can be stale (a value added by an earlier push): add only what Redmine itself lacks
+            $live = fetchRedmineCustomFieldEnumerations($client, $redmineId, true, $extendedApiPrefix);
+            if ($live === null) {
+                throw new RuntimeException('the field could not be read');
+            }
+            $missing = EnumerationGap::missing($wanted, $live);
+            if ($missing !== []) {
+                printf("  [values] Redmine custom field #%d: adding %s (held by the issues, B47).%s", $redmineId, implode(', ', $missing), PHP_EOL);
+                $position = count($live);
+                $new = array_map(static function (string $name) use (&$position): array {
+                    return ['name' => $name, 'position' => ++$position, 'active' => true];
+                }, $missing);
+                $client->put(
+                    buildExtendedApiPath($extendedApiPrefix, sprintf('custom_fields/%d.json', $redmineId)),
+                    ['json' => ['custom_field' => ['enumerations' => $new]]]
+                );
+            } else {
+                printf("  [values] Redmine custom field #%d has the values already; snapshot refreshed.%s", $redmineId, PHP_EOL);
+            }
             $refreshed = fetchRedmineCustomFieldEnumerations($client, $redmineId, true, $extendedApiPrefix);
             if ($refreshed === null) {
                 throw new RuntimeException('the field could not be read back');

@@ -26,5 +26,7 @@ final class EnumerationGapTest extends TestCase
             '08 updates an existing field\'s projects and trackers but not its values'
         );
         self::assertTrue(str_contains($script, "JSON_SET(raw_payload, '\$.custom_field.enumerations'"), '10 would read a stale snapshot');
+        // the staging database is MariaDB at GEOxyz: it has no CAST(... AS JSON), the snapshot update failed (B47 proof run)
+        self::assertFalse(str_contains($script, 'AS JSON)'), '08 casts to JSON, which MariaDB refuses');
     }
 }
