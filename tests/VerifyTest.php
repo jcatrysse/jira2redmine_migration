@@ -80,6 +80,14 @@ final class VerifyTest extends TestCase
         self::assertSame(['links' => 1, 'images' => 2], verifyHtmlLinkCounts($html));
     }
 
+    public function testAnIssueReferenceInsideALinkLabelStaysText(): void
+    {
+        self::assertSame(
+            'See [Support #10566: speeds](https://example.org/t/1) and [#12](/issues/12)',
+            verifyLinkIssueReferences('See [Support #10566: speeds](https://example.org/t/1) and #12')
+        );
+    }
+
     public function testAnOutlookSafeLinkWrapperIsNoTextToKeep(): void
     {
         $html = '<p>See <a href="https://eur06.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.org&amp;data=05">'

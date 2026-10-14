@@ -39,6 +39,22 @@ function verifyDropJiraBrowseUrls(string $text): string
 }
 
 /**
+ * "#123" as Redmine links it when it renders: an issue link, but not inside a link the text already has
+ * (on Redmine 5.1 pages such a label shows no "](", the bench's nested link did).
+ */
+function verifyLinkIssueReferences(string $markdown): string
+{
+    $parts = preg_split('/(!?\[[^\]]*\]\([^)]*\))/', $markdown, -1, PREG_SPLIT_DELIM_CAPTURE) ?: [$markdown];
+    foreach ($parts as $i => $part) {
+        if ($i % 2 === 0) {
+            $parts[$i] = preg_replace('/(?<![\w&\/#\[])#(\d+)\b/', '[#$1](/issues/$1)', $part) ?? $part;
+        }
+    }
+
+    return implode('', $parts);
+}
+
+/**
  * Plain text of Redmine Markdown (CommonMark/GFM as the scripts write it), close enough to compare words.
  * Redmine renders user#123 and @login as the user's name; $userName (id or login => name, null if unknown)
  * does the same here.

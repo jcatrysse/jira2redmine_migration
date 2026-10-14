@@ -128,7 +128,8 @@ $resolveUsers = static function (string $markdown) use ($userName): string {
     $markdown = preg_replace_callback('/\buser#(\d+)/', static fn (array $m): string => ($n = $userName($m[1])) !== null ? '[' . $n . '](/users/' . $m[1] . ')' : $m[0], $markdown) ?? $markdown;
     $markdown = preg_replace_callback('/(?<![\w@\/])@([A-Za-z0-9_.-]*[A-Za-z0-9_])/', static fn (array $m): string => ($n = $userName($m[1])) !== null ? '[' . $n . '](/users/' . $m[1] . ')' : $m[0], $markdown) ?? $markdown;
 
-    return preg_replace('/(?<![\w&\/#\[])#(\d+)\b/', '[#$1](/issues/$1)', $markdown) ?? $markdown;
+    // Redmine does not link "#123" inside a link it already has: neither does the bench (a nested link showed "](")
+    return verifyLinkIssueReferences($markdown);
 };
 
 // Convert along both paths.
