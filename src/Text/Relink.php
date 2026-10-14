@@ -36,4 +36,17 @@ final class Relink
 
         return ['action' => $rewritten === $text ? 'nothing' : 'relink', 'text' => $rewritten];
     }
+
+    /**
+     * The check after the relink (Jan, B52: batches plus relink): does this text, as Redmine has it now, still hold
+     * a Jira link to a migrated issue? Whatever its hash says, so an edited text with such a link is counted too.
+     *
+     * @param callable(string): string $rewrite the link rewrite with the current issue map
+     */
+    public static function linkLeft(?string $current, callable $rewrite): bool
+    {
+        $text = str_replace(["\r\n", "\r"], "\n", (string)$current);
+
+        return $rewrite($text) !== $text;
+    }
 }

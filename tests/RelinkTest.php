@@ -33,6 +33,19 @@ final class RelinkTest extends TestCase
         self::assertSame('nothing', Relink::decide(self::PUSHED, $pushed, static fn (string $t): string => $t)['action']);
     }
 
+    public function testTheCheckCountsEveryTextThatStillLinksAMigratedIssue(): void
+    {
+        // Jan, B52: after the relink the count of Jira links to migrated issues must be 0; an edited text the relink
+        // left alone still counts, a text whose link points outside the migration does not
+        $rewrite = static fn (string $text): string => replaceIssueLinksInText($text, ['ABC-12' => 812]);
+
+        self::assertTrue(Relink::linkLeft(str_replace("\n", "\r\n", self::PUSHED), $rewrite));
+        self::assertTrue(Relink::linkLeft(self::PUSHED . ' (updated)', $rewrite));
+        self::assertFalse(Relink::linkLeft("See the plan (#812).\nThanks", $rewrite));
+        self::assertFalse(Relink::linkLeft('See [elsewhere](https://site.atlassian.net/browse/XYZ-1).', $rewrite));
+        self::assertFalse(Relink::linkLeft(null, $rewrite));
+    }
+
     public function testThePushesStoreWhatTheySent(): void
     {
         $ten = (string)file_get_contents(__DIR__ . '/../10_migrate_issues.php');
