@@ -19,9 +19,10 @@ hand in the mapping tables keep their edits (automation hash). Checked on 5.1 an
 | Jira token | scoped API token with read scopes only (decision 1, plan): `read:jira-work`, `read:jira-user` and 21 granular scopes (each `:jira`): read:group, read:user, read:avatar, read:project, read:project-category, read:project-role, read:application-role, read:issue-type, read:issue-security-level, read:status, read:webhook, read:workflow, read:workflow-scheme, read:issue-type-scheme, read:issue-type-screen-scheme, read:screen, read:screen-scheme, read:screen-tab, read:screenable-field, read:field-configuration, read:field-configuration-scheme (an operation needs all the scopes it lists) | write probe through the gateway, `PUT /rest/api/3/issue/NONEXIST-1`: 401 "scope does not match" (a 404 means the token can write) |
 | Jira config | `jira.base_url` the site (`https://<site>.atlassian.net`, used for links back), `jira.cloud_id` from `https://<site>/_edge/tenant_info` (all API calls then go through the gateway) | `php 01_migrate_projects.php --phases=jira` lists the projects; 0 projects stops with the likely causes |
 | Redmine | REST API on, text formatting CommonMark, an admin API key, `redmine_extended_api` installed, `attachment_max_size` above the largest attachment | `curl -H "X-Redmine-API-Key: ..." <redmine>/extended_api/issues.json` answers with header `X-Redmine-Extended-API` |
-| Redmine settings | parent priority independent (Administration, Settings, Issue tracking: parent attributes); cross-project subtasks "With all projects" and cross-project issue relations allowed (Jira parents and links can be in another project, B38, B39; open for Jan); GEOxyz relation types in `redmine_issue_view_columns.local.rb` (`tools/testenv/redmine_issue_view_columns.local.rb` is generated from `migration.relations.custom_mappings`) | |
+| Redmine settings | parent priority independent (Administration, Settings, Issue tracking: parent attributes); cross-project subtasks "With all projects" and cross-project issue relations allowed (Jira parents and links can be in another project, B38, B39; decided overnight, for Jan to confirm); both **stay on after the migration**, or Redmine refuses to save an issue whose parent or related issue is in another project; GEOxyz relation types in `redmine_issue_view_columns.local.rb` (`tools/testenv/redmine_issue_view_columns.local.rb` is generated from `migration.relations.custom_mappings`) | |
 | Config | `config/config.local.php`: staging DSN, `migration.issues.projects` (the projects of this run), `migration.issues.default_redmine_author_id` and `migration.journals.default_redmine_author_id` (content of Jira app accounts and of people without a visible e-mail), `attachments.download_concurrency` (6 is safe) | |
-| Staging | an empty MySQL database from `database/schema.sql` | |
+| Staging | an empty MySQL database from `database/schema.sql`; a database from an earlier version of the scripts needs the tables added since (2026-10-14: `staging_jira_project_permission_grants`) | |
+| Automation rules | not migrated (no Jira platform API, 16 says so in its log): export them by hand from Jira's automation settings (Export rules, JSON), keep the file outside the repository and use it as the checklist for what to rebuild in Redmine (decided overnight, for Jan to confirm) | |
 | Web server | see the appendix: X-Sendfile, `LimitRequestBody` above the largest attachment, `TimeOut` 600; `SetEnv RACK_QUERY_PARSER_PARAMS_LIMIT 12000` (large custom field forms) | |
 
 ### Manual steps around the run (each a choice, see "Choices for Jan" below)
@@ -106,6 +107,17 @@ A row you change keeps your values on every rerun of 04 (its `automation_hash` n
 prints `[preserved]`). The push sends only `READY_FOR_ASSIGNMENT` rows; a principal that already is a
 member gets the role added to its membership, inherited roles stay.
 
+### Batches (several runs, project by project)
+
+Run every batch with all projects migrated so far plus the new ones (`migration.issues.projects`,
+`J2R_PROJECTS` in the test environment): the jira phases of 07 and 08 read only the run's projects and
+replace their staging tables, so a batch with the new projects alone would narrow what 08 knows of the
+earlier ones. Migrated issues, journals and attachments are skipped on the rerun. An issue whose Jira
+parent is in a later batch waits (READY_FOR_REWRITE); the batch that migrates the parent's project
+links it. Every 10 run lists the issues still waiting, with the parent's key, per parent project
+(`Issues waiting for a parent outside the run (B38)`, `[waiting]` lines); a parent that is never
+migrated stays on that list: link it by hand or leave it.
+
 ## 2. Custom fields, issues and attachments
 
 ```bash
@@ -128,6 +140,21 @@ php 10_migrate_issues.php --phases=transform,push --confirm-push
   the run stops if that status is missing or closed); the transform prints each `[open-parent]`.
 - Attachments keep their Jira name; a second attachment with the same name on the issue gets the
   prefix `{jiraId}__`, so inline images show the right file.
+
+### Select values Jira no longer offers (B37)
+
+Jira keeps a removed option on the issues that have it. 08 adds such a value to the Redmine field, so
+10 can set it, and the transform lists every one: `Values Jira no longer offers, kept on the Redmine
+field (B37): N` and one `[unoffered] field (id) | value | issues | format: how to retire` line each.
+After the run, retire them per Redmine field format (08 creates select fields as `enumeration`):
+
+| Redmine format | retire the value | issues that keep it (5.1 and 7.0 the same) |
+|---|---|---|
+| enumeration (key/value list, 08's default) | Administration, Custom fields, the field, Values: untick Active | shown; the edit form still offers it, selected, on those issues only; a save keeps it (browser, REST PUT 204); a new issue or another issue cannot get it (422 "is not included in the list") |
+| list (plain list) | remove the line from Possible values | the same: shown, kept on edit and save, refused on other issues |
+
+Checked with `tools/testenv/retired_values.rb` and `retired_values.mjs` (browser and REST) on both
+targets.
 
 ## 3. History and links
 
