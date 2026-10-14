@@ -173,6 +173,12 @@ Per item: what was done, the alternatives, why this one.
   (b) 10 creates such an issue unassigned and keeps the Jira assignee in the mapping notes and the run
   report (the assignee is lost in Redmine); (c) the old members step, limited to assignees. (a) keeps
   the assignee and follows Jan's review model.
+- **B50, option (a): a watcher without access to the project is not migrated, as in Jira.** Redmine
+  drops a watcher who is not a member (204, not stored); with Jira's membership model that user has no
+  Browse projects in Jira either and cannot see the issue there (38 in the GEOS/SIS/OAC run, 372 in the
+  WIKI batch). 14 notes `[no-access]` and keeps the row FAILED, so a rerun adds the watcher once a
+  membership is given; verify expects them absent. Alternative: (b) watcher-only members, proposed like
+  B46's assignees (gives access Jira does not give).
 - **Automation rules: no export through the automation API.** 16 logs why it skips them
   (`AutomationRules::SKIPPED`). Recommendation: export the rules by hand from Jira (Export rules,
   JSON), keep the file outside the repository and use it as the checklist for what to rebuild in
@@ -679,6 +685,8 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B47 | A later batch: a select value its issues hold never reached a field created by an earlier batch | 294 WIKI issues MANUAL ("could not be normalised"); 08's push updated an existing field's projects and trackers, not its values | **fixed**: 08's push adds the missing values to a field the migration created (Extended API) and refreshes the snapshot 10 reads; a field that existed before is listed, not changed |
 | B48 | A Jira user page cut off mid-transfer (cURL 18) | 02's extraction stopped in the WIKI batch; the retry covered failed connections only | **fixed**: every transport failure of a GET is retried |
 | B49 | Heading anchors (`<a name>`) left as HTML in the Markdown | the link passes wrapped the whole text in `<p>`: Redmine showed `###`, `**`, `&gt;` (13 of 2,214 texts) | **fixed**: anchors dropped before conversion; 3 texts left (literal MediaWiki HTML, another class) |
+| B50 | With 04's memberships from Jira's model (B31 a), Redmine drops watchers who are not members of the project | 48 FAILED rows ("204 but not stored") in the 5.1 run, 372 in the WIKI batch | **handled** (option a, decided overnight): 14 notes `[no-access]` when the user is no member, verify expects them absent; all 38 rows of the final 5.1 run are `[no-access]` |
+| B51 | 08's snapshot update used CAST(... AS JSON), which MariaDB refuses | B47's fix added the value in Redmine but 10 read the stale snapshot: the 294 WIKI issues stayed MANUAL in the proof batch | **fixed**: JSON_EXTRACT(:e, '$'); 08 compares with the field's values in Redmine before adding |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
