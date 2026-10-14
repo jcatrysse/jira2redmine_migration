@@ -156,6 +156,30 @@ Taken by B2 on the coordinator's instruction (recommended option, no waiting); e
   to members. In the test projects it adds 2 groups that Browse projects does not give (they are
   Jan's to keep or set IGNORED in the review). A grant to an application role ("every licensed
   user", GSPP and ROV) is not proposed; 04 prints it as `[note]`.
+- **Automation rules: no export through the automation API.** 16 logs why it skips them
+  (`AutomationRules::SKIPPED`). Recommendation: export the rules by hand from Jira (Export rules,
+  JSON), keep the file outside the repository and use it as the checklist for what to rebuild in
+  Redmine (runbook, section 0).
+- **B37, option (a): a select value Jira no longer offers is added to the Redmine field.** After the
+  run it is retired per Redmine format: an enumeration (key/value, 08's format for every select) value
+  is made inactive, a plain list value is removed from the possible values. Checked on 5.1 and 7.0
+  (`tools/testenv/retired_values.rb/.mjs`, browser and REST), the same on both targets and for both
+  formats: the issues that keep the value show it, the edit form still offers it on those issues
+  (selected), a save keeps it (browser saved, REST PUT 204), and no other issue can get it (REST 422
+  "is not included in the list"). 08's transform lists every such value with its issue count
+  (`[unoffered]` lines, run summary). Runbook section 2.
+- **B38, option (a): "Allow cross-project subtasks: with all projects" (and B39: cross-project issue
+  relations) as a runbook step that stays on after the migration.** An issue whose parent is in a
+  later batch waits READY_FOR_REWRITE and is linked by the batch that migrates the parent's project;
+  every 10 run lists the issues still waiting with the parent's key, per parent project, so a parent
+  that never arrives is seen. Batches run with every project migrated so far plus the new ones (the
+  jira phases of 07 and 08 replace their staging tables with the run's projects). Runbook section 1.
+- **Conversion choices (quality work):** a status lozenge becomes inline code (`` `Closed` ``): a
+  separate label close to Jira's box, which cannot mix with bold or links next to it as `**` can; a
+  link to a migrated issue with its own text reads "text (#123)" (the text was lost), with the key as
+  text it stays "#123"; a link to an issue outside the migration keeps its Jira link with the key as
+  text, readable after Jira closes and clickable while it is open; Outlook safe links in mailed
+  comments become the link itself (the wrapper expires and carries the recipient's address).
 
 ## Measured on 2026-10-13 (reading the code, nothing run yet)
 
@@ -531,14 +555,8 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
   deprecated; `/rest/api/3/automation/rules` is not a Jira platform endpoint (16 already skips it on
   404). Logged as B25. **Confirmed and fixed (B2)**: see B25 to B28.
 - ~~Project memberships (B31)~~ **Jan: option (a)**, see decision 10.
-- **B37, B38/B39 (put to Jan 2026-10-13 by B2):** a select value Jira no longer offers: (a, recommended,
-  implemented) added to the Redmine field, (b) mapped to an existing value by config, (c) left empty.
-  Parents and links across projects: (a, recommended, test runs) Redmine settings "cross-project
-  subtasks: with all projects" and "allow cross-project issue relations", (b) a relation instead of a
-  parent, (c) left out and logged.
-- Automation rules: not exported. `/rest/api/3/automation/rules` does not exist in the Jira platform
-  API (404 classic, 401 scoped); Jira's automation rules have their own REST API and scope. Open: does
-  Jan want them exported (to rebuild as custom workflows)?
+- ~~B37, B38/B39~~ and ~~automation rules~~: decided overnight, see "Decided overnight" (for Jan to
+  confirm).
 
 ## Findings
 
@@ -621,7 +639,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B34 | 12 marks a refused relation CREATION_FAILED without its automation hash | every later transform takes it for a hand edit ("preserved manual overrides") and never retries; 17 relations after the relation types were added | **fixed** (`src/Relations/RelationState.php`); proof on 5.1: 17 failed, a plain rerun created all 17. Test env: `setup.sh` now installs the relation types (B18) |
 | B35 | **11 pushes every journal again on each rerun** (also on `main`): the transform set every journal of a created issue to READY_FOR_PUSH, pushed ones included; FAILED journals were never retried | stability check: +1,277 duplicate journals on 5.1 and 7.0; verify still passed (each Jira comment was found) | **fixed** (`src/Journals/JournalStatus.php`): pushed journals stay SUCCESS, FAILED and SKIPPED are judged again; proof on 5.1: rerun pushed 0 comments, journal count unchanged. verify now fails on a journal present twice (51 of 75 sampled issues on the duplicated instance) |
 | B36 | verify read the `[open-parent]` note, which the push clears once the issue exists; verify's own clients had no retry | OAC 2 count failures after a full run; one verify run stopped on a dropped connection | **fixed**: open parents from the mapping (proposed status differs from the mapped Jira status), clients from `ClientFactory` |
-| B37 | A select option Jira no longer offers stays on old issues (WIKI: Department "Survey", option 10748, 294 issues; the list has "Survey Department") | the Redmine field had only the offered values; 10 held all 294 issues back as MANUAL | **fixed** (option a, open for Jan): 08 adds used values to the field (`UsedValues`), taken in the usage phase once 10 staged the issues; 10 reads the options from 08's Redmine snapshot, so a value added to an existing field by hand is used too |
+| B37 | A select option Jira no longer offers stays on old issues (WIKI: one option on 294 issues; the list has a renamed one) | the Redmine field had only the offered values; 10 held all 294 issues back as MANUAL | **fixed** (option a, decided overnight, for Jan to confirm): 08 adds used values to the field (`UsedValues`) and lists them (`[unoffered]`), taken in the usage phase once 10 staged the issues; 10 reads the options from 08's Redmine snapshot, so a value added to an existing field by hand is used too |
 | B38 | A Jira parent in another project (GEOS issues under WIKI epics) | 422 "Parent task is invalid": Redmine allows subtasks within a project tree by default | Redmine setting "cross-project subtasks: with all projects" (option a, open for Jan); test runs set it |
 | B39 | Jira links across projects | 29 relations 422 "doesn't belong to the same project" | Redmine setting "allow cross-project issue relations" (with B38, open for Jan); test runs set it |
 | B40 | A Jira link between an issue and its own parent or subtask | 6 relations 422 | **fixed**: IGNORED with a note (the hierarchy holds it) |
