@@ -5,9 +5,15 @@
 # transaction that is rolled back.
 require 'json'
 
-sets = WorkflowTransition.where.not(project_id: nil).distinct.pluck(:project_id, :tracker_id, :role_id)
-if ActiveRecord::Base.connection.table_exists?(:project_workflow_scopes)
-  sets |= ProjectWorkflowScope.where(rule_type: 'transitions').pluck(:project_id, :tracker_id, :role_id)
+# SETS: a JSON list of [project_id, tracker_id, role_id] (tools/workflow_compare.php --sets); without it, every
+# project set with its own workflow
+if ENV['SETS'].present?
+  sets = JSON.parse(File.read(ENV['SETS']))
+else
+  sets = WorkflowTransition.where.not(project_id: nil).distinct.pluck(:project_id, :tracker_id, :role_id)
+  if ActiveRecord::Base.connection.table_exists?(:project_workflow_scopes)
+    sets |= ProjectWorkflowScope.where(rule_type: 'transitions').pluck(:project_id, :tracker_id, :role_id)
+  end
 end
 statuses = IssueStatus.sorted.to_a
 answers = {}
@@ -28,7 +34,8 @@ ActiveRecord::Base.transaction do
     issue = Issue.new(project: project, tracker_id: tracker_id, author: user, subject: 'fingerprint', status: statuses.first)
     issue.save!(validate: false)
     statuses.each do |status|
-      issue.update_column(:status_id, status.id)
+      # update_all: on Redmine 7.0 update_column returns false and leaves the status as it was
+      Issue.where(id: issue.id).update_all(status_id: status.id)
       answers["#{project_id}|#{tracker_id}|#{role_id}|#{status.id}"] = Issue.find(issue.id).new_statuses_allowed_to(user).map(&:id).sort
     end
   end
