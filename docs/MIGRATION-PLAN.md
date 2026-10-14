@@ -165,7 +165,7 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
 | | |
 |---|---|
 | Branch | `redmine70-migration` (from `main` at `1de1fc9`) |
-| Phase | 2 to 5, 8 and 9 done (phase 9 green on 5.1 and 7.0, B2, 2026-10-14); 6 first part and 7 largely done; open: decisions for Jan, bench step 3, phase 6 rest |
+| Phase | 2 to 5, 8 and 9 done (phase 9 green on 5.1 and 7.0 with Jan's decisions 12 and 13, B2, 2026-10-14); 6 first part and 7 largely done; bench step 3 pages made (Jan to look); open: decisions for Jan (summary at the top), phase 6 rest |
 | Scripts | 16 scripts, ~39,000 lines of PHP, no shared library, no tests |
 | Targets | Redmine 5.1 and 7.0; the scripts stay dual-target (unlike the plugins, 5.1 is not dropped) |
 | Extended API | to be made compatible with Redmine 5.1, 6.1 and 7.0 (own repo, own branch) |
