@@ -258,6 +258,14 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
     - transitions limited to groups that are not members of the project: review rows with the group,
       Jan decides per case;
     - the 9 Jira statuses without a Redmine status (unused): skipped.
+    **Jan's answers to the examples (2026-10-14):** (1) the union, harmonised in the review table: he
+    marks the transitions he does not want anywhere (such as "Create RMA" on Task) IGNORED; the report
+    lists per tracker each union transition with its Jira workflows, projects and the issues in its
+    from-status; (2) transition screens: no new rule, as in Jira (0 rows; the only screen in use is
+    "Resolve Issue Screen", all its fields optional in all 12 field configurations), and no extraction
+    to build. It was built before this answer arrived (16 exports the field configuration items, 0 rows
+    result); kept because it is what lets those 96 transition rows go without review. Open for Jan:
+    keep it or remove it; (3) rule 4 confirmed.
     **Built** (`20cc6e8`, `7f1d898`, `8ff9e11`): rule 3 after all, from the field configurations 16 now
     exports (0 rows on this Jira); `tools/workflow_plan.php` and `tools/apply_workflows.rb` (preview,
     `--confirm-push`, repeatable); `WORKFLOWS=1` in `run_all.sh`. Runbook section 5. Information for Jan:

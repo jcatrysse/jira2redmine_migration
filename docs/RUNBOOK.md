@@ -239,12 +239,21 @@ bundle exec rails runner /path/tools/apply_workflows.rb /path/plan.json --confir
 - `migration_mapping_workflow_transitions`: per tracker and role, the runner sets exactly the PROPOSED
   transitions; a tracker and role whose rows are all IGNORED gets none. A row with role 0 is a transition
   Jira limits to a group that is not a member of the project: set `review_role_id` to the role that gets
-  it and PROPOSED, or IGNORED. Trackers fed by several Jira workflows get their union (decision 13).
+  it and PROPOSED, or IGNORED. Trackers fed by several Jira workflows get their union (decision 13);
+  Jan harmonises them to one workflow per tracker by marking the transitions he does not want anywhere
+  IGNORED. The report's "Union per tracker" lists per transition the Jira workflows and projects it
+  comes from and how many issues sit in its from-status. One transition for every role:
+
+  ```sql
+  UPDATE migration_mapping_workflow_transitions SET migration_status = 'IGNORED'
+  WHERE redmine_tracker_id = 29 AND redmine_old_status_id = 2 AND redmine_new_status_id = 14;
+  ```
 - A transition with a permission condition goes only to the roles that hold the permission in the
   project's Jira permission scheme (04 stages the holders); without them the rows are REVIEW.
 - `migration_mapping_workflow_field_permissions`: a field a transition screen shows and Jira requires,
   as a Redmine field permission ("required" for the status the issue is saved with). GEOxyz's Jira has
-  none: the only screen in use (Resolve Issue Screen) has no required field.
+  none: the only screen in use (Resolve Issue Screen: Solution, Resolution, Log Work) has no required
+  field in any of the 12 field configurations, so no rule, as in Jira (Jan, 2026-10-14).
 - `migration_mapping_workflow_scripts`: Jira's post function "assign to the current user", as a
   redmine_custom_workflows script per tracker and status (`j2r: ...`), limited to the projects whose
   Jira workflow has it. Apply it after the import: the script runs on every save.

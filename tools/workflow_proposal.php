@@ -293,6 +293,59 @@ $lines[] = '';
 foreach ($toReview as $note => $n) {
     $lines[] = sprintf('- %s: %d', $note, $n);
 }
+// Union per tracker (Jan, decision 13): he marks the transitions he does not want anywhere IGNORED; per
+// transition the Jira workflows and projects it comes from and how many issues sit in its from-status.
+$issuesIn = [];
+foreach (
+    $pdo->query('SELECT p.project_key, i.issuetype_id, i.status_id, COUNT(*) AS n FROM staging_jira_issues i
+    LEFT JOIN staging_jira_projects p ON p.id = i.project_id GROUP BY p.project_key, i.issuetype_id, i.status_id') as $row
+) {
+    $tracker = $trackerOf[$row['issuetype_id']] ?? null;
+    $status = $statusOf[$row['status_id']] ?? null;
+    if ($tracker !== null && $status !== null) {
+        $issuesIn[$tracker][$status][(string)$row['project_key']] = ($issuesIn[$tracker][$status][(string)$row['project_key']] ?? 0)
+            + (int)$row['n'];
+    }
+}
+$union = [];
+foreach ($proposal['rows'] as $row) {
+    $k = $row['old'] . '|' . $row['new'];
+    $union[$row['tracker']][$k] ??= ['old' => $row['old'], 'new' => $row['new'], 'workflows' => [], 'projects' => [], 'roles' => []];
+    $union[$row['tracker']][$k]['workflows'] = array_unique(array_merge($union[$row['tracker']][$k]['workflows'], $row['workflows']));
+    $union[$row['tracker']][$k]['projects'] = array_unique(array_merge($union[$row['tracker']][$k]['projects'], $row['projects']));
+    $union[$row['tracker']][$k]['roles'][] = (string)($roleNames[$row['role']] ?? $row['role']);
+}
+$trackerWorkflowCount = [];
+foreach ($sources as $source) {
+    if (isset($trackerOf[$source['issue_type']])) {
+        $trackerWorkflowCount[$trackerOf[$source['issue_type']]][$source['workflow']] = true;
+    }
+}
+$lines[] = '';
+$lines[] = '## Union per tracker (mark the transitions you do not want anywhere IGNORED)';
+foreach ($union as $tracker => $transitions) {
+    $all = count($trackerWorkflowCount[$tracker] ?? []);
+    $lines[] = '';
+    $lines[] = sprintf('### %s (tracker #%d, %d Jira workflow(s))', $trackerNames[$tracker] ?? $tracker, $tracker, $all);
+    $lines[] = '';
+    foreach ($transitions as $t) {
+        $inFrom = $t['old'] === 0 ? [] : ($issuesIn[$tracker][$t['old']] ?? []);
+        arsort($inFrom);
+        $lines[] = sprintf(
+            '- %s -> %s: from %d of %d workflow(s) (%s); projects %s; roles %s; issues in %s: %d%s',
+            $statusNames[$t['old']] ?? $t['old'],
+            $statusNames[$t['new']] ?? $t['new'],
+            count($t['workflows']),
+            $all,
+            implode(', ', $t['workflows']),
+            implode(', ', $t['projects']),
+            implode(', ', array_unique($t['roles'])),
+            $t['old'] === 0 ? '(creation)' : (string)($statusNames[$t['old']] ?? $t['old']),
+            array_sum($inFrom),
+            $inFrom === [] ? '' : ' (' . implode(', ', array_map(static fn (string $p, int $n): string => "$p $n", array_keys($inFrom), $inFrom)) . ')'
+        );
+    }
+}
 $lines[] = '';
 $lines[] = '## Scripts ("assign to the current user")';
 $lines[] = '';
