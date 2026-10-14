@@ -266,6 +266,14 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
     to build. It was built before this answer arrived (16 exports the field configuration items, 0 rows
     result); kept because it is what lets those 96 transition rows go without review. Open for Jan:
     keep it or remove it; (3) rule 4 confirmed.
+    **Rule 1 replaced the same day (Jan, 2026-10-14): each project gets exactly its own Jira workflow**
+    through his plugin redmine_project_workflows; the union, cleaned by him in the review table, is the
+    global workflow for projects without their own (B2's choice, the coordinator's suggestion).
+    `migration.workflows.mode`: `project` (default) or `union` (Redmine without the plugin). The review
+    table holds both (`redmine_project_id`, 0 = union). On the plugin's 5.1 version a project role
+    without transitions follows the global workflow (it cannot store an empty one); on 7.0 it is an own,
+    empty workflow. Built in `a4a3d9c`; plugin points reported to the coordinator, the plugin repository
+    not changed.
     **Built** (`20cc6e8`, `7f1d898`, `8ff9e11`): rule 3 after all, from the field configurations 16 now
     exports (0 rows on this Jira); `tools/workflow_plan.php` and `tools/apply_workflows.rb` (preview,
     `--confirm-push`, repeatable); `WORKFLOWS=1` in `run_all.sh`. Runbook section 5. Information for Jan:
@@ -956,6 +964,18 @@ groups the permission schemes name), whom Redmine refuses as watchers; all 38 ro
 **PASS** on 5.1 and 7.0, the second pass of 08 to 15 changed nothing, 4 issues waiting for a parent
 (GSPP 1, WIKI 3). B54 in a full run: 8 issue keys in links asked of Jira, 3 old keys of GEOS issues
 (DATA-n). Superseded by Jan's decisions 12 and 13 (later the same morning): their proof runs follow.
+
+**Decisions 12 and 13 on 5.1, 2026-10-14** (`STABILITY=1 WORKFLOWS=1 RESTORE=1 run_all.sh 51 b2-final7`, code
+`a813ffb`, then the workflow steps by hand with `a4a3d9c`): verify **PASS**, stability unchanged, watchers
+without access 0 (the temporary role covers them; 1,142 watchers against 1,082 before). After restore:
+temporary role gone (1,251 member roles), 417 users locked again, members 1,689 (04's 1,696 minus the 7
+assignee-only members that are off now); (a) 1,142 watchers kept, 217 of them of users who are no member;
+(b) 12 issues whose assignee is no member: 12 of 12 edited and saved, the same assignee refused on another
+issue 12 of 12; (c) memberships equal 04's proposal. Workflows, mode project: 2,193 transitions over 172
+project/tracker/role sets (14 projects) and 6 "assign to the current user" scripts applied, a second run
++0 -0; GEOS Task (Developer, from In Progress) offers 4 statuses, not "Create RMA", LABO Task offers it
+(10); the workflows step (111,819 opened), the runner (99,557 of them replaced), restore (12,262 removed),
+then the preview: +0 -0. 439 rows wait for Jan: transitions limited to a group that is not a member.
 
 **Workflow proposal (5.1 staging of this run, `tools/workflow_proposal.php`).** 26 Jira workflows over
 74 project and issue type pairs (all 15 projects 01 created): 827 rows proposed, 176 to review. Rules
