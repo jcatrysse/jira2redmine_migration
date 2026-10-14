@@ -80,6 +80,15 @@ final class VerifyTest extends TestCase
         self::assertSame(['links' => 1, 'images' => 2], verifyHtmlLinkCounts($html));
     }
 
+    public function testTheIssueTypeIconOfAnIssueMacroIsNoImage(): void
+    {
+        $html = '<a href="https://x.atlassian.net/browse/ABC-1" class="jira-issue-macro-key issue-link">'
+            . '<img class="icon" src="https://x.atlassian.net/rest/api/2/universal_avatar/view/type/issuetype/avatar/10318?size=medium" />'
+            . 'ABC-1</a> <img src="https://x.atlassian.net/secure/attachment/5/plan.png" />';
+
+        self::assertSame(['links' => 1, 'images' => 1], verifyHtmlLinkCounts($html));
+    }
+
     public function testMarkdownLinkCounts(): void
     {
         $markdown = "[x](https://example.com) and https://bare.example.com and <https://auto.example.com>\n![i](a.png)";

@@ -147,11 +147,12 @@ function verifyHtmlLinkCounts(?string $html): array
         }
     }
 
-    // Jira's link icons and emoticons are not images of the text.
+    // Jira's link icons, emoticons and the issue type icon of an issue macro (an avatar from the REST
+    // API, which the conversion leaves out like every avatar) are not images of the text.
     $images = 0;
     if (preg_match_all('/<img\b[^>]*>/i', $html, $tags) !== false) {
         foreach ($tags[0] as $tag) {
-            if (preg_match('#rendericon|emoticon|/images/icons/#i', $tag) !== 1) {
+            if (preg_match('#rendericon|emoticon|/images/icons/|/rest/api/\d+/universal_avatar/#i', $tag) !== 1) {
                 $images++;
             }
         }
