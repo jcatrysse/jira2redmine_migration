@@ -56,12 +56,12 @@ return [
             'default_redmine_role_id' => null,
             // Jira project role name => Redmine role name; null ignores the role (no membership).
             // Jira Cloud's own role names never match Redmine's; roles not listed are matched by their own name.
-            // Role of an issue's assignee that no membership covers (B46): Redmine assigns only to members.
-            // Developer by default; a dedicated role that is assignable with minimal permissions (view issues)
-            // keeps the assignment of a moved or departed person without access Jira did not give.
+            // Jan, decision 12 (2026-10-14): during the import every migrated user is a member of every migrated
+            // project with a temporary role (the "members" step), removed again by "restore". So 04 proposes no
+            // assignee-only (B46) or watcher-only (B50) members by default; true turns them on, with this role.
+            'assignee_only_members' => false,
             'assignee_only_role' => 'Developer',
-            // B50 (Jan 2026-10-14): a watcher without access to the project becomes a direct member with this
-            // role, so Redmine keeps the watcher; Developer until Jan names the role.
+            'watcher_only_members' => false,
             'watcher_only_role' => 'Developer',
             'mappings' => [
                 'Administrators' => 'Manager',

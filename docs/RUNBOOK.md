@@ -32,10 +32,14 @@ hand in the mapping tables keep their edits (automation hash). Checked on 5.1 an
 1. **Open the workflows** (`J2R_STEP=workflows`): every transition for the roles that create issues, new
    issues included. Without it every issue is created in its tracker's default status (B12). The step
    records what it adds; `J2R_STEP=restore` removes exactly that after the run.
-2. **Activate locked users** (`J2R_STEP=members`, after 04): Redmine refuses a locked user as author or
-   assignee (B5). Activated users are flagged and locked again by `restore`. The step adds no
-   memberships: those are 04's proposals, reviewed before its push (see "Review the proposed
-   memberships" in section 1).
+2. **Activate locked users and give the temporary migration role** (`J2R_STEP=members`, after 04's
+   push): Redmine refuses a locked user as author or assignee (B5); activated users are flagged and
+   locked again by `restore`. Jan's decision 12: every migrated user also becomes a member of every
+   migrated project (`J2R_PROJECTS`) with the role `Migration (temporary)` (every permission,
+   assignable), on top of 04's final memberships, so Redmine accepts every historical assignee and
+   watcher. `J2R_USER_IDS_FILE` (one Redmine user id per line, from `migration_mapping_users`) limits it
+   to the migrated users. `restore` removes that role and the memberships left without a role; 04's
+   memberships stay (see "Review the proposed memberships" in section 1).
 3. **Watch permission**: roles need `view_watched_issues` (redmine_view_issue_description), otherwise
    Redmine drops watchers silently (14 now reports them as FAILED with the reason).
 4. Switch off for the duration: attachment prune (uploads wait for their issue; prune deletes unattached
@@ -69,14 +73,12 @@ Check the summary line of each (`Matched / Ready / Manual`):
 
 ### Review the proposed memberships (04, before its push)
 
-04 runs after the jira phases of 08, 10, 09 and 14 (section 2): it reads the staged issues for their
-assignees and the staged watchers. The assignee-only rows are READY: without them Redmine refuses those
-issues ("Assignee is invalid"). The watcher-only rows are READY too (B50, Jan 2026-10-14: watchers
-without access are migrated, so the history shows who followed an issue); without them Redmine drops
-the watcher. Their role is `migration.roles.watcher_only_role`, Developer until Jan names one. Their role is `migration.roles.assignee_only_role`, Developer by default; the alternative is
-a dedicated Redmine role that is assignable with minimal permissions (view issues), so a moved or
-departed person keeps the assignment without access Jira did not give. Locked users among them are
-activated by the `members` step before 04's push and locked again by `restore`.
+04 runs after the jira phases of 08, 10, 09 and 14 (section 2). By default it proposes only the
+memberships Jira's permission model gives: historical assignees and watchers without access are covered
+during the import by the temporary migration role of the `members` step (Jan, decision 12). With
+`migration.roles.assignee_only_members` or `watcher_only_members` set to true it also proposes them as
+direct members (B46, B50), READY, with `migration.roles.assignee_only_role` / `watcher_only_role`; those
+memberships stay after the run, which is why decision 12 replaced them.
 
 Jira gives project access in two places, and 04 proposes a Redmine membership for both (B31, Jan
 option a), in `migration_mapping_project_role_groups`, one row per project, Jira role and principal:
@@ -88,8 +90,8 @@ option a), in `migration_mapping_project_role_groups`, one row per project, Jira
 | a group with Administer projects | `Administer projects (permission scheme)` | group | Manager |
 | a user or group in the project role Administrators | `Administrators` | user / group | Manager |
 | the project role atlassian-addons-project-access (Jira apps) | `atlassian-addons-project-access` | user | IGNORED |
-| an issue's assignee that none of the above makes a member (Jira keeps an assignee who lost the permission; Redmine refuses the issue, B46) | `Assignee of issues (no membership)` | user | `migration.roles.assignee_only_role` (Developer), READY, note "Assignee only, not in the project's permission groups" |
-| an issue's watcher that none of the above makes a member (Jira keeps a watcher who lost access; Redmine drops the watcher, B50) | `Watcher of issues (no membership)` | user | `migration.roles.watcher_only_role` (Developer), READY, note "Watcher only, not in the project's permission groups" |
+| only with `assignee_only_members`: an issue's assignee that none of the above makes a member (Jira keeps an assignee who lost the permission; Redmine refuses the issue, B46) | `Assignee of issues (no membership)` | user | `migration.roles.assignee_only_role` (Developer), READY, note "Assignee only, not in the project's permission groups" |
+| only with `watcher_only_members`: an issue's watcher that none of the above makes a member (Jira keeps a watcher who lost access; Redmine drops the watcher, B50) | `Watcher of issues (no membership)` | user | `migration.roles.watcher_only_role` (Developer), READY, note "Watcher only, not in the project's permission groups" |
 | a permission granted to an application role ("every licensed user") | the permission's pseudo role, `jira_group_id` `jira-application-role` | group: Redmine's built-in "Non member users" | the mapped role, status MANUAL_INTERVENTION_REQUIRED until you set READY_FOR_ASSIGNMENT: it gives the role to every logged-in user who is not a member (it does not make them assignable) |
 
 The three permission-scheme names are pseudo roles (`jira_role_id` -1, -3, -2), the assignee-only and watcher-only rows -4 and -5; `migration.roles.mappings`
@@ -147,8 +149,9 @@ php 08_migrate_custom_fields.php --phases=jira
 php 10_migrate_issues.php --phases=jira
 php 09_migrate_attachments.php --phases=jira
 php 14_migrate_watchers.php --phases=jira
-php 04_migrate_roles.php    # after the issues and watchers are staged (B46, B50); review the proposed memberships (section 1), then:
+php 04_migrate_roles.php    # review the proposed memberships (section 1), then:
 php 04_migrate_roles.php    --phases=push --confirm-push
+# J2R_STEP=members: activate locked users, the temporary migration role (decision 12, section 0)
 php 08_migrate_custom_fields.php --phases=usage,redmine,transform
 php 08_migrate_custom_fields.php --phases=push --confirm-push
 php 09_migrate_attachments.php --phases=pull --confirm-pull
@@ -210,8 +213,15 @@ the sample are expected to be absent.
 
 ## 5. After the run
 
-`J2R_STEP=restore` (or by hand): remove the opened workflow transitions, lock the activated users
-again; check the group memberships; switch prune, LDAP sync and stealth mode back on.
+`J2R_STEP=restore` (or by hand): remove the opened workflow transitions, remove the role
+`Migration (temporary)` and the memberships left without a role, lock the activated users again;
+check the group memberships; switch prune, LDAP sync and stealth mode back on.
+
+- Watchers and assignees stay as they were in Jira: removing a member role or membership prunes no
+  watcher in Redmine 5.1 or 7.0, and Redmine checks an assignee only when it changes. A watcher who
+  is no member any more gets no notifications; an issue whose assignee lost access can still be edited.
+- **Never run `rake redmine:watchers:prune` after the migration**: it deletes every watcher without
+  access to the issue, the historical watchers the migration kept on purpose.
 
 ## Choices for Jan (plan work list 15, decided 2026-10-13)
 

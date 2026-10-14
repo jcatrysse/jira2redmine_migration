@@ -33,15 +33,16 @@ final class Watchers
     /**
      * Marker of a watcher Redmine dropped because the user is not a member of the project (B50): with the
      * memberships from Jira's model (B31) such a user has no Browse projects in Jira either. Jan wants these
-     * watchers migrated (2026-10-14): 04 proposes a watcher-only membership for them. The row stays FAILED,
-     * so a rerun of 14 adds the watcher once that membership is pushed; verify counts it as missing.
+     * watchers migrated (decision 12): the members step makes every migrated user a member with a temporary
+     * role during the import. The row stays FAILED, so a rerun of 14 adds the watcher once the user is a
+     * member; verify counts it as missing.
      */
     public const NO_ACCESS = '[no-access]';
 
     public static function noAccessNote(int $redmineUserId): string
     {
         return sprintf(
-            '%s User #%d is not a member of the project: push the watcher-only membership of 04 (B50), then rerun 14.',
+            '%s User #%d is not a member of the project: run the members step (temporary migration role), then rerun 14.',
             self::NO_ACCESS,
             $redmineUserId
         );

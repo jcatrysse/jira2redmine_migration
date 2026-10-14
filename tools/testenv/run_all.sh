@@ -3,6 +3,7 @@
 #   tools/testenv/run_all.sh 51|70 LABEL
 # Logs per step go to $BASE/runs/<target>-<LABEL>/; the verify report is the last step.
 # STABILITY=1 reruns 08 to 15 after the run and reports whether Redmine's counts changed.
+# RESTORE=1 runs the restore step after verify and proves Jan's decision 12 (temporary migration role).
 # BATCH=1 keeps Redmine and the staging database of the previous run: a later batch, run with every
 # project migrated so far plus the new ones in J2R_PROJECTS (the jira phases of 07 and 08 read only the
 # run's projects and replace their staging tables).
@@ -25,8 +26,8 @@ step() { # step NAME script args...
   local rc=$?
   printf '%-14s exit=%d %4ds errors=%d\n' "$name" $rc $(( $(date +%s) - start )) "$(grep -ciE '\[error\]|fatal|exception' "$logdir/$name.log")" | tee -a "$logdir/summary.txt"
 }
-manual() { # manual workflows|members
-  (cd "$BASE/redmine$v" && J2R_STEP=$1 RAILS_ENV=production bundle exec rails runner "$REPO/tools/testenv/manual_steps.rb") 2>&1 | tail -1 | sed "s/^/manual-$1   /" | tee -a "$logdir/summary.txt"
+manual() { # manual workflows|members|restore [script]
+  (cd "$BASE/redmine$v" && J2R_STEP=$1 RAILS_ENV=production bundle exec rails runner "$REPO/tools/testenv/${2:-manual_steps.rb}") 2>&1 | tail -1 | sed "s/^/manual-$1   /" | tee -a "$logdir/summary.txt"
 }
 
 : > "$logdir/summary.txt"
@@ -65,11 +66,15 @@ step 08-jira 08_migrate_custom_fields.php --phases=jira
 step 10-jira 10_migrate_issues.php --phases=jira
 step 09-jira 09_migrate_attachments.php --phases=jira
 step 14-jira 14_migrate_watchers.php --phases=jira
-# 04 after the issues and watchers are staged: it proposes assignees (B46) and watchers (B50) without membership too
+# 04 after the issues and watchers are staged: it can propose assignees (B46) and watchers (B50) without
+# membership too (off by default since Jan's decision 12)
 step 04 04_migrate_roles.php
-# activate locked users before 04's push: assignees and watchers among them get their membership (B46, B50)
-manual members
 step 04-push 04_migrate_roles.php --phases=push --confirm-push
+# on top of 04's memberships: activate locked users and give every migrated user the temporary migration
+# role in every migrated project (Jan, decision 12); restore takes it away after the run
+mysql -N "jira2redmine_$v" -e "SELECT redmine_user_id FROM migration_mapping_users WHERE redmine_user_id IS NOT NULL" > "$J2R_TMP/user_ids.txt"
+export J2R_USER_IDS_FILE="$J2R_TMP/user_ids.txt"
+manual members
 step 08-transform 08_migrate_custom_fields.php --phases=usage,redmine,transform
 step 08-push 08_migrate_custom_fields.php --phases=push --confirm-push
 step 09-pull 09_migrate_attachments.php --phases=pull --confirm-pull
@@ -83,15 +88,16 @@ step 13 13_migrate_tags.php --confirm-push
 step 14 14_migrate_watchers.php --confirm-push
 step 15 15_migrate_checklists.php --confirm-push
 step 16 16_export_workflows.php
+# Redmine's counts, for the stability pass and the restore proof
+counts() {
+  PGPASSWORD=redmine psql -h 127.0.0.1 -U redmine -d redmine$v -Atc "SELECT 'issues '||(SELECT COUNT(*) FROM issues)
+    ||', journals '||(SELECT COUNT(*) FROM journals)||', details '||(SELECT COUNT(*) FROM journal_details)
+    ||', attachments '||(SELECT COUNT(*) FROM attachments)||', relations '||(SELECT COUNT(*) FROM issue_relations)
+    ||', watchers '||(SELECT COUNT(*) FROM watchers)||', custom values '||(SELECT COUNT(*) FROM custom_values WHERE value <> '')
+    ||', members '||(SELECT COUNT(*) FROM members)||', custom fields '||(SELECT COUNT(*) FROM custom_fields)"
+}
 if [ -n "${STABILITY:-}" ]; then
   # Second pass of everything after the structure (plan, B35): it must change nothing in Redmine.
-  counts() {
-    PGPASSWORD=redmine psql -h 127.0.0.1 -U redmine -d redmine$v -Atc "SELECT 'issues '||(SELECT COUNT(*) FROM issues)
-      ||', journals '||(SELECT COUNT(*) FROM journals)||', details '||(SELECT COUNT(*) FROM journal_details)
-      ||', attachments '||(SELECT COUNT(*) FROM attachments)||', relations '||(SELECT COUNT(*) FROM issue_relations)
-      ||', watchers '||(SELECT COUNT(*) FROM watchers)||', custom values '||(SELECT COUNT(*) FROM custom_values WHERE value <> '')
-      ||', members '||(SELECT COUNT(*) FROM members)||', custom fields '||(SELECT COUNT(*) FROM custom_fields)"
-  }
   before=$(counts)
   step 08-again 08_migrate_custom_fields.php --phases=usage,redmine,transform
   step 08-again-push 08_migrate_custom_fields.php --phases=push --confirm-push
@@ -123,3 +129,12 @@ grep -h "(B38)\|\[waiting\]" "$logdir/10-final.log" | sed 's/^ *//' | tee -a "$l
 keys=$(echo "$J2R_PROJECTS" | tr 'a-z' 'A-Z')
 (cd "$REPO" && php tools/verify.php --projects="$keys" --sample=${SAMPLE:-25} --report="$logdir/verify.md") > "$logdir/verify.out" 2>&1
 sed -n '/| check/,/^\*\*/p' "$logdir/verify.md" | tee -a "$logdir/summary.txt"
+if [ -n "${RESTORE:-}" ]; then
+  # Jan's decision 12: after restore the watchers stay, an issue whose assignee lost the membership can be
+  # edited, and the memberships equal 04's proposal.
+  echo "before restore: $(counts)" | tee -a "$logdir/summary.txt"
+  manual restore
+  echo "after restore:  $(counts)" | tee -a "$logdir/summary.txt"
+  manual proof temporary_role_proof.rb
+  (cd "$REPO" && php tools/testenv/membership_check.php) 2>&1 | tee "$logdir/membership_check.log" | tail -1 | tee -a "$logdir/summary.txt"
+fi

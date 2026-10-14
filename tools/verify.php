@@ -358,11 +358,11 @@ foreach ($projectKeys as $projectKey) {
             }
         }
         $actualWatchers = array_map(static fn (array $w): string => (string)$w['id'], $rm['watchers'] ?? []);
-        // a watcher without access to the project is migrated too (B50, Jan 2026-10-14): 04 makes it a member
+        // a watcher without access to the project is migrated too (Jan, decision 12: temporary migration role)
         $missingWatchers = array_diff($expectedWatchers, $actualWatchers);
         $withoutAccess = array_intersect($missingWatchers, $noAccessWatchers[(string)$redmineId] ?? []);
         $record('watchers', $missingWatchers === [], $issueKey, 'missing Redmine users: ' . implode(', ', $missingWatchers)
-            . ($withoutAccess !== [] ? ' (not a member: push the watcher-only membership of 04, then rerun 14)' : ''));
+            . ($withoutAccess !== [] ? ' (not a member: run the members step, then rerun 14)' : ''));
 
         // Relations between migrated issues.
         $related = [];

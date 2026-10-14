@@ -3,13 +3,19 @@
 # workflows: every transition open for Manager and Developer on every tracker, new issues included
 #            ("open the workflows", reset after the migration); watchers need view_watched_issues
 #            (redmine_view_issue_description), given to both roles; parent priority independent (B13).
-# members:   activate locked users, flagged with preference j2r_relock ("activate locked users"). Project
-#            memberships come from 04, which proposes them from the permission schemes and project roles
-#            (B31, Jan option a). Run after 04.
+# members:   activate locked users, flagged with preference j2r_relock ("activate locked users"), and make
+#            every migrated user a member of every migrated project (J2R_PROJECTS) with the temporary role
+#            "Migration (temporary)": every permission, assignable (Jan, decision 12). It comes on top of the
+#            final memberships of 04 (B31 option a), so Redmine accepts every historical assignee and watcher.
+#            J2R_USER_IDS_FILE (one Redmine user id per line, from migration_mapping_users) limits it to the
+#            migrated users; without it every user but the admin. Run after 04's push, before 08.
 # restore:   undo after the migration: remove exactly the workflow transitions "workflows" added (listed in
-#            tmp/j2r_added_workflows.json) and lock again the users "members" activated.
+#            tmp/j2r_added_workflows.json), the temporary role and every membership left without a role (the
+#            final memberships of 04 stay), and lock again the users "members" activated. Watchers stay:
+#            Redmine prunes watchers only with `rake redmine:watchers:prune`, never run it after the migration.
 step = ENV.fetch('J2R_STEP')
 roles = Role.where(name: %w[Manager Developer]).to_a
+TEMPORARY_ROLE = 'Migration (temporary)'.freeze
 
 case step
 when 'workflows'
@@ -43,25 +49,65 @@ when 'workflows'
   roles.each { |role| perms.each { |p| role.add_permission!(p) } }
   puts "workflow transitions created=#{created} permissions=#{perms.inspect} cross_project_subtasks=#{Setting.cross_project_subtasks} cross_project_issue_relations=#{Setting.cross_project_issue_relations}"
 when 'members'
-  activated = 0
-  User.where(type: 'User').where.not(id: 1).find_each do |user|
-    next unless user.locked?
-    user.pref[:j2r_relock] = '1'
-    user.pref.save!
-    user.update_column(:status, User::STATUS_ACTIVE)
-    activated += 1
+  temporary = Role.find_or_initialize_by(name: TEMPORARY_ROLE)
+  if temporary.new_record?
+    temporary.assignable = true
+    temporary.issues_visibility = 'all'
+    temporary.users_visibility = 'all'
+    temporary.time_entries_visibility = 'all'
+    temporary.permissions = Redmine::AccessControl.permissions.reject(&:public?).map(&:name)
+    temporary.save!
   end
-  puts "activated=#{activated} members=#{Member.count}"
+  users = User.where(type: 'User').where.not(id: 1)
+  ids_file = ENV['J2R_USER_IDS_FILE']
+  users = users.where(id: File.readlines(ids_file).map(&:to_i)) if ids_file.present?
+  projects = Project.where(identifier: ENV.fetch('J2R_PROJECTS').split(',')).to_a
+  activated = 0
+  added = 0
+  users.find_each do |user|
+    if user.locked?
+      user.pref[:j2r_relock] = '1'
+      user.pref.save!
+      user.update_column(:status, User::STATUS_ACTIVE)
+      activated += 1
+    end
+    projects.each do |project|
+      member = Member.find_or_initialize_by(project_id: project.id, user_id: user.id)
+      next if member.persisted? && member.member_roles.any? { |mr| mr.role_id == temporary.id && mr.inherited_from.nil? }
+      if member.new_record?
+        member.role_ids = [temporary.id]
+        member.save!
+      else
+        MemberRole.create!(member: member, role: temporary)
+      end
+      added += 1
+    end
+  end
+  puts "activated=#{activated} temporary memberships=#{added} projects=#{projects.size} members=#{Member.count}"
 when 'restore'
   added_file = Rails.root.join('tmp', 'j2r_added_workflows.json')
   removed = 0
   if File.exist?(added_file)
-    JSON.parse(File.read(added_file)).each_slice(1000) do |slice|
-      slice.each do |tracker_id, role_id, from, to|
-        removed += WorkflowTransition.where(tracker_id: tracker_id, role_id: role_id, old_status_id: from, new_status_id: to).delete_all
+    # one query per tracker, role and 500 status pairs (a query per transition took minutes for 112,767)
+    JSON.parse(File.read(added_file)).group_by { |tracker_id, role_id, _, _| [tracker_id, role_id] }.each do |(tracker_id, role_id), keys|
+      keys.each_slice(500) do |slice|
+        pairs = slice.map { |_, _, from, to| "(#{from.to_i},#{to.to_i})" }.join(',')
+        removed += WorkflowTransition.where(tracker_id: tracker_id, role_id: role_id).
+          where("(old_status_id, new_status_id) IN (#{pairs})").delete_all
       end
     end
     File.delete(added_file)
+  end
+  # the temporary role (decision 12): its member roles, then the memberships left without a role
+  # (MemberRole's own callback), then the role; the final memberships of 04 keep their roles
+  temporary_removed = 0
+  temporary = Role.find_by(name: TEMPORARY_ROLE)
+  if temporary
+    MemberRole.where(role_id: temporary.id, inherited_from: nil).find_each do |member_role|
+      member_role.destroy
+      temporary_removed += 1
+    end
+    temporary.reload.destroy
   end
   relocked = 0
   UserPreference.find_each do |pref|
@@ -71,5 +117,5 @@ when 'restore'
     pref.save!
     relocked += 1
   end
-  puts "workflow transitions removed=#{removed} users locked again=#{relocked}"
+  puts "workflow transitions removed=#{removed} temporary member roles removed=#{temporary_removed} members=#{Member.count} users locked again=#{relocked}"
 end

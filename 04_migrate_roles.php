@@ -829,7 +829,7 @@ function fetchAndStoreRedmineRoles(Client $client, PDO $pdo): int
 function runRoleTransformationPhase(PDO $pdo, array $config): array
 {
     synchronizeMigrationMappingRoles($pdo);
-    synchronizeMigrationMappingProjectRoleGroups($pdo);
+    synchronizeMigrationMappingProjectRoleGroups($pdo, $config['migration']['roles'] ?? []);
 
     $roleMapping = new RoleMapping(WatcherMemberships::mappings($config['migration']['roles'] ?? []));
     $redmineRoleLookup = fetchRedmineRoleLookup($pdo);
@@ -872,10 +872,9 @@ SQL;
 }
 
 /**
- * @param PDO $pdo
- * @return void
+ * @param array<string, mixed> $rolesConfig migration.roles
  */
-function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo): void
+function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo, array $rolesConfig): void
 {
     try {
         $actorRows = $pdo->query('SELECT project_id, project_key, project_name, role_id, role_name, actor_id, actor_display, actor_type FROM staging_jira_project_role_actors ORDER BY project_id, role_id, actor_type, actor_id');
@@ -911,13 +910,19 @@ function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo): void
         ];
     }
 
-    // Assignees no membership covers (B46): proposed as direct members, so Redmine accepts them.
+    // Assignees and watchers no membership covers (B46, B50): only with the options on; by default the members
+    // step gives every migrated user a temporary role during the import instead (Jan, decision 12).
+    $assigneeOnly = ($rolesConfig['assignee_only_members'] ?? false) === true;
+    $watcherOnly = ($rolesConfig['watcher_only_members'] ?? false) === true;
+    if (!$assigneeOnly && !$watcherOnly) {
+        printf("  [note] No assignee-only or watcher-only members: the temporary migration role covers them (decision 12).%s", PHP_EOL);
+    }
     $members = [];
     $memberRows = $pdo->query('SELECT group_id, account_id FROM staging_jira_group_members');
     foreach ($memberRows !== false ? $memberRows->fetchAll(PDO::FETCH_ASSOC) : [] as $member) {
         $members[(string)$member['group_id']][] = (string)$member['account_id'];
     }
-    $assigneeRows = $pdo->query(<<<SQL
+    $assigneeRows = !$assigneeOnly ? false : $pdo->query(<<<SQL
         SELECT DISTINCT i.project_id, p.project_key, p.name AS project_name, i.assignee_account_id AS account_id,
                JSON_UNQUOTE(JSON_EXTRACT(i.raw_payload, '$.fields.assignee.displayName')) AS display_name
         FROM staging_jira_issues i
@@ -936,7 +941,7 @@ function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo): void
         ];
     }
     $uncovered = AssigneeMemberships::uncovered($assignees, $actors, $members, ['atlassian-addons-project-access']);
-    if ($assignees === []) {
+    if ($assigneeOnly && $assignees === []) {
         printf("  [note] No staged issues: assignees without membership cannot be proposed (run 10 --phases=jira before 04).%s", PHP_EOL);
     } elseif ($uncovered !== []) {
         printf("  Proposed %d assignee(s) without membership as direct members (B46).%s", count($uncovered), PHP_EOL);
@@ -944,7 +949,7 @@ function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo): void
     $actors = array_merge($actors, $uncovered);
 
     // Watchers no membership covers (B50, Jan 2026-10-14): migrated, so the history shows who followed an issue.
-    $watcherRows = $pdo->query(<<<SQL
+    $watcherRows = !$watcherOnly ? false : $pdo->query(<<<SQL
         SELECT DISTINCT i.project_id, p.project_key, p.name AS project_name, w.account_id,
                JSON_UNQUOTE(JSON_EXTRACT(w.raw_payload, '$.displayName')) AS display_name
         FROM staging_jira_watchers w
@@ -963,7 +968,7 @@ function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo): void
         ];
     }
     $uncoveredWatchers = WatcherMemberships::uncovered($watchers, $actors, $members, ['atlassian-addons-project-access']);
-    if ($watchers === []) {
+    if ($watcherOnly && $watchers === []) {
         printf("  [note] No staged watchers: watchers without membership cannot be proposed (run 14 --phases=jira before 04).%s", PHP_EOL);
     } elseif ($uncoveredWatchers !== []) {
         printf("  Proposed %d watcher(s) without membership as direct members (B50).%s", count($uncoveredWatchers), PHP_EOL);
