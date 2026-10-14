@@ -3,6 +3,9 @@
 #   tools/testenv/run_all.sh 51|70 LABEL
 # Logs per step go to $BASE/runs/<target>-<LABEL>/; the verify report is the last step.
 # STABILITY=1 reruns 08 to 15 after the run and reports whether Redmine's counts changed.
+# BATCH=1 keeps Redmine and the staging database of the previous run: a later batch, run with every
+# project migrated so far plus the new ones in J2R_PROJECTS (the jira phases of 07 and 08 read only the
+# run's projects and replace their staging tables).
 # Expects tools/testenv/setup.sh to have run, and config/config.local.php to read the environment
 # (JIRA_*, JIRA_CLOUD_ID, REDMINE_URL, REDMINE_API_KEY, STAGING_DSN, J2R_TMP, J2R_JQL, J2R_PROJECTS).
 set -u
@@ -27,7 +30,7 @@ manual() { # manual workflows|members
 }
 
 : > "$logdir/summary.txt"
-"$BASE/reset.sh" "$v" > /dev/null
+[ -z "${BATCH:-}" ] && "$BASE/reset.sh" "$v" > /dev/null
 if [ -n "${RECORD:-}" ]; then
   # Record every Redmine request (phase 6 proof): the scripts talk to a proxy on port 31xx.
   : > "$RECORD"
@@ -38,9 +41,11 @@ if [ -n "${RECORD:-}" ]; then
   sleep 1
 fi
 db=jira2redmine_$v
-mysql -e "DROP DATABASE IF EXISTS $db; CREATE DATABASE $db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL ON $db.* TO 'jira2redmine'@'localhost';"
-mysql "$db" < "$REPO/database/schema.sql"
-rm -rf "$J2R_TMP"/*
+if [ -z "${BATCH:-}" ]; then
+  mysql -e "DROP DATABASE IF EXISTS $db; CREATE DATABASE $db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL ON $db.* TO 'jira2redmine'@'localhost';"
+  mysql "$db" < "$REPO/database/schema.sql"
+  rm -rf "$J2R_TMP"/*
+fi
 
 step 01 01_migrate_projects.php
 step 01-push 01_migrate_projects.php --phases=push --confirm-push
@@ -105,6 +110,9 @@ mysql -N "$db" -e "SELECT 'issues', migration_status, COUNT(*) FROM migration_ma
   UNION ALL SELECT 'attachments', migration_status, COUNT(*) FROM migration_mapping_attachments GROUP BY 2
   UNION ALL SELECT 'relations', migration_status, COUNT(*) FROM migration_mapping_issue_relations GROUP BY 2
   UNION ALL SELECT 'watchers', migration_status, COUNT(*) FROM migration_mapping_watchers GROUP BY 2" | tee -a "$logdir/summary.txt"
+# run report: select values Jira no longer offers (B37), issues waiting for a parent outside the run (B38)
+grep -h "(B37)\|\[unoffered\]" "$logdir/08-transform.log" | sed 's/^ *//' | tee -a "$logdir/summary.txt"
+grep -h "(B38)\|\[waiting\]" "$logdir/10-final.log" | sed 's/^ *//' | tee -a "$logdir/summary.txt"
 keys=$(echo "$J2R_PROJECTS" | tr 'a-z' 'A-Z')
 (cd "$REPO" && php tools/verify.php --projects="$keys" --sample=${SAMPLE:-25} --report="$logdir/verify.md") > "$logdir/verify.out" 2>&1
 sed -n '/| check/,/^\*\*/p' "$logdir/verify.md" | tee -a "$logdir/summary.txt"
