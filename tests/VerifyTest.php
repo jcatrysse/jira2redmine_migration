@@ -103,6 +103,19 @@ final class VerifyTest extends TestCase
         self::assertSame(['see', 'now'], verifyWords(verifyHtmlToText($html)));
     }
 
+    public function testTheAddressOfATypedLinkIsNoTextToKeep(): void
+    {
+        // anonymised from a WIKI comment: Jira shows the typed markup, Redmine the link with its label (B42)
+        $html = '<li><a href="https://wiki.example.lan/index.php/A:Raw_logging">How to log in </a>'
+            . '[<b>RT27 format</b>|https://wiki.example.lan/index.php/A:Raw_logging], see '
+            . '[Magnetic domain](https://en.example.org/wiki/Foo_(bar)) or [not a link] here</li>';
+
+        self::assertSame(
+            ['how', 'to', 'log', 'in', 'rt27', 'format', 'see', 'magnetic', 'domain', 'or', 'not', 'a', 'link', 'here'],
+            verifyWords(verifyHtmlToText($html))
+        );
+    }
+
     public function testTheBenchCountsOnlyHeadingsWithText(): void
     {
         $bench = (string)file_get_contents(__DIR__ . '/../tools/conversion_bench.php');

@@ -23,7 +23,18 @@ function verifyHtmlToText(?string $html): string
     $html = preg_replace('#<(br|/p|/div|/li|/tr|/td|/th|/h[1-6]|/pre|/blockquote)\b[^>]*>#i', ' ', $html) ?? $html;
     $text = html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
-    return verifyDropJiraBrowseUrls($text);
+    return verifyDropJiraBrowseUrls(verifyDropTypedLinkAddresses($text));
+}
+
+/**
+ * Link markup a user typed and Jira showed as text, "[label|url]" or "[label](url)", becomes a real link
+ * with that label by design (B42): Redmine shows the label, not the address. The address is left out.
+ */
+function verifyDropTypedLinkAddresses(string $text): string
+{
+    $text = preg_replace('#\[([^\[\]|]*)\|\s*(?:https?|mailto|ftp):[^\]\s]+\]#i', ' $1 ', $text) ?? $text;
+
+    return preg_replace('#\[([^\[\]]*)\]\((?:https?|ftp)://[^\s()]*(?:\([^\s()]*\)[^\s()]*)*\)#i', ' $1 ', $text) ?? $text;
 }
 
 /**
