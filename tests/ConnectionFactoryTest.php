@@ -20,6 +20,19 @@ final class ConnectionFactoryTest extends TestCase
         self::assertSame(['a' => 1, 0 => 1], $this->fetchOne($pdo));
     }
 
+    public function testAMysqlSessionRunsInUtc(): void
+    {
+        self::assertSame(["SET time_zone = '+00:00'"], ConnectionFactory::sessionStatements('mysql'));
+        self::assertSame([], ConnectionFactory::sessionStatements('sqlite'));
+    }
+
+    public function testBootstrapSetsUtc(): void
+    {
+        $bootstrap = (string)file_get_contents(__DIR__ . '/../bootstrap.php');
+
+        self::assertStringContainsString("date_default_timezone_set('UTC');", $bootstrap);
+    }
+
     public function testMissingDsnIsRefused(): void
     {
         $this->expectException(RuntimeException::class);

@@ -43,7 +43,21 @@ final class ConnectionFactory
         foreach ($attributes as $attribute => $value) {
             $pdo->setAttribute($attribute, $value);
         }
+        foreach (self::sessionStatements((string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)) as $statement) {
+            $pdo->exec($statement);
+        }
 
         return $pdo;
+    }
+
+    /**
+     * MySQL reads and writes a TIMESTAMP column in the session's timezone, the server's own by default. The scripts
+     * write UTC: a server set to Europe/Brussels stored those values 1 or 2 hours off from CURRENT_TIMESTAMP.
+     *
+     * @return list<string>
+     */
+    public static function sessionStatements(string $driver): array
+    {
+        return $driver === 'mysql' ? ["SET time_zone = '+00:00'"] : [];
     }
 }

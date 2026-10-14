@@ -11,6 +11,10 @@ if ($requirementProblems !== []) {
     exit(1);
 }
 
+// Staging holds UTC and Jira and Redmine exchange UTC: date() and a time without an offset are UTC on every server,
+// also one whose php.ini sets a local timezone (decision 23: an existing server)
+date_default_timezone_set('UTC');
+
 require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/lib/jira_gateway.php';
 
