@@ -21,7 +21,7 @@ hand in the mapping tables keep their edits (automation hash). Checked on 5.1 an
 | Redmine | REST API on, text formatting CommonMark, an admin API key, `redmine_extended_api` installed, `attachment_max_size` above the largest attachment | `curl -H "X-Redmine-API-Key: ..." <redmine>/extended_api/issues.json` answers with header `X-Redmine-Extended-API` |
 | Redmine settings | parent priority independent (Administration, Settings, Issue tracking: parent attributes); cross-project subtasks "With all projects" and cross-project issue relations allowed (Jira parents and links can be in another project, B38, B39; decided overnight, for Jan to confirm); both **stay on after the migration**, or Redmine refuses to save an issue whose parent or related issue is in another project; GEOxyz relation types in `redmine_issue_view_columns.local.rb` (`tools/testenv/redmine_issue_view_columns.local.rb` is generated from `migration.relations.custom_mappings`) | |
 | Config | `config/config.local.php`: staging DSN, `migration.issues.projects` (the projects of this run), `migration.issues.default_redmine_author_id` and `migration.journals.default_redmine_author_id` (content of Jira app accounts and of people without a visible e-mail), `attachments.download_concurrency` (6 is safe) | |
-| Staging | an empty MySQL database from `database/schema.sql`; a database from an earlier version of the scripts needs the tables added since (2026-10-14: `staging_jira_project_permission_grants`) | |
+| Staging | an empty MySQL database from `database/schema.sql`; a database from an earlier version of the scripts needs the tables added since (2026-10-14: `staging_jira_project_permission_grants`, `staging_redmine_builtin_groups`) | |
 | Automation rules | not migrated (no Jira platform API, 16 says so in its log): export them by hand from Jira's automation settings (Export rules, JSON), keep the file outside the repository and use it as the checklist for what to rebuild in Redmine (decided overnight, for Jan to confirm) | |
 | Web server | see the appendix: X-Sendfile, `LimitRequestBody` above the largest attachment, `TimeOut` 600; `SetEnv RACK_QUERY_PARSER_PARAMS_LIMIT 12000` (large custom field forms) | |
 
@@ -81,10 +81,11 @@ option a), in `migration_mapping_project_role_groups`, one row per project, Jira
 | a group with Administer projects | `Administer projects (permission scheme)` | group | Manager |
 | a user or group in the project role Administrators | `Administrators` | user / group | Manager |
 | the project role atlassian-addons-project-access (Jira apps) | `atlassian-addons-project-access` | user | IGNORED |
+| a permission granted to an application role ("every licensed user") | the permission's pseudo role, `jira_group_id` `jira-application-role` | group: Redmine's built-in "Non member users" | the mapped role, status MANUAL_INTERVENTION_REQUIRED until you set READY_FOR_ASSIGNMENT: it gives the role to every logged-in user who is not a member (it does not make them assignable) |
 
 The three permission-scheme names are pseudo roles (`jira_role_id` -1, -3, -2); `migration.roles.mappings`
-maps them like any role name. A grant to an application role ("every licensed user") or another holder
-type is not proposed; 04 prints it as `[note]`. A group member is a Redmine group membership: its users
+maps them like any role name. A grant to another holder type (a single user, the reporter) is not
+proposed; 04 prints it as `[note]`. A group member is a Redmine group membership: its users
 get the role through the group, nothing is expanded per user.
 
 ```sql

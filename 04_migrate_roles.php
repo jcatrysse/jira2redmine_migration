@@ -116,11 +116,13 @@ function main(array $config, array $cliOptions): void
         printf("[%s] Starting Redmine role snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
 
         $totalRedmineRoles = fetchAndStoreRedmineRoles($redmineClient, $pdo);
+        $builtinGroups = fetchAndStoreRedmineBuiltinGroups($redmineClient, $pdo);
 
         printf(
-            "[%s] Completed Redmine snapshot. %d role records processed.%s",
+            "[%s] Completed Redmine snapshot. %d role records processed, %d built-in group(s).%s",
             formatCurrentTimestamp(),
             $totalRedmineRoles,
+            $builtinGroups,
             PHP_EOL
         );
     } else {
@@ -693,6 +695,31 @@ function resolveJiraRoleActorId(array $actor, string $normalizedType): ?string
     }
 
     return null;
+}
+
+/**
+ * Redmine's built-in groups (anonymous, non_member): a grant to a Jira application role is proposed
+ * for "Non member users" (B31, decided overnight).
+ */
+function fetchAndStoreRedmineBuiltinGroups(Client $client, PDO $pdo): int
+{
+    $pdo->exec('TRUNCATE TABLE staging_redmine_builtin_groups');
+    $decoded = decodeJsonResponse($client->get('/groups.json', ['query' => ['builtin' => 1, 'limit' => 100]]));
+    $insert = $pdo->prepare('INSERT INTO staging_redmine_builtin_groups (id, builtin, name) VALUES (:id, :builtin, :name)');
+    if ($insert === false) {
+        throw new RuntimeException('Failed to prepare insert statement for staging_redmine_builtin_groups.');
+    }
+
+    $count = 0;
+    foreach (is_array($decoded) && is_array($decoded['groups'] ?? null) ? $decoded['groups'] : [] as $group) {
+        if (!is_array($group) || !isset($group['id'], $group['builtin']) || (string)$group['builtin'] === '') {
+            continue;
+        }
+        $insert->execute(['id' => (int)$group['id'], 'builtin' => (string)$group['builtin'], 'name' => normalizeString($group['name'] ?? null, 255)]);
+        $count++;
+    }
+
+    return $count;
 }
 
 /**
@@ -1448,6 +1475,13 @@ function runProjectRoleAssignmentTransformation(PDO $pdo, array $config, array $
                 $newProposedRoleId = $resolvedRole['proposed_role_id'];
                 $newProposedRoleName = $resolvedRole['proposed_role_name'];
                 $summary['awaiting_role']++;
+            } elseif ($row['jira_group_id'] === PermissionGrants::APPLICATION_ROLE) {
+                // every licensed user in Jira: proposed for Redmine's Non member group, pushed only once Jan sets READY
+                $newRoleId = $resolvedRole['role_id'];
+                $newProposedRoleId = $resolvedRole['proposed_role_id'];
+                $newProposedRoleName = $resolvedRole['proposed_role_name'];
+                $manualReason = PermissionGrants::APPLICATION_ROLE_NOTE;
+                $newStatus = 'MANUAL_INTERVENTION_REQUIRED';
             } else {
                 $newRoleId = $resolvedRole['role_id'];
                 $newProposedRoleId = $resolvedRole['proposed_role_id'];
@@ -1617,6 +1651,7 @@ function fetchRedmineRoleName(PDO $pdo, int $roleId): ?string
  */
 function fetchProjectRoleAssignmentMappings(PDO $pdo): array
 {
+    $applicationRole = PermissionGrants::APPLICATION_ROLE;
     $sql = <<<SQL
 SELECT
     mmprg.mapping_id,
@@ -1638,8 +1673,8 @@ SELECT
     mmprg.automation_hash,
     mmproj.redmine_project_id AS mapped_redmine_project_id,
     mmproj.migration_status AS project_migration_status,
-    COALESCE(mmgroup.redmine_group_id, mmuser.redmine_user_id) AS mapped_redmine_group_id,
-    COALESCE(mmgroup.migration_status, mmuser.migration_status) AS group_migration_status,
+    COALESCE(mmgroup.redmine_group_id, mmuser.redmine_user_id, nonmember.id) AS mapped_redmine_group_id,
+    COALESCE(mmgroup.migration_status, mmuser.migration_status, IF(nonmember.id IS NULL, NULL, 'MATCH_FOUND')) AS group_migration_status,
     mmroles.redmine_role_id AS matched_redmine_role_id,
     mmroles.migration_status AS matched_redmine_role_status
 FROM migration_mapping_project_role_groups AS mmprg
@@ -1648,6 +1683,8 @@ LEFT JOIN migration_mapping_groups AS mmgroup
        ON mmprg.principal_type = 'group' AND mmgroup.jira_group_id = mmprg.jira_group_id
 LEFT JOIN migration_mapping_users AS mmuser
        ON mmprg.principal_type = 'user' AND mmuser.jira_account_id = mmprg.jira_group_id
+LEFT JOIN staging_redmine_builtin_groups AS nonmember
+       ON mmprg.principal_type = 'group' AND mmprg.jira_group_id = '{$applicationRole}' AND nonmember.builtin = 'non_member'
 LEFT JOIN migration_mapping_roles AS mmroles ON mmroles.jira_role_id = mmprg.jira_role_id
 ORDER BY mmprg.mapping_id
 SQL;

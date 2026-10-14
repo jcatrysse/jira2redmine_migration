@@ -46,7 +46,14 @@ final class MembershipPlan
             if (!is_array($membership) || !isset($membership['id'])) {
                 continue;
             }
-            $principal = is_array($membership['user'] ?? null) ? $membership['user'] : ($membership['group'] ?? null);
+            // a built-in group answers as group_non_member or group_anonymous (7.0)
+            $principal = null;
+            foreach (['user', 'group', 'group_non_member', 'group_anonymous'] as $kind) {
+                if (is_array($membership[$kind] ?? null)) {
+                    $principal = $membership[$kind];
+                    break;
+                }
+            }
             if (!is_array($principal) || !isset($principal['id'])) {
                 continue;
             }

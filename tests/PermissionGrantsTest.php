@@ -26,8 +26,40 @@ final class PermissionGrantsTest extends TestCase
         self::assertSame([
             ['permission' => 'BROWSE_PROJECTS', 'group_id' => 'g-1', 'group_name' => 'All staff'],
             ['permission' => 'ADMINISTER_PROJECTS', 'group_id' => 'g-2', 'group_name' => 'Admins'],
+            ['permission' => 'ASSIGNABLE_USER', 'group_id' => PermissionGrants::APPLICATION_ROLE,
+                'group_name' => 'Application role: jira-software'],
         ], $result['grants']);
-        self::assertSame(['ASSIGNABLE_USER applicationRole' => 1], $result['other_holders']);
+        self::assertSame([], $result['other_holders']);
+    }
+
+    public function testAGrantToEveryLicensedUserIsProposedForTheNonMemberGroup(): void
+    {
+        $scheme = ['permissions' => [
+            ['permission' => 'BROWSE_PROJECTS', 'holder' => ['type' => 'applicationRole']],
+            ['permission' => 'BROWSE_PROJECTS', 'holder' => ['type' => 'applicationRole', 'parameter' => 'jira-software']],
+            ['permission' => 'BROWSE_PROJECTS', 'holder' => ['type' => 'reporter']],
+        ]];
+
+        $result = PermissionGrants::fromScheme($scheme);
+
+        // one row per permission, whatever the application
+        $any = ['permission' => 'BROWSE_PROJECTS', 'group_id' => PermissionGrants::APPLICATION_ROLE,
+            'group_name' => 'Application role: any'];
+        self::assertSame([$any], $result['grants']);
+        self::assertSame(['BROWSE_PROJECTS reporter' => 1], $result['other_holders']);
+        $script = (string)file_get_contents(__DIR__ . '/../04_migrate_roles.php');
+        self::assertTrue(
+            str_contains($script, '$manualReason = PermissionGrants::APPLICATION_ROLE_NOTE;'),
+            '04 pushes a grant to every logged-in user without Jan\'s review'
+        );
+    }
+
+    public function testABuiltInGroupMembershipIsRead(): void
+    {
+        $nonMember = ['id' => 21, 'group_non_member' => ['id' => 3, 'name' => 'Non member users'], 'roles' => [['id' => 4]]];
+        $page = ['memberships' => [$nonMember]];
+
+        self::assertSame([3 => ['id' => 21, 'role_ids' => [4]]], MembershipPlan::existingFromApi($page));
     }
 
     public function testASecondRoleIsAddedToTheExistingMembership(): void

@@ -14,6 +14,18 @@ namespace Jira2Redmine\Roles;
  */
 final class PermissionGrants
 {
+    /**
+     * Principal id of a grant to an application role ("every licensed user", GSPP and ROV). Proposed for
+     * Redmine's built-in group "Non member users" (decided overnight 2026-10-13/14, for Jan to confirm),
+     * which gives its role to every logged-in user who is not a member: the closest equivalent.
+     */
+    public const APPLICATION_ROLE = 'jira-application-role';
+
+    /** Note on such a row: it waits for Jan's review (MANUAL_INTERVENTION_REQUIRED until he sets READY). */
+    public const APPLICATION_ROLE_NOTE = 'Jira grants this to every licensed user (application role). Proposed for '
+        . 'Redmine\'s built-in group "Non member users": every logged-in user who is not a member gets the role '
+        . '(it does not make them assignable). Set READY_FOR_ASSIGNMENT to push, or IGNORED.';
+
     /** Pseudo Jira role ids and names for the mapping rows; migration.roles.mappings maps the names. */
     public const PSEUDO_ROLES = [
         'BROWSE_PROJECTS' => [-1, 'Browse projects (permission scheme)'],
@@ -37,8 +49,20 @@ final class PermissionGrants
             $name = (string)$permission['permission'];
             $holder = is_array($permission['holder'] ?? null) ? $permission['holder'] : [];
             $type = (string)($holder['type'] ?? '');
+            if ($type === 'applicationRole') {
+                if (!isset($seen[$name . '|' . self::APPLICATION_ROLE])) {
+                    $seen[$name . '|' . self::APPLICATION_ROLE] = true;
+                    $application = trim((string)($holder['parameter'] ?? $holder['value'] ?? ''));
+                    $grants[] = [
+                        'permission' => $name,
+                        'group_id' => self::APPLICATION_ROLE,
+                        'group_name' => 'Application role: ' . ($application !== '' ? $application : 'any'),
+                    ];
+                }
+                continue;
+            }
             if ($type !== 'group') {
-                // project roles come through the role actors; application roles and others are counted
+                // project roles come through the role actors; other holder types are counted
                 if ($type !== 'projectRole') {
                     $other[$name . ' ' . $type] = ($other[$name . ' ' . $type] ?? 0) + 1;
                 }

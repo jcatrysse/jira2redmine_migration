@@ -157,6 +157,13 @@ CREATE TABLE `staging_jira_project_permission_grants` (
                                                     PRIMARY KEY (`project_id`, `permission`, `group_id`)
 ) COMMENT='Group grants of Browse projects, Assignable user and Administer projects in each project permission scheme (B31).';
 
+CREATE TABLE `staging_redmine_builtin_groups` (
+                                                    `id` INT NOT NULL PRIMARY KEY,
+                                                    `builtin` VARCHAR(32) NOT NULL,
+                                                    `name` VARCHAR(255) NULL,
+                                                    `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) COMMENT='Redmine built-in groups (anonymous, non_member), from GET /groups.json?builtin=1 (04).';
+
 CREATE TABLE `staging_jira_project_role_actors` (
                                                     `project_id` VARCHAR(255) NOT NULL,
                                                     `project_key` VARCHAR(255) NULL,
