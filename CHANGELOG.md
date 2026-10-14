@@ -120,6 +120,8 @@ All notable changes to this project. Steps to take before and after a migration 
 - Attachments keep their Jira creation time: 09 dropped Jira's offset, so Redmine showed them one or two hours
   late (B58); verify compares the creation times.
 - Every timestamp in UTC whatever the server's timezone: PHP's default timezone and the MySQL session.
+- A status change lists only the attachments its items name, not every file uploaded within 5 minutes of it
+  (B59); for comments that window is `migration.journals.comment_attachment_window` (seconds, 0 by default).
 - 05 also reads Jira's status search (`GET /rest/api/3/statuses/search`) and adds the statuses the status
   list lacks when a staged project uses them (`GET /rest/api/3/statuses/{id}/projectUsages`); their
   transitions were dropped from the workflow proposal (B57).

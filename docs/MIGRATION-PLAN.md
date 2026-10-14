@@ -571,7 +571,9 @@ In this order. Each item records its result under "Results" when done.
     - timestamps: staging and both APIs are UTC, but 08, 09 and 12 (and the log lines of 01 to 09) used the server's
       timezone, and a time without an offset was read in it. **Unified on UTC** (`bfdcc13`): bootstrap sets PHP to
       UTC, ConnectionFactory sets the MySQL session to +00:00. On the way B58 (attachments one or two hours late),
-      fixed separately (`004b57b`);
+      fixed separately (`004b57b`). The recorded run with both (`b2-utc`) then failed verify on 6 duplicate
+      journals: B59, 11's attachment window matched for the first time with the right times; fixed separately
+      (`e2ca087`), the comment window is a choice for Jan;
     - JSON decoding of an empty body (null, [] or an error per script): every call decodes a GET or a create
       response, which always has a body; Redmine's empty 204 answers are never decoded. **Kept** per script: each
       fits its callers' types, a change would gain nothing;
@@ -580,7 +582,8 @@ In this order. Each item records its result under "Results" when done.
       nothing;
     - option parsing: every script stops on an unknown option (reported as "Unexpected positional arguments");
       the copies differ only in accepted spellings (01 to 03 also take `--phases jira`). **Kept**.
-    Nothing here needs a choice from Jan.
+    One choice for Jan: the comment window of B59 (Open questions). The proof of the behaviour changes is in
+    Results (M1 rest).
 
 **Phase 7, fixes**
 
@@ -869,6 +872,12 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
   deprecated; `/rest/api/3/automation/rules` is not a Jira platform endpoint (16 already skips it on
   404). Logged as B25. **Confirmed and fixed (B2)**: see B25 to B28.
 - ~~Project memberships (B31)~~ **Jan: option (a)**, see decision 10.
+- **Comment attachment window (B59, 2026-10-14 night).** The original 11 listed under a Jira comment, as
+  "> attachment:" lines, every file of the issue uploaded within 5 minutes of the comment. With B58 fixed that
+  gave 199 of the 1,277 comments of the 5.1 test run such lines, mostly files the comment already shows (267 of
+  the 390 listed); the issue's attachment list shows every file anyway. 11 now has the setting
+  `migration.journals.comment_attachment_window` (seconds). **Recommendation: 0 (off, the default)**; 300 gives
+  back the original 5 minutes. Status changes no longer take part: they list only the files their items name.
 - ~~B37, B38/B39~~ and ~~automation rules~~: decided overnight, confirmed by Jan 2026-10-14 (decisions
   15 to 17).
 
@@ -975,6 +984,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B56 | verify counted the address of link markup a user typed ("[label\|url]") as Jira text; B42 makes it a link with that label | 1 WIKI failure (comment 29072, 49% of the words) | **fixed** in verify and the bench (`b71306f`), with a test; the comment measures 100% |
 | B57 | 05 reads the statuses from GET /rest/api/3/status, which does not list the 25 statuses Jira's status search (GET /rest/api/3/statuses/search) adds; 9 of them are in FPS's workflow (Accepted, Rejected, Re-Open, ...), no other migrated project uses one | FPS's workflow transitions to or from them are not proposed (reported as "no Redmine status"); FPS has 0 issues the read token can see, so nothing is lost now | **fixed** (coordinator: a completeness bug, fix regardless of FPS): 05 also reads the status search (GET, paged) and adds a status when a staged project uses it (GET statuses/{id}/projectUsages), with tests; on 5.1 and 7.0: 9 added, 16 used by none skipped, 8 created and 1 matched (Rejected); the proposal's "no Redmine status" problems 29 to 0, FPS 288 rows proposed and 16 to review (8 of them the group rows to Accepted and Rejected), the other projects unchanged (2,185 and 439) |
 | B58 | 09 stored an attachment's Jira creation time without its offset ("2024-07-04T10:31:35.833+0200" became 10:31:35) and pushed it as UTC | every attachment one or two hours late in Redmine (issues and comments were right: 10 and 11 convert to UTC); verify had no check for it | **fixed** (`004b57b`, found by the M1 review of the timestamp helpers): staging holds the instant in UTC, a value without an offset is read as UTC; verify's new "attachments: created" fails 149 of 149 on the old data |
+| B59 | 11 listed under a journal every attachment uploaded within 5 minutes of it; with B58's late times that matched 5 comments of the 5.1 test run (files uploaded an hour or two before them) | with B58 fixed (recorded run `b2-utc`): 228 status changes got a note of the files uploaded around them (so 249 more journals) and 199 comments extra lines; verify "journals: no duplicates" failed 6 | **fixed** (`e2ca087`): a changelog entry lists only the attachments its items name; for comments the window is the setting `migration.journals.comment_attachment_window`, 0 by default (Open questions) |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
