@@ -6828,6 +6828,22 @@ function createStandardCustomField(
 }
 
 /**
+ * The scope a push gave a field, in the Redmine snapshot the update plan reads (B53): the plan printed
+ * after the push otherwise listed the updates just made as still to do.
+ *
+ * @param list<int> $projects
+ * @param list<int> $trackers
+ */
+function recordFieldScopeInSnapshot(PDO $pdo, int $redmineId, array $projects, array $trackers): void
+{
+    $statement = $pdo->prepare('UPDATE staging_redmine_custom_fields SET project_ids = :p, tracker_ids = :t WHERE id = :id');
+    if ($statement === false) {
+        throw new RuntimeException('Failed to prepare the snapshot update of a custom field scope.');
+    }
+    $statement->execute(['p' => encodeJsonColumn(array_values($projects)), 't' => encodeJsonColumn(array_values($trackers)), 'id' => $redmineId]);
+}
+
+/**
  * @param array<int, array<string, mixed>> $plan
  */
 function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $extendedPrefix, array $plan, bool $isDryRun): void
@@ -6940,6 +6956,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
                 try {
                     $parentPath = buildExtendedApiPath($extendedPrefix, sprintf('custom_fields/%d.json', $parentRedmineId));
                     $client->put($parentPath, ['json' => $parentPayload]);
+                    recordFieldScopeInSnapshot($pdo, $parentRedmineId, $projects, $trackers);
                 } catch (Throwable $exception) {
                     $errorMessage = summarizeExtendedApiError($exception);
                     $automationHash = computeCustomFieldAutomationStateHash(
@@ -6991,6 +7008,7 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
 
         try {
             $client->put($path, ['json' => $payload]);
+            recordFieldScopeInSnapshot($pdo, $redmineId, $projects, $trackers);
 
             $automationHash = computeCustomFieldAutomationStateHash(
                 $redmineId,

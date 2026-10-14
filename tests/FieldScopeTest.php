@@ -24,5 +24,7 @@ final class FieldScopeTest extends TestCase
 
         self::assertTrue(str_contains($plan, 'FieldScope::desired('), 'the plan compares the stored proposal with itself');
         self::assertTrue(str_contains($plan, 'rf.project_ids AS redmine_project_ids'), 'the plan ignores the field in Redmine');
+        // the plan printed after the push reads the snapshot: the push writes what it did into it
+        self::assertSame(2, substr_count($script, 'recordFieldScopeInSnapshot($pdo, '), 'a pushed scope stays "to do"');
     }
 }
