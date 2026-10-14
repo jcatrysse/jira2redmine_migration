@@ -334,6 +334,11 @@ Jan's answers to the six open points of the summary (2026-10-14, evening, relaye
     a start-up check stops with a clear message below 8.2.0 or without the required extensions (`0827b1f`);
     runbook section "Prerequisites".
 24. **Jira worklogs are not migrated** (out of scope); M12's worklog half is closed.
+25. **The RedmineUP plugins redmine_drive, redmine_questions, redmine_reporter and redmine_resources do not move to
+    Redmine 7** (2026-10-14, relayed by the coordinator): with them every issue mail fails on 7.0 (redmine_drive's
+    alias_method on details_to_strings clashes with redmine_checklists' prepend). The test setup never installed
+    them (`tools/testenv/plugins-5.1.tsv` does not list them, neither instance has them), so nothing to drop;
+    `redmine_reporter_dashboards` is a different plugin and stays.
 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
