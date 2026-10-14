@@ -93,4 +93,20 @@ final class WorkflowPlanTest extends TestCase
         $tool = (string)file_get_contents(__DIR__ . '/../tools/workflow_proposal.php');
         self::assertStringContainsString('JOIN staging_jira_projects p ON p.id = m.jira_project_id', $tool);
     }
+
+    public function testTheRunnerChecksIdsAndComputesTheChangesAfterThePluginsEnable(): void
+    {
+        $runner = (string)file_get_contents(__DIR__ . '/../tools/apply_workflows.rb');
+        // (a) rows go in with insert_all, past Redmine's validations: unknown ids stop the run
+        self::assertStringContainsString("abort \"Ids the plan names that this Redmine does not have:", $runner);
+        // (b) enable deletes the rows of a combination without a scope: a first run left such a set empty and
+        // a second run had to add them (38 rows on 5.1, session C's remark); the changes come after enable now
+        $enable = (int)strpos($runner, 'ScopeWriter.enable(');
+        $again = (int)strpos($runner, 'add, remove = compute.call(Set.new)');
+        $write = (int)strpos($runner, 'WorkflowRule.insert_all(slice)');
+        self::assertGreaterThan(0, $enable);
+        self::assertGreaterThan($enable, $again, 'the changes are computed before enable deletes the rows without a scope');
+        self::assertGreaterThan($again, $write);
+        self::assertStringContainsString('add, remove = compute.call(missing_scopes.to_set)', $runner, 'the preview counts them as gone');
+    }
 }

@@ -30,31 +30,56 @@ plan['managed'].each { |project_id, tracker_id, role_id| desired[[project_id, tr
 plan['transitions'].each do |t|
   desired[[t['project_id'], t['tracker_id'], t['role_id']]] << [t['old_status_id'], t['new_status_id'], t['author'], t['assignee']]
 end
-add = []
-remove = []
-empty_on_51 = 0
+
+# The rows go in with insert_all, past Redmine's validations: every id must exist in this Redmine.
+unknown = {
+  'project' => desired.keys.map(&:first).compact.uniq - Project.where(id: desired.keys.map(&:first).compact).pluck(:id),
+  'tracker' => desired.keys.map { |k| k[1] }.uniq - Tracker.pluck(:id),
+  'role' => desired.keys.map(&:last).uniq - Role.pluck(:id),
+  'status' => plan['transitions'].flat_map { |t| [t['old_status_id'], t['new_status_id']] }.uniq - [0] - IssueStatus.pluck(:id)
+}.reject { |_, ids| ids.empty? }
+abort "Ids the plan names that this Redmine does not have: #{unknown.map { |k, ids| "#{k} #{ids.sort.join(', ')}" }.join('; ')}" if unknown.any?
+
 missing_scopes = []
-desired.each do |(project_id, tracker_id, role_id), wanted|
-  where = { tracker_id: tracker_id, role_id: role_id }
-  where[:project_id] = project_id if plugin
-  have = Hash.new { |hash, key| hash[key] = [] }
-  WorkflowTransition.where(where).pluck(:id, :old_status_id, :new_status_id, :author, :assignee).each do |id, from, to, author, assignee|
-    have[[from, to, author, assignee]] << id
-  end
-  have.each { |key, ids| remove.concat(wanted.include?(key) ? ids.drop(1) : ids) }
-  (wanted - have.keys).each do |from, to, author, assignee|
-    row = { type: 'WorkflowTransition', tracker_id: tracker_id, role_id: role_id, old_status_id: from, new_status_id: to,
-            author: author, assignee: assignee }
-    row[:project_id] = project_id if plugin
-    add << row
-  end
+empty_without_scopes = 0
+desired.each_key do |project_id, tracker_id, role_id|
   next if project_id.nil?
 
-  empty_on_51 += 1 if wanted.empty? && !scopes
+  empty_without_scopes += 1 if desired[[project_id, tracker_id, role_id]].empty? && !scopes
   if scopes && !ProjectWorkflowScope.where(project_id: project_id, tracker_id: tracker_id, role_id: role_id,
                                            rule_type: 'transitions').exists?
     missing_scopes << [project_id, tracker_id, role_id]
   end
+end
+
+# The changes per tracker and role (and project). The plugin's enable deletes the rows of a combination
+# without a scope (left by its old version, say): such rows count as gone, and after enable the changes
+# are computed again from what is there.
+compute = lambda do |gone|
+  add = []
+  remove = []
+  desired.each do |(project_id, tracker_id, role_id), wanted|
+    where = { tracker_id: tracker_id, role_id: role_id }
+    where[:project_id] = project_id if plugin
+    have = Hash.new { |hash, key| hash[key] = [] }
+    unless gone.include?([project_id, tracker_id, role_id])
+      WorkflowTransition.where(where).pluck(:id, :old_status_id, :new_status_id, :author, :assignee).each do |id, from, to, author, assignee|
+        have[[from, to, author, assignee]] << id
+      end
+    end
+    have.each { |key, ids| remove.concat(wanted.include?(key) ? ids.drop(1) : ids) }
+    (wanted - have.keys).each do |from, to, author, assignee|
+      row = { type: 'WorkflowTransition', tracker_id: tracker_id, role_id: role_id, old_status_id: from, new_status_id: to,
+              author: author, assignee: assignee }
+      row[:project_id] = project_id if plugin
+      add << row
+    end
+  end
+  [add, remove]
+end
+add, remove = compute.call(missing_scopes.to_set)
+orphans = missing_scopes.sum do |project_id, tracker_id, role_id|
+  WorkflowTransition.where(project_id: project_id, tracker_id: tracker_id, role_id: role_id).count
 end
 
 permissions = plan['field_permissions'].filter_map do |p|
@@ -83,8 +108,9 @@ end
 
 projects = desired.keys.map(&:first).compact.uniq.size
 puts "#{confirm ? 'Applying' : 'Preview'} (#{mode}): transitions +#{add.size} -#{remove.size} over #{desired.size} " \
-     "tracker/role set(s), #{projects} project(s) with their own workflow; scopes to create #{missing_scopes.size}; " \
-     "#{empty_on_51} empty project set(s) follow the global workflow (5.1 plugin); field permissions #{permissions.size}; " \
+     "tracker/role set(s), #{projects} project(s) with their own workflow; scopes to create #{missing_scopes.size} " \
+     "(their #{orphans} rows without a scope go); #{empty_without_scopes} empty project set(s) follow the global workflow " \
+     "(plugin without scopes); field permissions #{permissions.size}; " \
      "scripts #{scripts.size} to write, #{stale.size} to remove; " \
      "waiting for review: #{plan['waiting'].map { |k, v| "#{k} #{v}" }.join(', ')}"
 exit unless confirm
@@ -97,6 +123,8 @@ if missing_scopes.any?
                                                          role_ids: [role_id], rule_type: 'transitions',
                                                          copy_generic: false, user: admin)
   end
+  # enable deleted the rows without a scope: the changes again, from what is there now
+  add, remove = compute.call(Set.new)
 end
 ActiveRecord::Base.transaction do
   WorkflowTransition.where(id: remove).delete_all if remove.any?
