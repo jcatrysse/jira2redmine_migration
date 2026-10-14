@@ -3,7 +3,9 @@
 declare(strict_types=1);
 
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\ClientException;
 use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Psr7\Request;
@@ -32,6 +34,36 @@ final class RetryPolicyTest extends TestCase
         $error = new ConnectException('down', $get);
         self::assertTrue($policy->shouldRetry(0, $get, null, $error));
         self::assertFalse($policy->shouldRetry(0, new Request('POST', '/x'), null, new ConnectException('down', $get)));
+    }
+
+    public function testATransferCutOffIsRetriedForReadsOnly(): void
+    {
+        $policy = new RetryPolicy();
+        $get = new Request('GET', '/rest/api/3/users/search');
+        $cut = new RequestException('cURL error 18: transfer closed with outstanding read data remaining', $get);
+        self::assertTrue($policy->shouldRetry(0, $get, null, $cut));
+        $post = new Request('POST', '/issues.json');
+        self::assertFalse($policy->shouldRetry(0, $post, null, new RequestException('cURL error 18', $post)));
+    }
+
+    public function testClientRetriesACutOffReadButNotAnHttpError(): void
+    {
+        $get = new Request('GET', '/x');
+        $mock = new MockHandler([new RequestException('cURL error 18', $get), new Response(200, [], '{"ok":true}')]);
+        $stack = HandlerStack::create($mock);
+        $stack->push((new RetryPolicy(5, 0))->middleware());
+        self::assertSame('{"ok":true}', (string)(new Client(['handler' => $stack]))->get('/x')->getBody());
+
+        $mock = new MockHandler([new Response(404), new Response(200)]);
+        $stack = HandlerStack::create($mock);
+        $stack->push((new RetryPolicy(5, 0))->middleware());
+        try {
+            (new Client(['handler' => $stack]))->get('/x');
+            self::fail('a 404 must not be retried');
+        } catch (ClientException $exception) {
+            self::assertSame(404, $exception->getResponse()->getStatusCode());
+        }
+        self::assertSame(1, $mock->count());
     }
 
     public function testDelayHonoursRetryAfterAndBacksOff(): void

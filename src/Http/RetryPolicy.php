@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Jira2Redmine\Http;
 
 use DateTimeImmutable;
-use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\TransferException;
 use GuzzleHttp\Middleware;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
@@ -14,9 +14,11 @@ use Throwable;
 /**
  * Central retry on rate limits (decision 5), for Jira and Redmine alike.
  *
- * Retried: 429 and 503 for every method (the server did not process the request), and a connection
- * failure for GET/HEAD only. The wait honours Retry-After (seconds or an HTTP date); without it the
- * wait doubles from 1 s. Waits are capped at $maxDelayMs.
+ * Retried: 429 and 503 for every method (the server did not process the request), and a transport
+ * failure for GET/HEAD only: no connection, or a transfer cut off (cURL 18 "transfer closed with
+ * outstanding read data", seen on a Jira user page). The middleware sits inside http_errors, so an
+ * error that reaches it never is an HTTP status. The wait honours Retry-After (seconds or an HTTP date);
+ * without it the wait doubles from 1 s. Waits are capped at $maxDelayMs.
  */
 final class RetryPolicy
 {
@@ -36,7 +38,7 @@ final class RetryPolicy
             return in_array($response->getStatusCode(), [429, 503], true);
         }
 
-        return $error instanceof ConnectException && in_array($request->getMethod(), ['GET', 'HEAD'], true);
+        return $error instanceof TransferException && in_array($request->getMethod(), ['GET', 'HEAD'], true);
     }
 
     /**
