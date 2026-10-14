@@ -8,23 +8,23 @@ use PHPUnit\Framework\TestCase;
 final class UsedValuesTest extends TestCase
 {
     private const OFFERED = ['mode' => 'flat', 'values' => [
-        ['id' => '10576', 'value' => 'Survey Department'],
-        ['id' => '10692', 'value' => 'GeoSciences'],
+        ['id' => '20001', 'value' => 'Field Department'],
+        ['id' => '20002', 'value' => 'Science'],
     ]];
 
     public function testAValueNoLongerOfferedIsMissing(): void
     {
         $used = ['mode' => 'flat', 'values' => [
-            ['id' => '10692', 'value' => 'GeoSciences'],
-            ['id' => '10748', 'value' => 'Survey'],
+            ['id' => '20002', 'value' => 'Science'],
+            ['id' => '20003', 'value' => 'Field'],
         ]];
 
-        self::assertSame(['Survey'], UsedValues::missing(self::OFFERED, $used));
+        self::assertSame(['Field'], UsedValues::missing(self::OFFERED, $used));
     }
 
     public function testCaseAndKnownValuesAreNotMissing(): void
     {
-        $used = ['mode' => 'flat', 'values' => [['id' => null, 'value' => 'survey department ']]];
+        $used = ['mode' => 'flat', 'values' => [['id' => null, 'value' => 'field department ']]];
 
         self::assertSame([], UsedValues::missing(self::OFFERED, $used));
     }
