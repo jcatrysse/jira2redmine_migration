@@ -6,6 +6,7 @@ use GuzzleHttp\Client;
 use League\HTMLToMarkdown\HtmlConverter;
 use League\HTMLToMarkdown\Converter\TableConverter;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
+use Jira2Redmine\Text\IssueReference;
 use Jira2Redmine\Text\Safelinks;
 
 /**
@@ -71,6 +72,18 @@ function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
     // <a> stayed as HTML in the Markdown, and the DOM passes over it wrapped the whole text in <p>, so
     // Redmine showed the Markdown as text ("### ", "**", "&gt;").
     $trimmed = preg_replace('#<a\s+name=("[^"]*"|\'[^\']*\')\s*(?:/>|>\s*</a>)#i', '', $trimmed) ?? $trimmed;
+
+    // A status lozenge (issue macro, status macro) is a coloured box in Jira; the plain word ran into the
+    // text ("#170 Closed"). Inline code keeps it a separate label and cannot mix with other Markdown.
+    $trimmed = preg_replace_callback(
+        '#<span\b[^>]*\bclass="[^"]*\baui-lozenge\b[^"]*"[^>]*>(.*?)</span>#is',
+        static function (array $m): string {
+            $status = trim(html_entity_decode(strip_tags($m[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+
+            return $status === '' ? '' : '<code>' . htmlspecialchars($status, ENT_QUOTES | ENT_HTML5, 'UTF-8') . '</code>';
+        },
+        $trimmed
+    ) ?? $trimmed;
 
     $rewrittenHtml = rewriteJiraAttachmentLinks($trimmed, $attachments);
 
@@ -742,14 +755,13 @@ function replaceIssueLinksInText(string $text, array $issueMap): string
     );
 
     $replaced = preg_replace_callback(
-        '/\[(.*?)]\(\s*(https?:\/\/[^\s)]+)\s*\)/i',
-        function($m) use ($replaceUrlToHash) {
-            $url = $m[2];
-            $repl = $replaceUrlToHash($url);
-            if ($repl === $url) {
+        '/\[(.*?)]\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\s*\)/i',
+        function($m) use ($issueMap) {
+            $key = IssueReference::keyOfUrl($m[2]);
+            if ($key === null || !isset($issueMap[$key])) {
                 return $m[0];
             }
-            return $repl;
+            return IssueReference::forLink($m[1], $key, $issueMap[$key]);
         },
         $protected
     );
@@ -882,11 +894,10 @@ function replaceIssueLinksWithRedmineIds(
         );
 
         // 1a) vervang markdown links [label](url)
-        $new = preg_replace_callback('/\[(.*?)]\(\s*(https?:\/\/[^\s)]+)\s*\)/i', function($m) use ($replaceUrlToHash) {
-            $url = $m[2];
-            $repl = $replaceUrlToHash($url);
-            if ($repl === $url) return $m[0]; // geen wijziging
-            return $repl; // we vervangen de volledige markdown door #1234
+        $new = preg_replace_callback('/\[(.*?)]\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\s*\)/i', function($m) use ($issueMap) {
+            $key = IssueReference::keyOfUrl($m[2]);
+            if ($key === null || !isset($issueMap[$key])) return $m[0]; // geen wijziging
+            return IssueReference::forLink($m[1], $key, $issueMap[$key]); // #1234, or "label (#1234)"
         }, $desc);
 
         // 1b) vervang raw urls
@@ -1106,16 +1117,9 @@ function inlineReplaceJiraIssueKeysWithHashes(string $text, array $jiraToRedmine
 
     // markdown links [label](url)
     $text = preg_replace_callback('/\[(.*?)]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/mi', function($m) use ($jiraToRedmine) {
-        $url = $m[2];
-        if (preg_match('~/browse/([A-Z][A-Z0-9]+-[0-9]+)~i', $url, $k)) {
-            $key = strtoupper($k[1]);
-            if (isset($jiraToRedmine[$key])) return '#' . $jiraToRedmine[$key];
-        }
-        if (preg_match('/[?&]selectedIssue=([A-Z][A-Z0-9]+-[0-9]+)/i', $url, $k2)) {
-            $key = strtoupper($k2[1]);
-            if (isset($jiraToRedmine[$key])) return '#' . $jiraToRedmine[$key];
-        }
-        return $m[0];
+        $key = IssueReference::keyOfUrl($m[2]);
+        if ($key === null || !isset($jiraToRedmine[$key])) return $m[0];
+        return IssueReference::forLink($m[1], $key, $jiraToRedmine[$key]);
     }, $text);
 
     // bare browse URLs and selectedIssue params
