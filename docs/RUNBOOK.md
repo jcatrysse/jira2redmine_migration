@@ -19,10 +19,10 @@ hand in the mapping tables keep their edits (automation hash). Checked on 5.1 an
 | Jira token | scoped API token with read scopes only (decision 1, plan): `read:jira-work`, `read:jira-user` and 21 granular scopes (each `:jira`): read:group, read:user, read:avatar, read:project, read:project-category, read:project-role, read:application-role, read:issue-type, read:issue-security-level, read:status, read:webhook, read:workflow, read:workflow-scheme, read:issue-type-scheme, read:issue-type-screen-scheme, read:screen, read:screen-scheme, read:screen-tab, read:screenable-field, read:field-configuration, read:field-configuration-scheme (an operation needs all the scopes it lists) | write probe through the gateway, `PUT /rest/api/3/issue/NONEXIST-1`: 401 "scope does not match" (a 404 means the token can write) |
 | Jira config | `jira.base_url` the site (`https://<site>.atlassian.net`, used for links back), `jira.cloud_id` from `https://<site>/_edge/tenant_info` (all API calls then go through the gateway) | `php 01_migrate_projects.php --phases=jira` lists the projects; 0 projects stops with the likely causes |
 | Redmine | REST API on, text formatting CommonMark, an admin API key, `redmine_extended_api` installed, `attachment_max_size` above the largest attachment | `curl -H "X-Redmine-API-Key: ..." <redmine>/extended_api/issues.json` answers with header `X-Redmine-Extended-API` |
-| Redmine settings | parent priority independent (Administration, Settings, Issue tracking: parent attributes); cross-project subtasks "With all projects" and cross-project issue relations allowed (Jira parents and links can be in another project, B38, B39; decided overnight, for Jan to confirm); both **stay on after the migration**, or Redmine refuses to save an issue whose parent or related issue is in another project; GEOxyz relation types in `redmine_issue_view_columns.local.rb` (`tools/testenv/redmine_issue_view_columns.local.rb` is generated from `migration.relations.custom_mappings`) | |
+| Redmine settings | parent priority independent (Administration, Settings, Issue tracking: parent attributes); cross-project subtasks "With all projects" and cross-project issue relations allowed (Administration, Settings, Issue tracking; Jira parents and links can be in another project, B38, B39; confirmed by Jan 2026-10-14; `manual_steps.rb` sets both in its `workflows` step on the test instances); both **stay on after the migration**, or Redmine refuses to save an issue whose parent or related issue is in another project; GEOxyz relation types in `redmine_issue_view_columns.local.rb` (`tools/testenv/redmine_issue_view_columns.local.rb` is generated from `migration.relations.custom_mappings`) | |
 | Config | `config/config.local.php`: staging DSN, `migration.issues.projects` (the projects of this run), `migration.issues.default_redmine_author_id` and `migration.journals.default_redmine_author_id` (content of Jira app accounts and of people without a visible e-mail), `attachments.download_concurrency` (6 is safe) | |
 | Staging | an empty MySQL database from `database/schema.sql`; a database from an earlier version of the scripts needs the tables added since (2026-10-14: `staging_jira_project_permission_grants`, `staging_jira_project_permission_holders`, `staging_redmine_builtin_groups`) | |
-| Automation rules | not migrated (no Jira platform API, 16 says so in its log): export them by hand from Jira's automation settings (Export rules, JSON), keep the file outside the repository and use it as the checklist for what to rebuild in Redmine (decided overnight, for Jan to confirm) | |
+| Automation rules | not migrated (no Jira platform API, 16 says so in its log). Jan exports them once himself (confirmed 2026-10-14): as a Jira admin, Settings (cog) > System > Automation rules (global automation, `https://<site>.atlassian.net/jira/settings/automation`), menu "..." > Export rules: one JSON file with every rule, global and per project. Keep the file outside this repository (it is public): **never commit it**, not even in a branch (`.gitignore` stops `automation-rules*.json` as a safety net). Use it as the checklist for what to rebuild in Redmine (custom workflows, recurring tasks) | the file opens as JSON and lists the rules the automation page shows |
 | Web server | see the appendix: X-Sendfile, `LimitRequestBody` above the largest attachment, `TimeOut` 600; `SetEnv RACK_QUERY_PARSER_PARAMS_LIMIT 12000` (large custom field forms) | |
 
 ### Manual steps around the run (each a choice, see "Choices for Jan" below)
@@ -130,17 +130,34 @@ links it. Every 10 run lists the issues still waiting, with the parent's key, pe
 (`Issues waiting for a parent outside the run (B38)`, `[waiting]` lines); a parent that is never
 migrated stays on that list: link it by hand or leave it.
 
-For production one run with all projects is recommended: a link from an earlier batch to an issue of a
-later batch stays a Jira link (B52). If batches are needed, after the last one (opt-in):
+**Production procedure (Jan, 2026-10-14: batches plus relink, not one run).**
 
-```bash
-php tools/relink_issue_links.php                # preview
-php tools/relink_issue_links.php --confirm-push # rewrite
-```
+1. Batch order: projects other projects link to or hang under first, so fewer links and parents wait.
+   Measured: GEOS issues hang under WIKI epics, and the first batch (GEOS, SIS, OAC) left 49 relations
+   whose other side was in WIKI (30), SURV (13), DOC (5) and LABO (1). Recommended order:
+   (1) WIKI; (2) GEOS, SIS, OAC; (3) SURV, DOC, LABO; (4) ICT, LLE, SOIL, SSPT, ROV, GSPP, FPS (and TEST
+   if Jan keeps it). Any order works with the steps below; this one keeps the waiting lists short.
+2. Each batch: 01 to 16 with `migration.issues.projects` = every project migrated so far plus the new
+   ones. 12 runs in every batch: a relation whose other side was not migrated yet stays MANUAL ("Missing
+   Redmine issue mapping") and 12 creates it in the batch that migrates that side (proved on 7.0: 30 of
+   the first batch's 49 created by the WIKI batch). 10 links a waiting parent the same way. Check per
+   batch: 12's MANUAL count and 10's `[waiting]` lines only name projects of later batches.
+3. After the last batch, the relink (links in text, B52):
 
-It rewrites those links in descriptions and comments ("#123", or "text (#123)"), only where Redmine's text
-is still what the migration pushed (10 and 11 store a hash of it); a text edited in Redmine since is
-left alone and listed as `[edited]`.
+   ```bash
+   php tools/relink_issue_links.php                # preview
+   php tools/relink_issue_links.php --confirm-push # rewrite
+   php tools/relink_issue_links.php                # the check
+   ```
+
+   It rewrites links to issues a later batch migrated in descriptions and comments ("#123", or
+   "text (#123)"), only where Redmine's text is still what the migration pushed (10 and 11 store a hash of
+   it); a text edited in Redmine since is left alone and listed as `[edited]`.
+4. Verify: the check's last line, `Texts that still hold a Jira link to a migrated issue after this run`,
+   must be **0**. A text it lists as `[left]` was edited in Redmine and still has such a link: fix it by
+   hand, then run the check again. Also after the last batch: 12's MANUAL relations and 10's `[waiting]`
+   parents name only projects that are not migrated. Proved on 7.0 (test, 2026-10-14): 13 texts relinked,
+   the check then 0.
 
 ## 2. Custom fields, issues and attachments
 
@@ -244,7 +261,12 @@ bundle exec rails runner /path/tools/apply_workflows.rb /path/plan.json --confir
 - `migration_mapping_workflow_transitions`: per tracker and role, the runner sets exactly the PROPOSED
   transitions; a tracker and role whose rows are all IGNORED gets none. A row with role 0 is a transition
   Jira limits to a group that is not a member of the project: set `review_role_id` to the role that gets
-  it and PROPOSED, or IGNORED. Trackers fed by several Jira workflows get their union (decision 13);
+  it and PROPOSED, or IGNORED. Jan's settings settle these per project and group (decision 14,
+  `migration.workflows.group_roles`): `G` makes the group a member with its own role `<group> (workflow)`
+  (04 proposes the membership; 04's push creates the role through the Extended API: Edit issues only, not
+  assignable), `R` gives the transitions to the roles the group's users hold, `ignore` marks the rows
+  IGNORED. Only a group not listed still gives review rows; run 04 and its push before the proposal.
+  Trackers fed by several Jira workflows get their union (decision 13);
   Jan harmonises them to one workflow per tracker by marking the transitions he does not want anywhere
   IGNORED. The report's "Union per tracker" lists per transition the Jira workflows and projects it
   comes from and how many issues sit in its from-status. One transition for every role:

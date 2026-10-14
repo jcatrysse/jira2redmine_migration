@@ -5,3 +5,5 @@ composer.phar
 /config/config.local.php
 .phpunit.result.cache
 /tools/bin/
+# Jira automation rules exported by hand (runbook section 0): never in this public repository
+automation-rules*.json

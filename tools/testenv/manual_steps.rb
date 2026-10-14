@@ -41,9 +41,9 @@ when 'workflows'
   File.write(added_file, JSON.generate(previous + keys))
   # Decided by Jan (B13): a parent keeps its own priority, as in Jira.
   Setting.parent_issue_priority = 'independent'
-  # B38 (open for Jan, option a): Jira parents can be in another project (GEOS issues under WIKI epics).
+  # B38 (Jan confirmed option a, 2026-10-14): Jira parents can be in another project (GEOS issues under WIKI epics).
   Setting.cross_project_subtasks = 'system'
-  # B39 (open for Jan, with B38): Jira links issues across projects (29 links in the WIKI run).
+  # B39 (Jan confirmed, with B38): Jira links issues across projects (29 links in the WIKI run). Both stay on after the run.
   Setting.cross_project_issue_relations = '1'
   perms = Redmine::AccessControl.permissions.map(&:name) & %i[view_watched_issues view_issue_description]
   roles.each { |role| perms.each { |p| role.add_permission!(p) } }

@@ -51,7 +51,8 @@ All notable changes to this project. Steps to take before and after a migration 
   listed stays a review row. `tools/testenv/group_role_proof.rb` shows it on a real Redmine.
 - Later batches: 08 adds new select values to fields an earlier batch created (B47) and enables them for
   the new projects and trackers (B53); `tools/relink_issue_links.php` rewrites links to issues of a later
-  batch in texts Redmine did not change (B52); links with an old issue key are resolved (B54).
+  batch in texts Redmine did not change (B52), and its check counts the texts that still link a migrated
+  issue (0 after the relink; Jan chose batches plus relink); links with an old issue key are resolved (B54).
 - `tools/testenv/visual_items.php`, `visual_check.mjs`: Jira's rendering next to Redmine's page per
   curated issue, description and comments (bench step 3; the output stays outside the repository).
 

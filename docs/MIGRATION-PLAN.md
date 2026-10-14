@@ -1,8 +1,8 @@
 # Jira Cloud to Redmine: test migrations and script upgrade
 
-## Samenvatting voor Jan (2026-10-14, B2, bijgewerkt in de ochtend)
+## Samenvatting voor Jan (2026-10-14, B2, bijgewerkt rond de middag)
 
-**Stand.** Alles staat op `redmine70-migration`, QA groen (210 tests). Jira bleef read-only: alleen
+**Stand.** Alles staat op `redmine70-migration`, QA groen (235 tests). Jira bleef read-only: alleen
 GET-calls, de schrijfprobe gaf 401 "scope does not match".
 - 5.1, volledige run met jouw beslissingen 12 en 13 (`a813ffb`, workflows met de latere fixes): verify
   PASS, een tweede pass van 08 tot 15 verandert niets, 0 watchers zonder toegang.
@@ -14,7 +14,27 @@ GET-calls, de schrijfprobe gaf 401 "scope does not match".
   verify-fouten bleken meetfouten van verify (B55, B56, gefixt). Relaties naar een latere batch komen
   vanzelf bij de rerun van 12 (bewezen: 30 van 30 naar WIKI).
 
-**Jouw beslissingen van vandaag, gebouwd en bewezen**
+**Jouw antwoorden van 10:20, gebouwd en bewezen (beslissingen 14 tot 17)**
+- **Groepsovergangen (14).** Per project en groep in de config (`migration.workflows.group_roles`): G voor
+  DOC Support, Survey Support (GEOS), ICT Support en de Crewing approvers (FPS); R voor GEOxyz-Jira-User
+  (ICT, LLE, SIS, TEST) en Survey Support in TEST; ignore voor atlassian-addons-admin. 04 maakt de 4 rollen
+  "<groep> (workflow)" (alleen Edit issues, niet assignable) en de 4 groepslidmaatschappen. Op 5.1 en 7.0
+  gelijk: de reviewrijen gaan van 455 naar 12 (alleen de veldwaarde-conditie van FPS), 32 IGNORED; de
+  runner +981, tweede run +0 -0; een DOC Support-gebruiker krijgt "New > In Progress" (Sub-task) en
+  "New > Assigned" (New Document), een Developer buiten de groep niet; vergelijking met Jira 0 onverwacht,
+  geen enkel antwoord meer in "groep geen lid"; lidmaatschappen gelijk aan 04 (79 + 4 = 83).
+- **Bevestigd (15)**: Assignable user als Developer, Non member-groep pas na jouw READY, B37, B38/B39
+  (instellingen in de runbook-stappen vóór de migratie en in `manual_steps.rb`), de extractie van de
+  transitieschermen blijft.
+- **B52 (16): batches plus relink.** Runbook: volgorde van de batches, 12 in elke batch, relink na de
+  laatste, en de controle: "Texts that still hold a Jira link to a migrated issue" moet 0 zijn. Op 7.0:
+  13 teksten herschreven, daarna 0.
+- **Automation rules (17)**: jij exporteert ze één keer (runbook, sectie 0: waar in Jira); het bestand
+  komt nooit in deze publieke repository (`.gitignore` als vangnet).
+- **B57**: 05 miste 9 statussen van de FPS-workflow; nu gelezen uit Jira's status search, alleen statussen
+  die een project gebruikt (16 ongebruikte niet).
+
+**Jouw beslissingen van eerder vandaag, gebouwd en bewezen**
 - **Tijdelijke migratierol (12).** De members-stap maakt elke gemigreerde gebruiker lid van elk
   gemigreerd project met de rol "Migration (temporary)", bovenop de lidmaatschappen van 04; `restore`
   haalt hem weg. B46/B50 (assignee-only en watcher-only leden) staan uit, in config. Op 5.1 na restore:
@@ -46,23 +66,16 @@ GET-calls, de schrijfprobe gaf 401 "scope does not match".
 Findings). Advies: niet migreren vanuit `main`; de fixes staan op `redmine70-migration`, elk met een test.
 
 **Te beslissen of te bevestigen (aanbeveling eerst)**
-1. Workflows: 447 rijen (439, plus 8 van FPS sinds de fix van B57) voor een overgang die Jira beperkt tot
-   een groep die geen lid is van het project (vooral ICT Support in ICT, DOC Support in DOC):
-   `review_role_id` en PROPOSED, of IGNORED. Aanbeveling per geval (tabel in Results): G, de groep lid met
-   een eigen rol met alleen die overgangen, voor DOC, GEOS (Survey Support), ICT (ICT Support) en FPS, geen
-   enkel nieuw lid; R, de rollen die de groep al heeft, voor GEOxyz-Jira-User (iedereen zit erin); IGNORED
-   voor atlassian-addons-admin (geen users); TEST/Survey Support: R of IGNORED, testproject. De unie
-   opkuisen per tracker (het rapport toont per overgang workflows, projecten en issues in de status). De
-   extractie van de transitieschermen houden (aanbevolen, levert 0 regels) of weghalen.
-2. Bevestigen: Assignable user als Developer; Non member-groep pas na jouw READY; B37 oude
-   selectiewaarde toevoegen en daarna inactief zetten; B38/B39 cross-project instellingen aan.
-3. B52, links naar een latere batch: (a, aanbevolen) voor productie één run met alle projecten; (b) de
-   opt-in relink na de laatste batch (gebouwd en bewezen); (c) laten zo.
-4. Automation rules: (a, aanbevolen) één keer met de hand exporteren (JSON), buiten deze publieke
-   repository bewaren; (b) via de automation-API.
-5. Service desk velden: (a, aanbevolen) pas bouwen als een project in scope ze gebruikt.
-6. Conversiekeuzes: status-lozenge als inline code; link met eigen tekst als "tekst (#id)".
-7. Nog open: PHP-versie op de productiemachine, staging MySQL of PostgreSQL, worklogs naar time
+1. De unie per tracker opkuisen (globale workflow voor projecten zonder eigen): het rapport van
+   `tools/workflow_proposal.php` toont per overgang de workflows, projecten en issues in de status; wat je
+   nergens wilt, zet je IGNORED.
+2. FPS: 12 reviewrijen voor de veldwaarde-conditie ("Screen" met één optie van een keuzeveld): PROPOSED
+   (overgang zonder die conditie) of IGNORED; FPS heeft vandaag 0 issues.
+3. Service desk velden: (a, aanbevolen) pas bouwen als een project in scope ze gebruikt.
+4. Conversiekeuzes: status-lozenge als inline code; link met eigen tekst als "tekst (#id)".
+5. Batchvolgorde voor productie (runbook, voorstel): WIKI; GEOS, SIS, OAC; SURV, DOC, LABO; de rest; TEST
+   alleen als je het testproject meeneemt.
+6. Nog open: PHP-versie op de productiemachine, staging MySQL of PostgreSQL, worklogs naar time
    entries, fase 6 rest (M1).
 
 Start a Claude Code session on this repository, branch `redmine70-migration`, with:
@@ -282,10 +295,30 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
     his plugin redmine_project_workflows (alpha), installed on both test instances, could give each
     project its own Jira workflow instead of the union.
 
+14. **Transitions limited to a group that is not a member** (2026-10-14, about 10:20 UTC, relayed by the
+    coordinator): B2's advice per group (the options table in Results), in the config
+    `migration.workflows.group_roles`, one setting per project and group: **G** for DOC / DOC Support,
+    GEOS / Survey Support, ICT / ICT Support, FPS / GEOxyz- Crewing approvers (own role `%s (workflow)`,
+    edit_issues only, no view_issues, not assignable, created through the Extended API when missing, a 04
+    membership row); **R** for GEOxyz-Jira-User in ICT, LLE, SIS and TEST, and TEST / Survey Support;
+    **ignore** for atlassian-addons-admin in GEOS, SOIL and SURV. A group not listed stays a review row.
+    **Built** (`6689dd6` refactor, `877b363`), proofs in Results.
+15. **Confirmed** (2026-10-14): Assignable user as Developer; the Non member users group only after his
+    READY; B37 (unoffered values added, then inactive); B38/B39 cross-project subtasks and relations on
+    (runbook section 0, `manual_steps.rb`); the transition screen extraction stays.
+16. **B52: batches plus relink, not one run** (2026-10-14). The production procedure is in the runbook
+    (section 1, Batches): batch order, 12 in every batch, `tools/relink_issue_links.php` after the last
+    batch, and its check: the texts that still hold a Jira link to a migrated issue must be 0 (`06fd323`).
+17. **Automation rules**: Jan exports them himself once as JSON, kept outside this public repository
+    (runbook section 0: where in Jira, never commit; `.gitignore` stops `automation-rules*.json`).
+
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
 Taken by B2 on the coordinator's instruction (recommended option, no waiting); each can be reversed.
-Per item: what was done, the alternatives, why this one.
+Per item: what was done, the alternatives, why this one. **Jan's answers (2026-10-14, decisions 15 to 17):**
+Assignable user, the Non member users group after READY, B37 and B38/B39 confirmed; B52 replaced by
+batches plus relink (16); automation rules exported by Jan (17). The rest (service desk fields, conversion
+choices) is still open.
 
 - **Assignable user is proposed too** (B31 extension, coordinator agreed): a group with Assignable
   user in the permission scheme is proposed as group member with Developer, because Redmine assigns
@@ -772,8 +805,8 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
   deprecated; `/rest/api/3/automation/rules` is not a Jira platform endpoint (16 already skips it on
   404). Logged as B25. **Confirmed and fixed (B2)**: see B25 to B28.
 - ~~Project memberships (B31)~~ **Jan: option (a)**, see decision 10.
-- ~~B37, B38/B39~~ and ~~automation rules~~: decided overnight, see "Decided overnight" (for Jan to
-  confirm).
+- ~~B37, B38/B39~~ and ~~automation rules~~: decided overnight, confirmed by Jan 2026-10-14 (decisions
+  15 to 17).
 
 ## Findings
 
@@ -856,7 +889,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B34 | 12 marks a refused relation CREATION_FAILED without its automation hash | every later transform takes it for a hand edit ("preserved manual overrides") and never retries; 17 relations after the relation types were added | **fixed** (`src/Relations/RelationState.php`); proof on 5.1: 17 failed, a plain rerun created all 17. Test env: `setup.sh` now installs the relation types (B18) |
 | B35 | **11 pushes every journal again on each rerun** (also on `main`): the transform set every journal of a created issue to READY_FOR_PUSH, pushed ones included; FAILED journals were never retried | stability check: +1,277 duplicate journals on 5.1 and 7.0; verify still passed (each Jira comment was found) | **fixed** (`src/Journals/JournalStatus.php`): pushed journals stay SUCCESS, FAILED and SKIPPED are judged again; proof on 5.1: rerun pushed 0 comments, journal count unchanged. verify now fails on a journal present twice (51 of 75 sampled issues on the duplicated instance) |
 | B36 | verify read the `[open-parent]` note, which the push clears once the issue exists; verify's own clients had no retry | OAC 2 count failures after a full run; one verify run stopped on a dropped connection | **fixed**: open parents from the mapping (proposed status differs from the mapped Jira status), clients from `ClientFactory` |
-| B37 | A select option Jira no longer offers stays on old issues (WIKI: one option on 294 issues; the list has a renamed one) | the Redmine field had only the offered values; 10 held all 294 issues back as MANUAL | **fixed** (option a, decided overnight, for Jan to confirm): 08 adds used values to the field (`UsedValues`) and lists them (`[unoffered]`), taken in the usage phase once 10 staged the issues; 10 reads the options from 08's Redmine snapshot, so a value added to an existing field by hand is used too |
+| B37 | A select option Jira no longer offers stays on old issues (WIKI: one option on 294 issues; the list has a renamed one) | the Redmine field had only the offered values; 10 held all 294 issues back as MANUAL | **fixed** (option a, decided overnight, confirmed by Jan 2026-10-14): 08 adds used values to the field (`UsedValues`) and lists them (`[unoffered]`), taken in the usage phase once 10 staged the issues; 10 reads the options from 08's Redmine snapshot, so a value added to an existing field by hand is used too |
 | B38 | A Jira parent in another project (GEOS issues under WIKI epics) | 422 "Parent task is invalid": Redmine allows subtasks within a project tree by default | Redmine setting "cross-project subtasks: with all projects" (option a, open for Jan); test runs set it |
 | B39 | Jira links across projects | 29 relations 422 "doesn't belong to the same project" | Redmine setting "allow cross-project issue relations" (with B38, open for Jan); test runs set it |
 | B40 | A Jira link between an issue and its own parent or subtask | 6 relations 422 | **fixed**: IGNORED with a note (the hierarchy holds it) |
@@ -871,7 +904,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B49 | Heading anchors (`<a name>`) left as HTML in the Markdown | the link passes wrapped the whole text in `<p>`: Redmine showed `###`, `**`, `&gt;` (13 of 2,214 texts) | **fixed**: anchors dropped before conversion; 3 texts left (literal MediaWiki HTML, another class) |
 | B50 | With 04's memberships from Jira's model (B31 a), Redmine drops watchers who are not members of the project | 48 FAILED rows ("204 but not stored") in the 5.1 run, 372 in the WIKI batch | **fixed** (Jan's decision 11, option b, `24d3611`): 04 proposes them as watcher-only members, 14 adds them, verify expects them present; `[no-access]` stays as the note of a row whose membership was not pushed. Before (option a, overnight): not migrated, 38 `[no-access]` rows in the final 5.1 run |
 | B51 | 08's snapshot update used CAST(... AS JSON), which MariaDB refuses | B47's fix added the value in Redmine but 10 read the stale snapshot: the 294 WIKI issues stayed MANUAL in the proof batch | **fixed**: JSON_EXTRACT(:e, '$'); 08 compares with the field's values in Redmine before adding |
-| B52 | A link to an issue that a later batch migrates stays a Jira link | 10 rewrites the links of created issues in staging but pushes only the issues still waiting; 11 pushes a comment once. In the WIKI batch: 1 SIS comment to a WIKI issue | **built** (decided overnight): opt-in `tools/relink_issue_links.php` after the last batch, guarded by the hash of the pushed text (10 and 11 store it); one run with all projects recommended for production |
+| B52 | A link to an issue that a later batch migrates stays a Jira link | 10 rewrites the links of created issues in staging but pushes only the issues still waiting; 11 pushes a comment once. In the WIKI batch: 1 SIS comment to a WIKI issue | **built** (decided overnight): opt-in `tools/relink_issue_links.php` after the last batch, guarded by the hash of the pushed text (10 and 11 store it). **Jan, 2026-10-14 (decision 16): batches plus relink** for production; the tool's check counts the texts still linking a migrated issue (must be 0; 7.0: 13 relinked, then 0) |
 | B53 | A field created by an earlier batch was never enabled for a later batch's projects and trackers | 48 empty custom field values in the WIKI batch's verify (Rank, Epic Link, Solution, Time in Status): Redmine dropped them silently | **fixed**: 08's update plan takes the scope the Jira data gives now (FieldScope) against the field as Redmine has it |
 | B54 | A link with an old issue key stays a Jira link: a renamed project ("DATA-12" for GEOS-12; GEOS was once DATA) or an issue moved to another project (new number) | the rewrite knew the current keys only; 3 GEOS comments | **fixed** (decided overnight, coordinator): 10 and 11 ask Jira once per key in a link that is no staged issue (GET issue/{key}?fields=key) and keep the answer in staging_jira_issue_key_aliases; every rewrite (10, 11, relink) uses one map with the old keys |
 | B55 | verify expected a relation for a link between an issue and its own parent or subtask, which 12 leaves to the hierarchy (B40) | 1 WIKI failure (link 11351: a subtask's "To Wiki" link to its parent) | **fixed** in verify (`e0fe77b`), with a test |
@@ -1051,7 +1084,8 @@ gives nothing fell back to the global union (703 transitions Jira does not have,
 own empty workflows), and the fingerprint itself measured every status as the first on 7.0 (`update_column`
 returns false there; `5903798`).
 
-**Transitions limited to a group that is not a member: the options per case, 2026-10-14** (for Jan's
+**Transitions limited to a group that is not a member: the options per case, 2026-10-14** (Jan followed the
+recommendations, decision 14; for Jan's
 decision on the 439 review rows / 454 answers above; Jira read with GET only, memberships from 7.0 after the
 full run, which are 04's). Per project and Jira group: the Jira transitions (a transition limited to two
 such groups counts for both), two or three examples, the group's users who are project members and their
@@ -1092,37 +1126,30 @@ stuck, other transitions may still leave the status. Configuration and counts on
 - FPS's 2 transitions were no review rows: Accepted and Rejected were missing from staging (B57, now fixed:
   8 review rows for the group). FPS has 0 issues the read token can see.
 
-**Option G automated: what it takes (prepared, not built; coordinator 2026-10-14).** The proposal already gives
-a transition limited to a group to the roles 04's membership rows give that group in the project
-(`loadWorkflowStaging`: `groupRoles` from `migration_mapping_project_role_groups`). So G needs no change in
-the proposal or the runner: once 04 makes the group a member with its own role, the group's transitions are
-PROPOSED for that role and the review rows are gone. What to build:
+**Jan's group settings built (decision 14), 5.1 and 7.0, 2026-10-14** (`877b363`). The proposal gives a
+transition limited to a group to the roles 04's membership rows give that group (`groupRoles`), so G needs no
+change in the proposal or the runner: 04 proposes the group as a member (pseudo Jira role -6, named after the
+group's own role `<group> (workflow)`, found by that name) and its push creates the role through the Extended
+API when Redmine lacks it (`edit_issues` only, not assignable, no view_issues; Redmine applies a role's workflow
+only with edit or add issues). R gives the transitions to the roles the group's users hold through 04's
+memberships; ignore makes the review row IGNORED; a group not listed stays a review row. One class
+(`GroupConditions`) decides it for the proposal and the comparison with Jira; the extraction was a separate
+refactor first (`6689dd6`: review table of 2,928 rows with their hashes, report and comparison identical).
+A listed group that is no Jira group, or a project 01 did not stage, is printed as `[warn]` and gets no row.
 
-1. **Jan's choice in the config**, not in a review table: a production run starts on an empty staging
-   database, so hand edits there are lost. `migration.workflows.group_roles` lists the cases per project key
-   (`'DOC' => ['DOC Support']`, ...), `group_role_name` names the role (`'%s (workflow)'`), and
-   `group_role_permissions` gives its permissions (`['edit_issues']`). Redmine uses a role's workflow only if
-   the role has "Edit issues" or "Add issues" (`Role#consider_workflow?`). The role does not get
-   "View issues" and is not assignable.
-2. **04 transform**: per listed case, one membership row for the group (principal `group`, a pseudo Jira role
-   -6 "Workflow group (option G)", like B31's pseudo roles), with the group's own role name as its target.
-   This takes a small change: the target role comes from the row instead of the name mapping. The row is
-   READY_FOR_ASSIGNMENT, because the config holds Jan's decision. A listed group that is no Jira group, or a
-   project 01 did not stage, becomes MANUAL with a note.
-3. **04 push**: create the role if no Redmine role has that name, with `POST /extended_api/roles.json` (name,
-   permissions, assignable false; the same Extended API on 5.1 and 7.0), then the group membership as today.
-   Repeatable: the role is matched by name.
-4. **Unchanged**: the proposal (the rows become PROPOSED through `groupRoles`), the runner (the role gets its
-   own project workflow like any other), the members step and restore (they touch only the temporary role),
-   the membership check (it expects 04's proposal, which now includes these rows) and the comparison (its
-   expected side uses the same `groupRoles`, so these answers move from "group not a member" to equal).
-5. **Tests and proof**: unit tests for the case rows and the role payload; then on 5.1 and 7.0 a DOC Task
-   from "New": a DOC Support user is offered "In Progress", a Developer outside the group is not; a second
-   run of 04 and of the runner changes nothing. About half a day with the proofs on both targets.
+| check | 5.1 | 7.0 |
+|---|---|---|
+| 04: roles created, group memberships pushed | 4, 4 (role #7 to #10) | 4, 4 (role #7 to #10) |
+| 04 second run | nothing to push | nothing to push |
+| memberships equal 04's proposal (`membership_check.php`) | yes, 83 (79 + 4) | yes, 83 (79 + 4) |
+| transition rows: proposed / review / ignored | 3,174 / 12 / 32 (was 2,473 / 455 / 0) | 3,174 / 12 / 32 |
+| rows still in review | 12, all the FPS field value condition | the same |
+| runner: apply, then a second run | +981 -0, then +0 -0 | +981 -0, then +0 -0 |
+| DOC Sub-task "New > In Progress", New Document "New > Assigned" (`group_role_proof.rb`) | DOC Support user yes, Developer/Manager outside the group no: PASS | PASS |
+| `workflow_compare.php` (157 sets, 8,007 answers) | 0 unexpected; equal 1,723; "group not a member" 0 | the same |
 
-R and I fit the same config later: `roles` gives the transitions to the roles the group's users hold
-(computed from 04's rows and the group members), `ignore` makes the rows IGNORED. For the four G cases the
-effect on users is none beyond the transitions: all their users are members already.
+Remaining comparison categories on both: the role is not one the group holds 780, current status 785, default
+status 51, permission condition 9, the FPS field value condition 6 (not carried, review).
 
 **Plugin upgrade rehearsal on 5.1, 2026-10-14** (redmine_project_workflows v0.0.3 `d61b1de` to v0.1.6
 `f2c1c2f`, on the state the runner wrote with the old version). Migrations 004 to 007 ran; 004 made 115
@@ -1166,6 +1193,11 @@ match what Redmine keeps. B54: 9 unknown keys in links asked of Jira, 3 are old 
 (DATA-n). The relink preview found those 3 comments; one was then edited in Redmine; `--confirm-push`
 rewrote the other 2 (Redmine now shows `#id`, no Jira link) and left the edited one alone; a second
 preview found nothing left.
+
+**Relink check, 7.0, 2026-10-14** (Jan, decision 16: batches plus relink; `06fd323`). On the cumulative WIKI batch
+state, the preview found 13 texts with a Jira link to an issue migrated by a later batch (12 descriptions, 1
+comment), 0 edited; `--confirm-push` rewrote the 13; the check afterwards: 0 relinked, 289 without a link to
+rewrite, "Texts that still hold a Jira link to a migrated issue after this run: 0".
 
 **Non member group (application-role grants), 5.1 and 7.0.** The final run proposed GSPP's and ROV's grants to
 every licensed user as 4 rows for "Non member users", MANUAL_INTERVENTION_REQUIRED. An anonymised grant
