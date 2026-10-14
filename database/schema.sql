@@ -877,6 +877,33 @@ CREATE TABLE `staging_jira_workflows` (
                                           PRIMARY KEY (`workflow_name`, `source`)
 ) COMMENT='Raw Jira workflow definitions.';
 
+CREATE TABLE `migration_mapping_workflow_transitions` (
+                                                    `id` INT AUTO_INCREMENT PRIMARY KEY,
+                                                    `redmine_tracker_id` INT NOT NULL,
+                                                    `redmine_role_id` INT NOT NULL,
+                                                    `redmine_old_status_id` INT NOT NULL COMMENT '0: the creation of an issue',
+                                                    `redmine_new_status_id` INT NOT NULL,
+                                                    `only_assignee` BOOLEAN NOT NULL DEFAULT 0,
+                                                    `jira_workflows` TEXT NULL,
+                                                    `jira_projects` TEXT NULL,
+                                                    `jira_transitions` TEXT NULL,
+                                                    `migration_status` ENUM('PROPOSED', 'REVIEW', 'IGNORED') NOT NULL DEFAULT 'PROPOSED',
+                                                    `notes` TEXT NULL,
+                                                    `automation_hash` CHAR(64) NULL,
+                                                    `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                    UNIQUE KEY `uk_transition` (`redmine_tracker_id`, `redmine_role_id`, `redmine_old_status_id`, `redmine_new_status_id`, `only_assignee`)
+) COMMENT='Redmine workflow proposal from the Jira workflows (tools/workflow_proposal.php), for review; REVIEW: Jira rules Redmine cannot apply, in notes.';
+
+CREATE TABLE `staging_jira_workflow_scheme_projects` (
+                                                    `project_id` VARCHAR(255) NOT NULL PRIMARY KEY,
+                                                    `scheme_id` VARCHAR(255) NULL,
+                                                    `scheme_name` VARCHAR(255) NULL,
+                                                    `default_workflow` VARCHAR(255) NULL,
+                                                    `issue_type_mappings` JSON NULL,
+                                                    `raw_payload` JSON NOT NULL,
+                                                    `extracted_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) COMMENT='The workflow scheme of each project and its issue type to workflow mapping (16).';
+
 CREATE TABLE `staging_jira_workflow_schemes` (
                                                  `scheme_id` VARCHAR(255) NOT NULL,
                                                  `scheme_name` VARCHAR(255) NULL,

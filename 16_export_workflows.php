@@ -87,6 +87,7 @@ function main(array $config, array $cliOptions): void
     exportWorkflows($jiraClient, $pdo);
     exportWorkflowSchemes($jiraClient, $pdo);
     exportProjects($jiraClient, $pdo);
+    exportWorkflowSchemeProjects($jiraClient, $pdo);
     exportIssueTypes($jiraClient, $pdo);
     exportIssueTypeSchemes($jiraClient, $pdo);
     exportIssueTypeSchemeProjects($jiraClient, $pdo);
@@ -207,6 +208,52 @@ function exportWorkflowSchemes(Client $client, PDO $pdo): void
     }
 
     printf("[%s] Workflow schemes exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+}
+
+/**
+ * Which workflow scheme each project uses, with its issue type to workflow mapping: what the workflow
+ * proposal (tools/workflow_proposal.php) needs per project.
+ */
+function exportWorkflowSchemeProjects(Client $client, PDO $pdo): void
+{
+    $projectIds = $pdo->query('SELECT project_id FROM staging_jira_projects_export ORDER BY project_id');
+    $statement = $pdo->prepare(<<<SQL
+        INSERT INTO staging_jira_workflow_scheme_projects (project_id, scheme_id, scheme_name, default_workflow, issue_type_mappings, raw_payload)
+        VALUES (:project_id, :scheme_id, :scheme_name, :default_workflow, :issue_type_mappings, :raw_payload)
+        ON DUPLICATE KEY UPDATE
+            scheme_id = VALUES(scheme_id),
+            scheme_name = VALUES(scheme_name),
+            default_workflow = VALUES(default_workflow),
+            issue_type_mappings = VALUES(issue_type_mappings),
+            raw_payload = VALUES(raw_payload),
+            extracted_at = CURRENT_TIMESTAMP
+    SQL);
+    if ($projectIds === false || $statement === false) {
+        throw new RuntimeException('Failed to prepare the workflow scheme project export.');
+    }
+
+    $count = 0;
+    foreach (array_chunk($projectIds->fetchAll(PDO::FETCH_COLUMN), 50) as $chunk) {
+        // the API takes the project ids as a repeated parameter
+        $query = implode('&', array_map(static fn (mixed $id): string => 'projectId=' . rawurlencode((string)$id), $chunk));
+        $payload = decodeJsonResponse(jiraGetWithRetry($client, '/rest/api/3/workflowscheme/project?' . $query, [], 'projects', 'workflow-scheme-project'));
+        foreach (is_array($payload) ? ($payload['values'] ?? []) : [] as $entry) {
+            $scheme = is_array($entry['workflowScheme'] ?? null) ? $entry['workflowScheme'] : [];
+            foreach ($entry['projectIds'] ?? [] as $projectId) {
+                $statement->execute([
+                    'project_id' => (string)$projectId,
+                    'scheme_id' => isset($scheme['id']) ? (string)$scheme['id'] : null,
+                    'scheme_name' => isset($scheme['name']) ? (string)$scheme['name'] : null,
+                    'default_workflow' => isset($scheme['defaultWorkflow']) ? (string)$scheme['defaultWorkflow'] : null,
+                    'issue_type_mappings' => encodeJson($scheme['issueTypeMappings'] ?? []),
+                    'raw_payload' => encodeJson($entry),
+                ]);
+                $count++;
+            }
+        }
+    }
+
+    printf("[%s] Workflow schemes per project exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
 }
 
 function exportProjects(Client $client, PDO $pdo): void
