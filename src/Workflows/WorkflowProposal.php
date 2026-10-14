@@ -11,7 +11,9 @@ namespace Jira2Redmine\Workflows;
  * every project. Jan's decision 13 (2026-10-14):
  * - trackers used by several Jira workflows get the union, and the report lists them;
  * - a transition for a group goes to the roles that group holds in the project (04's memberships); a group
- *   that is not a member gives a review row with role 0, Jan decides per case;
+ *   that is not a member gives a review row with role 0, Jan decides per case; his settings per project and
+ *   group (decision 14, GroupConditions) give it to the group's own role or to its users' roles, or ignore it
+ *   (the review row is then IGNORED);
  * - a permission condition goes only to the roles that hold the permission in the project (the holders of
  *   the project's permission scheme, mapped by 04); without that data, to every role of the project, noted;
  * - "only the assignee" becomes Redmine's assignee flag;
@@ -34,16 +36,20 @@ final class WorkflowProposal
      * @param array<string, mixed> $context optional data of decision 13, each key absent when not staged:
      *     permission_roles: project key => Jira permission => role ids of its holders;
      *     screen_fields: Jira screen id => Jira field ids; field_rules: Jira field id => the field configurations
-     *     that require it, out of how many; field_targets: Jira field id => Redmine field (attribute or custom field id)
+     *     that require it, out of how many; field_targets: Jira field id => Redmine field (attribute or custom field id);
+     *     group_modes: project key => lower-case Jira group name => G, R or ignore (decision 14); group_users_roles:
+     *     project key => lower-case Jira group name => the role ids its users hold in the project
      * @return array{rows: array<string, array{tracker: int, role: int, old: int, new: int, assignee_only: bool,
-     *     workflows: list<string>, projects: list<string>, transitions: list<string>, notes: list<string>}>,
+     *     workflows: list<string>, projects: list<string>, transitions: list<string>, notes: list<string>, ignored: bool}>,
      *     field_permissions: array<string, array{tracker: int, role: int, status: int, field: string, rule: string,
      *     jira_field: string, workflows: list<string>, projects: list<string>, notes: list<string>}>,
      *     scripts: array<string, array{tracker: int, status: int, old: list<int>, workflows: list<string>, projects: list<string>,
      *     transitions: list<string>}>, problems: list<string>, project_rows: array<string, array{project: string, tracker: int,
-     *     role: int, old: int, new: int, assignee_only: bool, workflows: list<string>, transitions: list<string>, notes: list<string>}>}
+     *     role: int, old: int, new: int, assignee_only: bool, workflows: list<string>, transitions: list<string>, notes: list<string>,
+     *     ignored: bool}>}
      *     rows: the union per tracker (the global fallback); project_rows: each project's own Jira workflow, for
-     *     redmine_project_workflows (Jan, 2026-10-14), keyed "project|tracker|role|old|new|assignee"
+     *     redmine_project_workflows (Jan, 2026-10-14), keyed "project|tracker|role|old|new|assignee"; ignored: a row of
+     *     role 0 whose every group Jan ignores (decision 14)
      */
     public static function build(
         array $sources,
@@ -87,7 +93,15 @@ final class WorkflowProposal
                     continue;
                 }
                 $project = $source['project'];
-                [$roles, $groupNotes] = self::roles($project, $transition, $projectRoles, $groupRoles, $problems, $source['workflow']);
+                [$roles, $groupNotes, $ignoredNotes] = self::roles(
+                    $project,
+                    $transition,
+                    $projectRoles,
+                    $groupRoles,
+                    $context,
+                    $problems,
+                    $source['workflow']
+                );
                 [$roles, $permissionNotes] = self::permitted($project, $transition, $roles, $context, $problems, $source['workflow']);
                 $screen = is_array($transition['screen'] ?? null)
                     ? ['id' => (string)($transition['screen']['id'] ?? ''), 'name' => (string)($transition['screen']['name'] ?? '')]
@@ -96,23 +110,30 @@ final class WorkflowProposal
                     ? self::screenFields($screen, $tracker, $roles, $new, $source, $context, $fieldPermissions, $problems)
                     : [];
                 $notes = array_values(array_map('strval', array_merge($transition['not_mapped'], $permissionNotes, $screenNotes)));
-                $targets = array_map(static fn (int $role): array => [$role, $notes], $roles);
+                $targets = array_map(static fn (int $role): array => [$role, $notes, false], $roles);
                 if ($groupNotes !== []) {
-                    $targets[] = [self::NO_ROLE, array_merge($notes, $groupNotes)];
+                    $targets[] = [self::NO_ROLE, array_merge($notes, $groupNotes, $ignoredNotes), false];
+                } elseif ($ignoredNotes !== []) {
+                    $targets[] = [self::NO_ROLE, array_merge($notes, $ignoredNotes), true];
                 }
                 $assigneeOnly = (bool)($transition['assignee_only'] ?? false);
                 foreach ($olds as $old) {
-                    foreach ($targets as [$role, $rowNotes]) {
+                    foreach ($targets as [$role, $rowNotes, $ignored]) {
                         $key = implode('|', [$tracker, $role, $old, $new, $assigneeOnly ? 1 : 0]);
                         $rows[$key] ??= ['tracker' => $tracker, 'role' => $role, 'old' => $old, 'new' => $new,
-                            'assignee_only' => $assigneeOnly, 'workflows' => [], 'projects' => [], 'transitions' => [], 'notes' => []];
+                            'assignee_only' => $assigneeOnly, 'workflows' => [], 'projects' => [], 'transitions' => [], 'notes' => [],
+                            'ignored' => $ignored];
+                        // ignored only when every contribution is: a group still to review keeps the row in review
+                        $rows[$key]['ignored'] = $rows[$key]['ignored'] && $ignored;
                         $rows[$key]['workflows'] = self::add($rows[$key]['workflows'], [$source['workflow']]);
                         $rows[$key]['projects'] = self::add($rows[$key]['projects'], [$source['project']]);
                         $rows[$key]['transitions'] = self::add($rows[$key]['transitions'], [(string)$transition['name']]);
                         $rows[$key]['notes'] = self::add($rows[$key]['notes'], $rowNotes);
                         $own = $source['project'] . '|' . $key;
                         $projectRows[$own] ??= ['project' => $source['project'], 'tracker' => $tracker, 'role' => $role, 'old' => $old,
-                            'new' => $new, 'assignee_only' => $assigneeOnly, 'workflows' => [], 'transitions' => [], 'notes' => []];
+                            'new' => $new, 'assignee_only' => $assigneeOnly, 'workflows' => [], 'transitions' => [], 'notes' => [],
+                            'ignored' => $ignored];
+                        $projectRows[$own]['ignored'] = $projectRows[$own]['ignored'] && $ignored;
                         $projectRows[$own]['workflows'] = self::add($projectRows[$own]['workflows'], [$source['workflow']]);
                         $projectRows[$own]['transitions'] = self::add($projectRows[$own]['transitions'], [(string)$transition['name']]);
                         $projectRows[$own]['notes'] = self::add($projectRows[$own]['notes'], $rowNotes);
@@ -185,21 +206,30 @@ final class WorkflowProposal
      * @param array<string, mixed> $transition
      * @param array<string, list<int>> $projectRoles
      * @param array<string, array<string, list<int>>> $groupRoles
+     * @param array<string, mixed> $context
      * @param list<string> $problems
-     * @return array{0: list<int>, 1: list<string>} the roles, and the review notes of groups that are not members
+     * @return array{0: list<int>, 1: list<string>, 2: list<string>} the roles, the review notes of groups that are not
+     *     members, and the notes of those Jan ignores
      */
     private static function roles(
         string $project,
         array $transition,
         array $projectRoles,
         array $groupRoles,
+        array $context,
         array &$problems,
         string $workflow
     ): array {
         if ($transition['groups'] === []) {
-            return [$projectRoles[$project] ?? [], []];
+            return [$projectRoles[$project] ?? [], [], []];
         }
-        $resolved = GroupConditions::resolve($project, array_values(array_map('strval', $transition['groups'])), $groupRoles);
+        $resolved = GroupConditions::resolve(
+            $project,
+            array_values(array_map('strval', $transition['groups'])),
+            $groupRoles,
+            is_array($context['group_modes'] ?? null) ? $context['group_modes'] : [],
+            is_array($context['group_users_roles'] ?? null) ? $context['group_users_roles'] : []
+        );
         foreach ($resolved['not_members'] as $group) {
             $problems[] = sprintf(
                 '%s, workflow "%s": group "%s" is not a member of the project; review row with role 0',
@@ -209,7 +239,16 @@ final class WorkflowProposal
             );
         }
 
-        return [$resolved['roles'], $resolved['review']];
+        if ($resolved['ignored'] !== []) {
+            $problems[] = sprintf(
+                '%s, workflow "%s": transition "%s" for a group that is not a member, ignored (Jan, decision 14)',
+                $project,
+                $workflow,
+                $transition['name']
+            );
+        }
+
+        return [$resolved['roles'], $resolved['review'], $resolved['ignored']];
     }
 
     /**

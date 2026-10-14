@@ -34,7 +34,7 @@ $pdo = new PDO((string)$config['database']['dsn'], (string)$config['database']['
 $column = static fn (string $sql): array => $pdo->query($sql)->fetchAll(PDO::FETCH_KEY_PAIR);
 
 // Mappings, roles, permission holders and the projects' Jira workflows (lib/workflow_staging.php).
-$staging = loadWorkflowStaging($pdo);
+$staging = loadWorkflowStaging($pdo, $config['migration']['workflows']['group_roles'] ?? null);
 ['trackerOf' => $trackerOf, 'statusOf' => $statusOf, 'redmineProjectOf' => $redmineProjectOf, 'projectRoles' => $projectRoles,
     'groupRoles' => $groupRoles, 'sources' => $sources] = $staging;
 $problems = $staging['problems'];
@@ -42,6 +42,9 @@ $context = [];
 if ($staging['permissionRoles'] !== null) {
     $context['permission_roles'] = $staging['permissionRoles'];
 }
+// Jan's settings per project and group that is not a member (decision 14)
+$context['group_modes'] = $staging['groupModes'];
+$context['group_users_roles'] = $staging['groupUsersRoles'];
 $trackerNames = $column('SELECT redmine_tracker_id, MIN(COALESCE(proposed_redmine_name, jira_issue_type_name)) FROM migration_mapping_trackers
     WHERE redmine_tracker_id IS NOT NULL GROUP BY redmine_tracker_id');
 $statusNames = $column('SELECT redmine_status_id, MIN(COALESCE(proposed_redmine_name, jira_status_name)) FROM migration_mapping_statuses
@@ -82,10 +85,11 @@ $problems = array_values(array_unique(array_merge($problems, $proposal['problems
  * Writes the proposed rows of one review table; a row edited by hand (status, notes, or an edit column) keeps
  * its edit, a row no longer proposed is removed unless edited.
  *
- * @param array<string, array<string, mixed>> $proposed key => column values; 'notes' (list) decides PROPOSED or REVIEW
+ * @param array<string, array<string, mixed>> $proposed key => column values; 'notes' (list) decides PROPOSED or REVIEW,
+ *     unless 'migration_status' is given (IGNORED: Jan's setting, decision 14)
  * @param list<string> $keyColumns the columns of the unique key, in the order of the proposal's keys
  * @param list<string> $editColumns columns a reviewer may change besides status and notes (in the hash)
- * @return array{PROPOSED: int, REVIEW: int, 'kept edits': int, removed: int}
+ * @return array{PROPOSED: int, REVIEW: int, IGNORED: int, 'kept edits': int, removed: int}
  */
 function writeReviewTable(PDO $pdo, string $table, array $proposed, array $keyColumns, array $editColumns = []): array
 {
@@ -105,11 +109,12 @@ function writeReviewTable(PDO $pdo, string $table, array $proposed, array $keyCo
         $key = implode('|', array_map(static fn (string $c): string => (string)$row[$c], $keyColumns));
         $existing[$key] = $row + ['edited' => $row['automation_hash'] !== $hash($row)];
     }
-    $counts = ['PROPOSED' => 0, 'REVIEW' => 0, 'kept edits' => 0, 'removed' => 0];
+    $counts = ['PROPOSED' => 0, 'REVIEW' => 0, 'IGNORED' => 0, 'kept edits' => 0, 'removed' => 0];
     foreach ($proposed as $key => $values) {
         $notes = $values['notes'];
-        unset($values['notes']);
-        $values['migration_status'] = $notes === [] ? 'PROPOSED' : 'REVIEW';
+        $status = $values['migration_status'] ?? null;
+        unset($values['notes'], $values['migration_status']);
+        $values['migration_status'] = $status ?? ($notes === [] ? 'PROPOSED' : 'REVIEW');
         $values['notes'] = $notes === [] ? null : implode('; ', $notes);
         if (isset($existing[$key]) && $existing[$key]['edited']) {
             // only the Jira references follow the proposal
@@ -150,7 +155,8 @@ foreach ($proposal['rows'] as $key => $row) {
     $transitionRows['0|' . $key] = ['redmine_project_id' => 0, 'redmine_tracker_id' => $row['tracker'], 'redmine_role_id' => $row['role'],
         'redmine_old_status_id' => $row['old'], 'redmine_new_status_id' => $row['new'], 'only_assignee' => $row['assignee_only'] ? 1 : 0,
         'jira_workflows' => implode(', ', $row['workflows']), 'jira_projects' => implode(', ', $row['projects']),
-        'jira_transitions' => implode(', ', $row['transitions']), 'notes' => $row['notes']];
+        'jira_transitions' => implode(', ', $row['transitions']), 'notes' => $row['notes']]
+        + ($row['ignored'] ? ['migration_status' => 'IGNORED'] : []);
 }
 foreach ($proposal['project_rows'] as $key => $row) {
     $projectId = $redmineProjectOf[$row['project']] ?? null;
@@ -162,7 +168,8 @@ foreach ($proposal['project_rows'] as $key => $row) {
         'redmine_tracker_id' => $row['tracker'], 'redmine_role_id' => $row['role'], 'redmine_old_status_id' => $row['old'],
         'redmine_new_status_id' => $row['new'], 'only_assignee' => $row['assignee_only'] ? 1 : 0,
         'jira_workflows' => implode(', ', $row['workflows']), 'jira_projects' => $row['project'],
-        'jira_transitions' => implode(', ', $row['transitions']), 'notes' => $row['notes']];
+        'jira_transitions' => implode(', ', $row['transitions']), 'notes' => $row['notes']]
+        + ($row['ignored'] ? ['migration_status' => 'IGNORED'] : []);
 }
 $problems = array_values(array_unique($problems));
 $counts = writeReviewTable($pdo, 'migration_mapping_workflow_transitions', $transitionRows, ['redmine_project_id', 'redmine_tracker_id',
@@ -197,7 +204,15 @@ $lines = ['# Workflow proposal', '', sprintf(
     count($sources)
 ), ''];
 foreach (['Transitions' => $counts, 'Field permissions' => $permissionCounts, 'Scripts' => $scriptCounts] as $title => $c) {
-    $lines[] = sprintf('%s: %d proposed, %d to review, %d hand edits kept, %d removed.', $title, $c['PROPOSED'], $c['REVIEW'], $c['kept edits'], $c['removed']);
+    $lines[] = sprintf(
+        '%s: %d proposed, %d to review, %d ignored by Jan\'s group settings, %d hand edits kept, %d removed.',
+        $title,
+        $c['PROPOSED'],
+        $c['REVIEW'],
+        $c['IGNORED'],
+        $c['kept edits'],
+        $c['removed']
+    );
 }
 $lines[] = sprintf('Permission conditions: %s.', isset($context['permission_roles'])
     ? 'given to the roles that hold the permission in the project (decision 13)' : 'holders not staged (run 04), given to every role, to review');
@@ -213,7 +228,7 @@ foreach ($proposal['rows'] as $row) {
     $perTracker[$k] ??= [$trackerNames[$row['tracker']] ?? ('#' . $row['tracker']), $roleNames[$row['role']] ?? ('#' . $row['role']), 0, 0, 0];
     $perTracker[$k][2]++;
     $perTracker[$k][3] += $row['assignee_only'] ? 1 : 0;
-    $perTracker[$k][4] += $row['notes'] === [] ? 0 : 1;
+    $perTracker[$k][4] += $row['notes'] === [] || $row['ignored'] ? 0 : 1;
 }
 foreach ($perTracker as $t) {
     $lines[] = sprintf('| %s | %s | %d | %d | %d |', ...$t);
@@ -317,10 +332,11 @@ foreach ($proposal['rows'] as $row) {
 }
 file_put_contents($reportPath, implode("\n", $lines) . "\n");
 printf(
-    "Transitions: proposed %d, to review %d, hand edits kept %d, removed %d. Field permissions: %d proposed, %d to review. "
-    . "Scripts: %d proposed. %d item(s) not proposed or approximated.\nReport: %s\n",
+    "Transitions: proposed %d, to review %d, ignored %d (decision 14), hand edits kept %d, removed %d. "
+    . "Field permissions: %d proposed, %d to review. Scripts: %d proposed. %d item(s) not proposed or approximated.\nReport: %s\n",
     $counts['PROPOSED'],
     $counts['REVIEW'],
+    $counts['IGNORED'],
     $counts['kept edits'],
     $counts['removed'],
     $permissionCounts['PROPOSED'],

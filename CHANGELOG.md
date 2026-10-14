@@ -44,6 +44,11 @@ All notable changes to this project. Steps to take before and after a migration 
   field permissions from required transition screen fields, "assign to the current user" scripts);
   `tools/workflow_plan.php` and `tools/apply_workflows.rb` apply the approved rows (preview, then
   `--confirm-push`). 04 stages every permission holder, 16 the field configuration items.
+- Workflows (Jan, decision 14): `migration.workflows.group_roles` settles a transition Jira limits to a
+  group that is not a member, per project and group: `G` makes the group a member with its own role
+  (04 proposes it, its push creates the role through the Extended API: Edit issues only, not assignable),
+  `R` gives it to the roles the group's users hold, `ignore` marks the review row IGNORED; a group not
+  listed stays a review row. `tools/testenv/group_role_proof.rb` shows it on a real Redmine.
 - Later batches: 08 adds new select values to fields an earlier batch created (B47) and enables them for
   the new projects and trackers (B53); `tools/relink_issue_links.php` rewrites links to issues of a later
   batch in texts Redmine did not change (B52); links with an old issue key are resolved (B54).

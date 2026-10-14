@@ -111,6 +111,69 @@ final class WorkflowProposalTest extends TestCase
         self::assertSame([$problem], $result['problems']);
     }
 
+    /**
+     * @param list<string> $groups
+     * @return list<array{project: string, workflow: string, issue_type: string, transitions: list<array<string, mixed>>}>
+     */
+    private static function limitedTo(array $groups): array
+    {
+        return [['project' => 'ABC', 'workflow' => 'W', 'issue_type' => '1', 'transitions' => [
+            ['name' => 'Start', 'from' => ['1'], 'to' => '3', 'groups' => $groups, 'permissions' => [], 'assignee_only' => false,
+                'not_mapped' => []],
+        ]]];
+    }
+
+    public function testJansGroupSettingsResolveTheReviewRows(): void
+    {
+        // Jan, decision 14: R gives it to the roles the group's users hold, ignore makes the review row IGNORED
+        $context = [
+            'group_modes' => ['ABC' => ['everyone' => 'R', 'apps' => 'ignore']],
+            'group_users_roles' => ['ABC' => ['everyone' => [3, 4]]],
+        ];
+
+        $r = WorkflowProposal::build(self::limitedTo(['Everyone']), ['1' => 2], ['1' => 1, '3' => 2], ['ABC' => [3, 4, 5]], [], $context);
+        self::assertSame(['2|3|1|2|0', '2|4|1|2|0'], array_keys($r['rows']));
+        self::assertSame([], $r['rows']['2|3|1|2|0']['notes']);
+        self::assertFalse($r['rows']['2|3|1|2|0']['ignored']);
+        self::assertSame([], $r['problems']);
+
+        $ignored = WorkflowProposal::build(self::limitedTo(['Apps']), ['1' => 2], ['1' => 1, '3' => 2], ['ABC' => [4]], [], $context);
+        self::assertSame(['2|0|1|2|0'], array_keys($ignored['rows']));
+        self::assertTrue($ignored['rows']['2|0|1|2|0']['ignored']);
+        self::assertTrue($ignored['project_rows']['ABC|2|0|1|2|0']['ignored']);
+        self::assertSame(
+            ['Jira limits it to group "Apps", which is not a member of ABC: ignored (Jan, decision 14)'],
+            $ignored['rows']['2|0|1|2|0']['notes']
+        );
+    }
+
+    public function testAGroupStillToReviewKeepsTheRowInReview(): void
+    {
+        // one group ignored, another not listed: the row of role 0 stays in review with both notes
+        $context = ['group_modes' => ['ABC' => ['apps' => 'ignore']]];
+
+        $sources = self::limitedTo(['Apps', 'Nobody']);
+        $result = WorkflowProposal::build($sources, ['1' => 2], ['1' => 1, '3' => 2], ['ABC' => [4]], [], $context);
+
+        self::assertFalse($result['rows']['2|0|1|2|0']['ignored']);
+        self::assertCount(2, $result['rows']['2|0|1|2|0']['notes']);
+    }
+
+    public function testInTheUnionARowIsIgnoredOnlyWhenEveryProjectIgnoresIt(): void
+    {
+        $sources = array_merge(self::limitedTo(['Apps']), [['project' => 'XYZ', 'workflow' => 'W', 'issue_type' => '1', 'transitions' => [
+            ['name' => 'Start', 'from' => ['1'], 'to' => '3', 'groups' => ['Apps'], 'permissions' => [], 'assignee_only' => false,
+                'not_mapped' => []],
+        ]]]);
+        $context = ['group_modes' => ['ABC' => ['apps' => 'ignore']]];
+
+        $result = WorkflowProposal::build($sources, ['1' => 2], ['1' => 1, '3' => 2], ['ABC' => [4], 'XYZ' => [4]], [], $context);
+
+        self::assertFalse($result['rows']['2|0|1|2|0']['ignored'], 'XYZ has no setting: the union row stays in review');
+        self::assertTrue($result['project_rows']['ABC|2|0|1|2|0']['ignored']);
+        self::assertFalse($result['project_rows']['XYZ|2|0|1|2|0']['ignored']);
+    }
+
     public function testAPermissionConditionGoesToTheRolesThatHoldIt(): void
     {
         $transitions = [

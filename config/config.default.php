@@ -78,6 +78,26 @@ return [
         // global workflow (Redmine without that plugin).
         'workflows' => [
             'mode' => 'project',
+            // Jan, decision 14 (2026-10-14): a transition Jira limits to a group that is not a member of the project.
+            // Per project key and Jira group: 'G' makes the group a member (04) with its own role, which gets the
+            // transitions; 'R' gives them to the roles the group's users hold in the project; 'ignore' does not carry
+            // them. A group not listed gives review rows (role 0) for Jan, as before.
+            'group_roles' => [
+                'DOC' => ['DOC Support' => 'G'],
+                'FPS' => ['GEOxyz- Crewing approvers' => 'G'],
+                'GEOS' => ['Survey Support' => 'G', 'atlassian-addons-admin' => 'ignore'],
+                'ICT' => ['ICT Support' => 'G', 'GEOxyz-Jira-User' => 'R'],
+                'LLE' => ['GEOxyz-Jira-User' => 'R'],
+                'SIS' => ['GEOxyz-Jira-User' => 'R'],
+                'SOIL' => ['atlassian-addons-admin' => 'ignore'],
+                'SURV' => ['atlassian-addons-admin' => 'ignore'],
+                'TEST' => ['GEOxyz-Jira-User' => 'R', 'Survey Support' => 'R'],
+            ],
+            // G: the name of the group's own role (%s: the Jira group) and its permissions. Redmine applies a role's
+            // workflow only with "Edit issues" or "Add issues"; no "View issues" and not assignable, so the role
+            // gives nothing but the transitions to a user who sees the project's issues through another role.
+            'group_role_name' => '%s (workflow)',
+            'group_role_permissions' => ['edit_issues'],
         ],
         'trackers' => [
             // Optional Redmine status identifier to propose when creating new trackers via the extended API.

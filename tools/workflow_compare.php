@@ -10,8 +10,8 @@ declare(strict_types=1);
  *   SETS=SETS.json OUT=ANSWERS.json bundle exec rails runner tools/testenv/workflow_fingerprint.rb
  *   php tools/workflow_compare.php --answers=ANSWERS.json [--unexpected=FILE]   counts per category, the unexpected differences
  * Expected differences have a name: a group condition (the role is not one the group holds, or the group is not a
- * member: review row), a permission condition, "only the assignee", a rule not carried (review row), a row ignored
- * in the review table. Exits 1 when a difference is unexpected.
+ * member: review row, or ignored by Jan's group settings), a permission condition, "only the assignee", a rule not
+ * carried (review row), a row ignored in the review table. Exits 1 when a difference is unexpected.
  */
 
 use Jira2Redmine\Http\ClientFactory;
@@ -25,7 +25,7 @@ $pdo = new PDO((string)$config['database']['dsn'], (string)$config['database']['
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
 ]);
-$staging = loadWorkflowStaging($pdo);
+$staging = loadWorkflowStaging($pdo, $config['migration']['workflows']['group_roles'] ?? null);
 $trackerOf = $staging['trackerOf'];
 $statusOf = $staging['statusOf'];
 $projectOf = $staging['redmineProjectOf'];
@@ -55,8 +55,17 @@ foreach ($staging['sources'] as $source) {
             }
             $reasons = [];
             if ($transition['groups'] !== []) {
-                $held = GroupConditions::resolve($source['project'], array_values(array_map('strval', $transition['groups'])), $staging['groupRoles'])['roles'];
-                if ($held === []) {
+                $resolved = GroupConditions::resolve(
+                    $source['project'],
+                    array_values(array_map('strval', $transition['groups'])),
+                    $staging['groupRoles'],
+                    $staging['groupModes'],
+                    $staging['groupUsersRoles']
+                );
+                $held = $resolved['roles'];
+                if ($held === [] && $resolved['review'] === []) {
+                    $reasons[] = 'group condition: the group is not a member of the project, ignored (Jan, decision 14)';
+                } elseif ($held === []) {
                     $reasons[] = 'group condition: the group is not a member of the project (review row for Jan)';
                 } elseif (!in_array($role, $held, true)) {
                     $reasons[] = 'group condition: the role is not one the group holds';

@@ -100,7 +100,7 @@ final class WorkflowPlanTest extends TestCase
         $staging = (string)file_get_contents(__DIR__ . '/../lib/workflow_staging.php');
         self::assertStringContainsString('JOIN staging_jira_projects p ON p.id = m.jira_project_id', $staging);
         $tool = (string)file_get_contents(__DIR__ . '/../tools/workflow_proposal.php');
-        self::assertStringContainsString('loadWorkflowStaging($pdo)', $tool);
+        self::assertStringContainsString('loadWorkflowStaging($pdo, ', $tool);
     }
 
     public function testTheRunnerChecksIdsAndComputesTheChangesAfterThePluginsEnable(): void

@@ -3,19 +3,23 @@
 declare(strict_types=1);
 
 use Jira2Redmine\Roles\PermissionGrants;
+use Jira2Redmine\Workflows\GroupConditions;
 use Jira2Redmine\Workflows\JiraTransitions;
 
 /**
  * What tools/workflow_proposal.php and tools/workflow_compare.php read from staging: the mappings of the structure
  * scripts, the roles 04 gives per project, group, Jira project role and application role, the roles of the holders
  * of each permission (null when 04 staged none), and per project and issue type its Jira workflow's transitions.
+ * With Jan's group settings (migration.workflows.group_roles, decision 14): the modes, and for the groups set to R
+ * the roles their users hold.
  *
  * @return array{trackerOf: array<int|string, int>, statusOf: array<int|string, int>, redmineProjectOf: array<string, int>,
  *     projectRoles: array<string, list<int>>, groupRoles: array<string, array<string, list<int>>>,
  *     permissionRoles: ?array<string, array<string, list<int>>>, sources: list<array{project: string, workflow: string,
- *     issue_type: string, transitions: list<array<string, mixed>>}>, problems: list<string>}
+ *     issue_type: string, transitions: list<array<string, mixed>>}>, problems: list<string>,
+ *     groupModes: array<string, array<string, string>>, groupUsersRoles: array<string, array<string, list<int>>>}
  */
-function loadWorkflowStaging(PDO $pdo): array
+function loadWorkflowStaging(PDO $pdo, mixed $groupRolesConfig = null): array
 {
     $column = static fn (string $sql): array => ($statement = $pdo->query($sql)) !== false ? $statement->fetchAll(PDO::FETCH_KEY_PAIR) : [];
     $trackerOf = array_map('intval', $column("SELECT jira_issue_type_id, redmine_tracker_id FROM migration_mapping_trackers
@@ -33,10 +37,15 @@ function loadWorkflowStaging(PDO $pdo): array
     $rows = $pdo->query("SELECT jira_project_key, jira_role_id, principal_type, jira_group_id, jira_group_name, redmine_role_id
         FROM migration_mapping_project_role_groups
         WHERE redmine_role_id IS NOT NULL AND migration_status IN ('READY_FOR_ASSIGNMENT', 'ASSIGNMENT_RECORDED')");
+    $memberships = [];
     foreach ($rows !== false ? $rows->fetchAll(PDO::FETCH_ASSOC) : [] as $row) {
         $project = (string)$row['jira_project_key'];
         $role = (int)$row['redmine_role_id'];
         $projectRoles[$project][] = $role;
+        if ($row['jira_group_id'] !== PermissionGrants::APPLICATION_ROLE) {
+            $memberships[] = ['project' => $project, 'principal_type' => (string)$row['principal_type'],
+                'principal_id' => (string)$row['jira_group_id'], 'role' => $role];
+        }
         $jiraRoleRoles[$project][(string)$row['jira_role_id']][] = $role;
         if ($row['jira_group_id'] === PermissionGrants::APPLICATION_ROLE) {
             $applicationRoles[$project][] = $role;
@@ -47,6 +56,22 @@ function loadWorkflowStaging(PDO $pdo): array
     $unique = static fn (array $r): array => array_values(array_unique($r));
     $projectRoles = array_map($unique, $projectRoles);
     $groupRoles = array_map(static fn (array $g): array => array_map($unique, $g), $groupRoles);
+
+    // Jan's settings per project and group that is not a member (decision 14); R needs the roles of the group's users
+    $groupModes = GroupConditions::modes($groupRolesConfig);
+    $groupUsersRoles = [];
+    if ($groupModes !== []) {
+        $groupMembers = [];
+        $memberRows = $pdo->query('SELECT group_id, account_id FROM staging_jira_group_members');
+        foreach ($memberRows !== false ? $memberRows->fetchAll(PDO::FETCH_ASSOC) : [] as $member) {
+            $groupMembers[(string)$member['group_id']][] = (string)$member['account_id'];
+        }
+        $groupIds = [];
+        foreach ($column('SELECT group_id, name FROM staging_jira_groups') as $groupId => $name) {
+            $groupIds[mb_strtolower((string)$name, 'UTF-8')] = (string)$groupId;
+        }
+        $groupUsersRoles = GroupConditions::usersRoles($memberships, $groupMembers, $groupIds, $groupModes);
+    }
 
     // Rule 4: the roles of the holders of each permission in each project (04 stages the holders).
     $problems = [];
@@ -103,5 +128,6 @@ function loadWorkflowStaging(PDO $pdo): array
     }
 
     return ['trackerOf' => $trackerOf, 'statusOf' => $statusOf, 'redmineProjectOf' => $redmineProjectOf, 'projectRoles' => $projectRoles,
-        'groupRoles' => $groupRoles, 'permissionRoles' => $permissionRoles, 'sources' => $sources, 'problems' => $problems];
+        'groupRoles' => $groupRoles, 'permissionRoles' => $permissionRoles, 'sources' => $sources, 'problems' => $problems,
+        'groupModes' => $groupModes, 'groupUsersRoles' => $groupUsersRoles];
 }

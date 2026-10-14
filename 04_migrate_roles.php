@@ -18,6 +18,7 @@ use Jira2Redmine\Roles\PermissionGrants;
 use Jira2Redmine\Roles\ProjectRolePrincipals;
 use Jira2Redmine\Roles\RoleMapping;
 use Jira2Redmine\Roles\WatcherMemberships;
+use Jira2Redmine\Roles\WorkflowGroupRoles;
 
 const MIGRATE_ROLES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -196,7 +197,8 @@ function main(array $config, array $cliOptions): void
         $redmineConfig ??= extractArrayConfig($config, 'redmine');
         $useExtendedApi = shouldUseExtendedApi($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
 
-        runRolePushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi);
+        $workflowsConfig = $config['migration']['workflows'] ?? [];
+        runRolePushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi, is_array($workflowsConfig) ? $workflowsConfig : []);
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
@@ -837,7 +839,8 @@ function fetchAndStoreRedmineRoles(Client $client, PDO $pdo): int
 function runRoleTransformationPhase(PDO $pdo, array $config): array
 {
     synchronizeMigrationMappingRoles($pdo);
-    synchronizeMigrationMappingProjectRoleGroups($pdo, $config['migration']['roles'] ?? []);
+    $workflowsConfig = $config['migration']['workflows'] ?? [];
+    synchronizeMigrationMappingProjectRoleGroups($pdo, $config['migration']['roles'] ?? [], is_array($workflowsConfig) ? $workflowsConfig : []);
 
     $roleMapping = new RoleMapping(WatcherMemberships::mappings($config['migration']['roles'] ?? []));
     $redmineRoleLookup = fetchRedmineRoleLookup($pdo);
@@ -882,7 +885,7 @@ SQL;
 /**
  * @param array<string, mixed> $rolesConfig migration.roles
  */
-function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo, array $rolesConfig): void
+function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo, array $rolesConfig, array $workflowsConfig = []): void
 {
     try {
         $actorRows = $pdo->query('SELECT project_id, project_key, project_name, role_id, role_name, actor_id, actor_display, actor_type FROM staging_jira_project_role_actors ORDER BY project_id, role_id, actor_type, actor_id');
@@ -982,6 +985,25 @@ function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo, array $rolesConf
         printf("  Proposed %d watcher(s) without membership as direct members (B50).%s", count($uncoveredWatchers), PHP_EOL);
     }
     $actors = array_merge($actors, $uncoveredWatchers);
+
+    // Jan, decision 14 (option G): a group Jira limits workflow transitions to, made a member with its own role
+    $stagedProjects = [];
+    $projectRows = $pdo->query('SELECT id, project_key, name FROM staging_jira_projects');
+    foreach ($projectRows !== false ? $projectRows->fetchAll(PDO::FETCH_ASSOC) : [] as $project) {
+        $stagedProjects[(string)$project['project_key']] = ['id' => (string)$project['id'], 'name' => $project['name'] !== null ? (string)$project['name'] : null];
+    }
+    $stagedGroups = [];
+    foreach ($groupNames as $groupId => $groupName) {
+        $stagedGroups[mb_strtolower((string)$groupName, 'UTF-8')] = ['id' => (string)$groupId, 'name' => (string)$groupName];
+    }
+    $workflowGroups = WorkflowGroupRoles::actors($workflowsConfig, $stagedProjects, $stagedGroups);
+    foreach ($workflowGroups['unknown'] as $unknown) {
+        printf("  [warn] migration.workflows.group_roles: %s; no membership proposed (decision 14).%s", $unknown, PHP_EOL);
+    }
+    if ($workflowGroups['actors'] !== []) {
+        printf("  Proposed %d group(s) as members with their own workflow role (decision 14).%s", count($workflowGroups['actors']), PHP_EOL);
+    }
+    $actors = array_merge($actors, $workflowGroups['actors']);
 
     $statement = $pdo->prepare(<<<SQL
         INSERT INTO migration_mapping_project_role_groups (
@@ -1543,7 +1565,9 @@ function runProjectRoleAssignmentTransformation(PDO $pdo, array $config, array $
         if ($manualReason === null) {
             $resolvedRole = resolveTargetRedmineRole($row, $redmineRoleLookup, $defaultRoleId, $defaultRoleName, $roleMapping);
             if ($resolvedRole['status'] === 'AWAITING_ROLE') {
-                $manualReason = $resolvedRole['message'];
+                $manualReason = (int)$row['jira_role_id'] === WorkflowGroupRoles::ROLE_ID
+                    ? sprintf('Redmine has no role "%s" yet: 04\'s push creates it (decision 14).', (string)$row['jira_role_name'])
+                    : $resolvedRole['message'];
                 $newStatus = 'AWAITING_ROLE';
                 $newRoleId = null;
                 $newProposedRoleId = $resolvedRole['proposed_role_id'];
@@ -1595,6 +1619,7 @@ function runProjectRoleAssignmentTransformation(PDO $pdo, array $config, array $
             $newNotes = match ((int)$row['jira_role_id']) {
                 AssigneeMemberships::ROLE_ID => AssigneeMemberships::NOTE,
                 WatcherMemberships::ROLE_ID => WatcherMemberships::NOTE,
+                WorkflowGroupRoles::ROLE_ID => WorkflowGroupRoles::NOTE,
                 default => null,
             };
         }
@@ -1942,8 +1967,9 @@ SQL;
  * @return void
  * @throws Throwable
  */
-function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi): void
+function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi, array $workflowsConfig = []): void
 {
+    ensureWorkflowGroupRoles($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi, $workflowsConfig);
     $pendingAssignments = fetchPendingRoleAssignments($pdo);
     $pendingCount = count($pendingAssignments);
 
@@ -2274,6 +2300,133 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
     }
 
     printf("  Marked %d assignment(s) as ASSIGNMENT_RECORDED after manual confirmation.%s", $pendingCount, PHP_EOL);
+}
+
+/**
+ * Jan, decision 14 (option G): creates the groups' own workflow roles Redmine lacks (Extended API), then makes their
+ * memberships ready for the push below. Without --confirm-push, or with --dry-run, it only says what it would create.
+ *
+ * @param array<string, mixed> $redmineConfig
+ * @param array<string, mixed> $workflowsConfig migration.workflows
+ */
+function ensureWorkflowGroupRoles(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi, array $workflowsConfig): void
+{
+    $statement = $pdo->prepare(<<<SQL
+        SELECT mapping_id, jira_role_name, redmine_project_id, redmine_group_id
+        FROM migration_mapping_project_role_groups
+        WHERE jira_role_id = :role_id AND migration_status = 'AWAITING_ROLE'
+            AND redmine_project_id IS NOT NULL AND redmine_group_id IS NOT NULL AND jira_role_name IS NOT NULL
+        ORDER BY mapping_id
+    SQL);
+    if ($statement === false) {
+        throw new RuntimeException('Failed to prepare the query for the workflow roles of groups.');
+    }
+    $statement->execute(['role_id' => WorkflowGroupRoles::ROLE_ID]);
+    $awaiting = $statement->fetchAll(PDO::FETCH_ASSOC);
+    if ($awaiting === []) {
+        return;
+    }
+    $names = array_values(array_unique(array_map(static fn (array $row): string => (string)$row['jira_role_name'], $awaiting)));
+    $permissions = WorkflowGroupRoles::permissions($workflowsConfig['group_role_permissions'] ?? null);
+    printf(
+        "  %d workflow role(s) of groups (decision 14) for %d membership(s): %s; permissions %s, not assignable.%s",
+        count($names),
+        count($awaiting),
+        implode(', ', $names),
+        implode(', ', $permissions),
+        PHP_EOL
+    );
+    if (!$useExtendedApi) {
+        printf("  [manual] Create these roles in Redmine, then run 04 again: its transform finds them by name.%s", PHP_EOL);
+        return;
+    }
+    if (!$confirmPush || $isDryRun) {
+        printf("  --confirm-push missing or --dry-run: the roles are not created.%s", PHP_EOL);
+        return;
+    }
+
+    $client = createRedmineClient($redmineConfig);
+    $prefix = resolveExtendedApiPrefix($redmineConfig);
+    verifyExtendedApiAvailability($client, $prefix, 'roles.json');
+    $existing = [];
+    $roleRows = $pdo->query('SELECT id, name FROM staging_redmine_roles');
+    foreach ($roleRows !== false ? $roleRows->fetchAll(PDO::FETCH_ASSOC) : [] as $role) {
+        $existing[mb_strtolower((string)$role['name'], 'UTF-8')] = (int)$role['id'];
+    }
+    $snapshot = $pdo->prepare(<<<SQL
+        INSERT INTO staging_redmine_roles (id, name, assignable, raw_payload, retrieved_at)
+        VALUES (:id, :name, :assignable, :raw_payload, :retrieved_at)
+        ON DUPLICATE KEY UPDATE name = VALUES(name), assignable = VALUES(assignable), raw_payload = VALUES(raw_payload),
+            retrieved_at = VALUES(retrieved_at)
+    SQL);
+    if ($snapshot === false) {
+        throw new RuntimeException('Failed to prepare the insert into staging_redmine_roles.');
+    }
+    $ids = [];
+    foreach ($names as $name) {
+        $id = $existing[mb_strtolower($name, 'UTF-8')] ?? null;
+        if ($id === null) {
+            try {
+                $response = $client->post(
+                    buildExtendedApiPath($prefix, 'roles.json'),
+                    ['json' => WorkflowGroupRoles::rolePayload($name, $permissions)]
+                );
+            } catch (BadResponseException $exception) {
+                printf("  [error] Workflow role \"%s\" not created: %s%s", $name, summarizeExtendedApiError($exception), PHP_EOL);
+                continue;
+            } catch (GuzzleException $exception) {
+                printf("  [error] Workflow role \"%s\" not created: %s%s", $name, $exception->getMessage(), PHP_EOL);
+                continue;
+            }
+            $decoded = decodeJsonResponse($response);
+            $role = is_array($decoded) && is_array($decoded['role'] ?? null) ? $decoded['role'] : [];
+            $id = isset($role['id']) ? (int)$role['id'] : 0;
+            if ($id <= 0) {
+                printf("  [error] Workflow role \"%s\": the answer has no role id.%s", $name, PHP_EOL);
+                continue;
+            }
+            $snapshot->execute([
+                'id' => $id,
+                'name' => $name,
+                'assignable' => 0,
+                'raw_payload' => json_encode($role, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'retrieved_at' => formatCurrentUtcTimestamp('Y-m-d H:i:s'),
+            ]);
+            printf("  [created] Workflow role \"%s\" -> Redmine role #%d.%s", $name, $id, PHP_EOL);
+        }
+        $ids[$name] = $id;
+    }
+
+    $update = $pdo->prepare(<<<SQL
+        UPDATE migration_mapping_project_role_groups
+        SET redmine_role_id = :role_id, proposed_redmine_role_id = :role_id, proposed_redmine_role_name = :role_name,
+            migration_status = 'READY_FOR_ASSIGNMENT', notes = :notes, automation_hash = :automation_hash
+        WHERE mapping_id = :mapping_id
+    SQL);
+    if ($update === false) {
+        throw new RuntimeException('Failed to prepare the update of the workflow role memberships.');
+    }
+    foreach ($awaiting as $row) {
+        $name = (string)$row['jira_role_name'];
+        if (!isset($ids[$name])) {
+            continue;
+        }
+        $update->execute([
+            'role_id' => $ids[$name],
+            'role_name' => $name,
+            'notes' => WorkflowGroupRoles::NOTE,
+            'automation_hash' => computeProjectRoleAssignmentAutomationHash(
+                (int)$row['redmine_project_id'],
+                (int)$row['redmine_group_id'],
+                $ids[$name],
+                $ids[$name],
+                $name,
+                'READY_FOR_ASSIGNMENT',
+                WorkflowGroupRoles::NOTE
+            ),
+            'mapping_id' => $row['mapping_id'],
+        ]);
+    }
 }
 
 /**
