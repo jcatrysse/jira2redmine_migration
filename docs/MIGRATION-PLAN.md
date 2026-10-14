@@ -6,8 +6,10 @@
 GET-calls, de schrijfprobe gaf 401 "scope does not match".
 - 5.1, volledige run met jouw beslissingen 12 en 13 (`a813ffb`, workflows met de latere fixes): verify
   PASS, een tweede pass van 08 tot 15 verandert niets, 0 watchers zonder toegang.
-- 7.0: volledige run PASS met dezelfde code; de cumulatieve WIKI-batch met workflows en restore loopt
-  (cijfers volgen hieronder in Results).
+- 7.0: volledige run PASS met dezelfde code, de cumulatieve WIKI-batch ook PASS (B55 en B56 weg):
+  1.882 van 1.883 issues, 885 relaties, 0 watchers zonder toegang. Beslissingen 12 en 13 bewezen zoals op
+  5.1 (na restore 4.761 watchers behouden; 101 van 101 issues met een assignee zonder lidmaatschap
+  bewerkbaar; workflows per project via de plugin met 115 scopes, tweede run +0 -0).
 - Eerder vannacht, 7.0 WIKI-batch: 1.882 van 1.883 issues aangemaakt (1 wacht op GSPP); de 2 resterende
   verify-fouten bleken meetfouten van verify (B55, B56, gefixt). Relaties naar een latere batch komen
   vanzelf bij de rerun van 12 (bewezen: 30 van 30 naar WIKI).
@@ -18,7 +20,7 @@ GET-calls, de schrijfprobe gaf 401 "scope does not match".
   haalt hem weg. B46/B50 (assignee-only en watcher-only leden) staan uit, in config. Op 5.1 na restore:
   (a) 1.142 watchers blijven (217 van gebruikers zonder lidmaatschap); (b) 12 issues met een assignee die
   geen lid meer is: 12 van 12 bewerkt en bewaard, dezelfde gebruiker elders opnieuw toewijzen geweigerd;
-  (c) de lidmaatschappen zijn gelijk aan het voorstel van 04. Runbook: nooit
+  (c) de lidmaatschappen zijn gelijk aan het voorstel van 04. Op 7.0 hetzelfde, met de WIKI-batch. Runbook: nooit
   `rake redmine:watchers:prune` na de migratie.
 - **Workflows per project met jouw plugin (13).** Elk project krijgt exact zijn eigen Jira-workflow via
   redmine_project_workflows; de unie, door jou op te kuisen in de reviewtabel (IGNORED), is de globale
@@ -1006,6 +1008,18 @@ by the migrated projects with 332 transitions, 38 unused with 524). Counts: tran
 In short: redmine_project_workflows v0.1.6 with Redmine's workflow model carries every rule the used
 workflows have, except a field value condition (1 transition, FPS), the transition labels (cosmetic) and
 the transitions limited to a group that is not a member (67, Jan decides per case).
+
+**Decisions 12 and 13 on 7.0, 2026-10-14** (`STABILITY=1 run_all.sh 70 b2-final7`, then
+`BATCH=1 RESTORE=1 J2R_PROJECTS=geos,sis,oac,wiki run_all.sh 70 b2-final7-wiki`, code `a813ffb`; the workflow
+steps and proof (b) by hand with `45877d5`, plugin v0.1.6 `d951430`). Full run: verify **PASS**, stability
+unchanged, 0 watchers without access. Cumulative WIKI batch: verify **PASS** (B55 and B56 gone), 1,882 of
+1,883 issues created (1 waits for GSPP), relations 885 created, 85 to projects outside the run, 8 ignored
+(B40), 0 watchers without access. Restore: 1,668 temporary member roles removed (417 users, 4 projects),
+members 1,689; (a) 4,761 watchers before and after, 1,725 of them of users who are no member; (b) 101 issues
+whose assignee is no member: 101 of 101 edited and saved, the same assignee refused on another issue 101 of
+101; (c) memberships equal 04's proposal. Workflows, mode project: 115 scopes made through the plugin, 1,202
+project rows; a second run +0 -0; the workflows step, the runner, restore (12,262 removed), then +0 -0;
+GEOS Task (Developer, from In Progress) 4 statuses without "Create RMA", LABO Task 10 with it.
 
 **Plugin upgrade rehearsal on 5.1, 2026-10-14** (redmine_project_workflows v0.0.3 `d61b1de` to v0.1.6
 `f2c1c2f`, on the state the runner wrote with the old version). Migrations 004 to 007 ran; 004 made 115
