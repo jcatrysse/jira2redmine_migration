@@ -494,6 +494,36 @@ nested list, mailto, img), and no visible Markdown syntax (`**`, `\|`, `](`, `|-
 - Not yet done: a pipeline measurement after B41/B42 on a fresh run, bench step 3 (visual check with
   Jan), the remaining defect classes as PHPUnit cases.
 
+**Results B2, night 2026-10-14 (end quality work).** Every staged item rendered by Redmine 5.1.
+
+| set | code / measure | pipeline without loss |
+|---|---|---:|
+| GEOS, SIS, OAC, WIKI (WIKI batch staging) | before the fixes / old measure | 3,636 of 3,781 (96.2%) |
+| GEOS, SIS, OAC (5.1 final run) | after the fixes / old measure | 1,410 of 1,444 (97.6%) |
+| GEOS, SIS, OAC (5.1 final run) | after the fixes / corrected measure | 1,432 of 1,444 (99.2%) |
+| GEOS, SIS, OAC, WIKI (7.0 final batch) | after the fixes / corrected measure | @@FOUR@@ |
+
+- **Issue links, split as asked** (73 lossy items with an issue link before the fixes): the link's own
+  text was dropped in 44 (the only cause in 26): **fixed**, "text (#123)"; the Jira key replaced by
+  `#123` in 20 (only cause in 9): by design, Redmine shows the subject on hover; a link to an issue
+  outside the migration in 18, never the only cause: the link stays a Jira link with the key as text,
+  readable after Jira closes and clickable while it is open. The other missing words were link titles
+  (fixed with the text rule) and MediaWiki text (a separate class). After the fixes, GEOS/SIS/OAC have 5
+  lossy items with an issue link, all "key replaced by #id".
+- **Headings**: the stray heading anchors wrapped whole texts in `<p>` (13 texts shown as Markdown):
+  **fixed** (3 left, literal MediaWiki HTML); empty Jira headings are no longer counted as headings.
+- **Status lozenges**: now inline code next to the reference ("#170 `Closed`"); the lozenge items still
+  count as lossy only for the key replaced by `#id`.
+- **Safe links**: 30 wrapped links in 11 mailed items, 0 after conversion.
+- **Measure corrections** (each tested, both measures reported above): the issue type icon of an issue
+  macro is no image, an empty heading is no heading, an Outlook wrapper URL is no text, "#123" inside a
+  link label is not linked again (on the Redmine pages of the 7 issues concerned, "](" shows 0 times),
+  and a mention of a login that is an e-mail address (all 417 logins are) is a link (on SIS-21's page
+  both such mentions render as links with the name).
+- Remaining in GEOS/SIS/OAC (12 of 1,444): the Jira key replaced by `#id` (5, by design), `**` shown
+  inside raw HTML (3), a word glued to an attachment reference (2), one table row and one literal link
+  markup shown as text.
+
 - Curated set (step 1), two or three per construct: table GEOS-10, OAC-39, SIS-12; code block SIS-249,
   WIKI-66, WIKI-843; panel WIKI-161, WIKI-185; nested list GEOS-15, OAC-19; image GEOS-87, OAC-47;
   attachment link GEOS-8, GEOS-23; mention GEOS-10, SIS-162; issue link GEOS-65, OAC-16; heading
