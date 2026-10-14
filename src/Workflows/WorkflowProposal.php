@@ -199,29 +199,17 @@ final class WorkflowProposal
         if ($transition['groups'] === []) {
             return [$projectRoles[$project] ?? [], []];
         }
-        $roles = [];
-        $notes = [];
-        foreach ($transition['groups'] as $group) {
-            $held = $groupRoles[$project][mb_strtolower($group, 'UTF-8')] ?? [];
-            if ($held === []) {
-                $problems[] = sprintf(
-                    '%s, workflow "%s": group "%s" is not a member of the project; review row with role 0',
-                    $project,
-                    $workflow,
-                    $group
-                );
-                $notes[] = sprintf(
-                    'Jira limits it to group "%s", which is not a member of %s: set review_role_id and PROPOSED, or IGNORED',
-                    $group,
-                    $project
-                );
-            }
-            $roles = array_merge($roles, $held);
+        $resolved = GroupConditions::resolve($project, array_values(array_map('strval', $transition['groups'])), $groupRoles);
+        foreach ($resolved['not_members'] as $group) {
+            $problems[] = sprintf(
+                '%s, workflow "%s": group "%s" is not a member of the project; review row with role 0',
+                $project,
+                $workflow,
+                $group
+            );
         }
-        $roles = array_values(array_unique($roles));
-        sort($roles);
 
-        return [$roles, $notes];
+        return [$resolved['roles'], $resolved['review']];
     }
 
     /**

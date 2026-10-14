@@ -15,6 +15,7 @@ declare(strict_types=1);
  */
 
 use Jira2Redmine\Http\ClientFactory;
+use Jira2Redmine\Workflows\GroupConditions;
 use Jira2Redmine\Workflows\WorkflowComparison;
 
 $config = require __DIR__ . '/../bootstrap.php';
@@ -54,10 +55,7 @@ foreach ($staging['sources'] as $source) {
             }
             $reasons = [];
             if ($transition['groups'] !== []) {
-                $held = [];
-                foreach ($transition['groups'] as $group) {
-                    $held = array_merge($held, $staging['groupRoles'][$source['project']][mb_strtolower((string)$group, 'UTF-8')] ?? []);
-                }
+                $held = GroupConditions::resolve($source['project'], array_values(array_map('strval', $transition['groups'])), $staging['groupRoles'])['roles'];
                 if ($held === []) {
                     $reasons[] = 'group condition: the group is not a member of the project (review row for Jan)';
                 } elseif (!in_array($role, $held, true)) {
