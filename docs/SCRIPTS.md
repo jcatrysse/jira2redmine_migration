@@ -476,8 +476,12 @@ php 05_migrate_statuses.php --help
 ### Workflow highlights
 
 1. **Jira extraction (`jira`)** – calls `/rest/api/3/status`, capturing the display name, description, and
-   status category key for every Jira status. Raw payloads are upserted into `staging_jira_statuses` so reruns
-   remain idempotent.
+   status category key for every Jira status. That list leaves out statuses a workflow may still use (B57), so
+   the script also reads the paged `/rest/api/3/statuses/search` and adds each status the list lacks when a
+   project staged by 01 uses it (`/rest/api/3/statuses/{id}/projectUsages`); the search's category (TODO,
+   IN_PROGRESS, DONE) is stored as the list's key (new, indeterminate, done). Statuses no staged project uses
+   are skipped and counted, so they are not created in Redmine. Raw payloads are upserted into
+   `staging_jira_statuses` so reruns remain idempotent.
 2. **Redmine snapshot (`redmine`)** – refreshes `staging_redmine_issue_statuses` from `GET /issue_statuses.json`,
    storing the `is_closed` flag so the transform phase can propose sensible defaults.
 3. **Transform (`transform`)** – synchronises `migration_mapping_statuses` with the staging snapshots while

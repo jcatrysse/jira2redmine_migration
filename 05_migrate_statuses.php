@@ -10,6 +10,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Jira\StatusList;
 
 const MIGRATE_STATUSES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -190,23 +191,47 @@ function fetchAndStoreJiraIssueStatuses(Client $client, PDO $pdo): int
         throw new RuntimeException('Failed to prepare insert statement for staging_jira_statuses.');
     }
 
-    try {
-        $response = $client->get('/rest/api/3/status');
-    } catch (BadResponseException $exception) {
-        $response = $exception->getResponse();
-        $message = 'Failed to fetch issue statuses from Jira';
-        $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
-
-        throw new RuntimeException($message, 0, $exception);
-    } catch (GuzzleException $exception) {
-        throw new RuntimeException('Failed to fetch issue statuses from Jira: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    $decoded = decodeJsonResponse($response);
+    $decoded = fetchJiraStatusJson($client, StatusList::LIST_PATH, []);
 
     if (!is_array($decoded)) {
         throw new RuntimeException('Unexpected response when fetching issue statuses from Jira.');
     }
+
+    // B57: the list leaves out statuses the search shows (a workflow may use them)
+    $searched = StatusList::searchAll(function (int $startAt) use ($client): array {
+        $page = fetchJiraStatusJson($client, StatusList::SEARCH_PATH, [
+            'startAt' => $startAt,
+            'maxResults' => StatusList::SEARCH_PAGE_SIZE,
+        ]);
+        if (!is_array($page)) {
+            throw new RuntimeException('Unexpected response when searching issue statuses in Jira.');
+        }
+
+        return $page;
+    });
+    $projectIds = array_map('strval', $pdo->query('SELECT id FROM staging_jira_projects')->fetchAll(PDO::FETCH_COLUMN));
+    if ($projectIds === []) {
+        printf("  [warn] No staged Jira projects (run 01 first): only the statuses Jira lists are read.%s", PHP_EOL);
+    }
+    $missing = StatusList::missingUsed($decoded, $searched, function (string $statusId) use ($client): array {
+        return StatusList::projectIds(function (?string $token) use ($client, $statusId): array {
+            $page = fetchJiraStatusJson(
+                $client,
+                sprintf(StatusList::PROJECT_USAGES_PATH, rawurlencode($statusId)),
+                $token === null ? [] : ['nextPageToken' => $token]
+            );
+
+            return is_array($page) ? $page : [];
+        });
+    }, $projectIds);
+    printf(
+        "  Jira lists %d status(es); its status search adds %d a staged project uses (%d used by none, skipped).%s",
+        count($decoded),
+        count($missing['used']),
+        $missing['unused'],
+        PHP_EOL
+    );
+    $decoded = StatusList::merge($decoded, $missing['used']);
 
     $totalInserted = 0;
     $extractedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
@@ -267,6 +292,27 @@ function fetchAndStoreJiraIssueStatuses(Client $client, PDO $pdo): int
     printf("  Processed %d Jira status records.%s", $totalInserted, PHP_EOL);
 
     return $totalInserted;
+}
+
+/**
+ * A GET to Jira, decoded.
+ *
+ * @param array<string, int|string> $query
+ */
+function fetchJiraStatusJson(Client $client, string $path, array $query): mixed
+{
+    try {
+        $response = $client->get($path, $query === [] ? [] : ['query' => $query]);
+    } catch (BadResponseException $exception) {
+        $response = $exception->getResponse();
+        $message = sprintf('Failed to fetch issue statuses from Jira (%s, HTTP %d)', $path, $response->getStatusCode());
+
+        throw new RuntimeException($message, 0, $exception);
+    } catch (GuzzleException $exception) {
+        throw new RuntimeException(sprintf('Failed to fetch issue statuses from Jira (%s): %s', $path, $exception->getMessage()), 0, $exception);
+    }
+
+    return decodeJsonResponse($response);
 }
 
 /**

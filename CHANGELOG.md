@@ -99,6 +99,9 @@ All notable changes to this project. Steps to take before and after a migration 
 - A GET whose transfer was cut off (cURL 18) is retried like a failed connection.
 - Heading anchors no longer turn a text into one HTML paragraph that Redmine shows as text.
 - Verify and bench: the issue type icon of an issue macro is not counted as an image.
+- 05 also reads Jira's status search (`GET /rest/api/3/statuses/search`) and adds the statuses the status
+  list lacks when a staged project uses them (`GET /rest/api/3/statuses/{id}/projectUsages`); their
+  transitions were dropped from the workflow proposal (B57).
 
 ## [0.0.1]
 

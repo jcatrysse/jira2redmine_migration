@@ -46,14 +46,14 @@ GET-calls, de schrijfprobe gaf 401 "scope does not match".
 Findings). Advies: niet migreren vanuit `main`; de fixes staan op `redmine70-migration`, elk met een test.
 
 **Te beslissen of te bevestigen (aanbeveling eerst)**
-1. Workflows: 439 rijen voor een overgang die Jira beperkt tot een groep die geen lid is van het project
-   (vooral ICT Support in ICT, DOC Support in DOC): `review_role_id` en PROPOSED, of IGNORED. Aanbeveling
-   per geval (tabel in Results): G, de groep lid met een eigen rol met alleen die overgangen, voor DOC,
-   GEOS (Survey Support), ICT (ICT Support) en FPS, geen enkel nieuw lid; R, de rollen die de groep al
-   heeft, voor GEOxyz-Jira-User (iedereen zit erin); IGNORED voor atlassian-addons-admin (geen users);
-   TEST/Survey Support: R of IGNORED, testproject. De unie
-   opkuisen per tracker (het rapport toont per overgang workflows, projecten en issues in de status).
-   De extractie van de transitieschermen houden (aanbevolen, levert 0 regels) of weghalen.
+1. Workflows: 447 rijen (439, plus 8 van FPS sinds de fix van B57) voor een overgang die Jira beperkt tot
+   een groep die geen lid is van het project (vooral ICT Support in ICT, DOC Support in DOC):
+   `review_role_id` en PROPOSED, of IGNORED. Aanbeveling per geval (tabel in Results): G, de groep lid met
+   een eigen rol met alleen die overgangen, voor DOC, GEOS (Survey Support), ICT (ICT Support) en FPS, geen
+   enkel nieuw lid; R, de rollen die de groep al heeft, voor GEOxyz-Jira-User (iedereen zit erin); IGNORED
+   voor atlassian-addons-admin (geen users); TEST/Survey Support: R of IGNORED, testproject. De unie
+   opkuisen per tracker (het rapport toont per overgang workflows, projecten en issues in de status). De
+   extractie van de transitieschermen houden (aanbevolen, levert 0 regels) of weghalen.
 2. Bevestigen: Assignable user als Developer; Non member-groep pas na jouw READY; B37 oude
    selectiewaarde toevoegen en daarna inactief zetten; B38/B39 cross-project instellingen aan.
 3. B52, links naar een latere batch: (a, aanbevolen) voor productie één run met alle projecten; (b) de
@@ -876,7 +876,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B54 | A link with an old issue key stays a Jira link: a renamed project ("DATA-12" for GEOS-12; GEOS was once DATA) or an issue moved to another project (new number) | the rewrite knew the current keys only; 3 GEOS comments | **fixed** (decided overnight, coordinator): 10 and 11 ask Jira once per key in a link that is no staged issue (GET issue/{key}?fields=key) and keep the answer in staging_jira_issue_key_aliases; every rewrite (10, 11, relink) uses one map with the old keys |
 | B55 | verify expected a relation for a link between an issue and its own parent or subtask, which 12 leaves to the hierarchy (B40) | 1 WIKI failure (link 11351: a subtask's "To Wiki" link to its parent) | **fixed** in verify (`e0fe77b`), with a test |
 | B56 | verify counted the address of link markup a user typed ("[label\|url]") as Jira text; B42 makes it a link with that label | 1 WIKI failure (comment 29072, 49% of the words) | **fixed** in verify and the bench (`b71306f`), with a test; the comment measures 100% |
-| B57 | 05 reads the statuses from GET /rest/api/3/status, which does not list the 25 statuses Jira's status search (GET /rest/api/3/statuses/search) adds; 9 of them are in FPS's workflow (Accepted, Rejected, Re-Open, ...), no other migrated project uses one | FPS's workflow transitions to or from them are not proposed (reported as "no Redmine status"); FPS has 0 issues the read token can see, so nothing is lost now | open: 05 also reads the status search (GET, paged); only needed if FPS is migrated with issues |
+| B57 | 05 reads the statuses from GET /rest/api/3/status, which does not list the 25 statuses Jira's status search (GET /rest/api/3/statuses/search) adds; 9 of them are in FPS's workflow (Accepted, Rejected, Re-Open, ...), no other migrated project uses one | FPS's workflow transitions to or from them are not proposed (reported as "no Redmine status"); FPS has 0 issues the read token can see, so nothing is lost now | **fixed** (coordinator: a completeness bug, fix regardless of FPS): 05 also reads the status search (GET, paged) and adds a status when a staged project uses it (GET statuses/{id}/projectUsages), with tests; on 5.1 and 7.0: 9 added, 16 used by none skipped, 8 created and 1 matched (Rejected); the proposal's "no Redmine status" problems 29 to 0, FPS 288 rows proposed and 16 to review (8 of them the group rows to Accepted and Rejected), the other projects unchanged (2,185 and 439) |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
@@ -1064,7 +1064,7 @@ stuck, other transitions may still leave the status. Configuration and counts on
 | project | Jira group | transitions / trackers | examples (from > to) | group users who are members: roles | R | G | I | recommendation |
 |---|---|---:|---|---|---:|---:|---:|---|
 | DOC | DOC Support | 19 / 6 | New > In Progress; In Progress > Closed; Reopened > In Progress | 18 of 18: Manager 3, Developer 18 | 201 | 0 | 385 | **G** |
-| FPS | GEOxyz- Crewing approvers | 2 / 2 | Ready for review > Accepted; Ready for review > Rejected | 7 of 7: Manager 2, Developer 6 | 5 | 0 | 0 | **G** (once B57 is fixed) |
+| FPS | GEOxyz- Crewing approvers | 2 / 2 | Ready for review > Accepted; Ready for review > Rejected | 7 of 7: Manager 2, Developer 6 | 5 | 0 | 0 | **G** |
 | GEOS | Survey Support | 3 / 6 | To Wiki > Closed; Waiting Site Info > In Progress; In Progress > Waiting Site Info | 20 of 20: Manager 3, Developer 20 | 199 | 0 | 15 | **G** |
 | GEOS | atlassian-addons-admin | 1 / 6 | To Wiki > Closed | no users | 0 | 0 | 0 | **I** |
 | ICT | GEOxyz-Jira-User | 2 / 7 | Closed > Reopened | 7 of 219: Manager 6, Developer 4 | 0 | 212 | 2 | **R** |
@@ -1089,8 +1089,8 @@ stuck, other transitions may still leave the status. Configuration and counts on
 - **I** for atlassian-addons-admin: the group has no users, the transitions are for Jira apps
   (automation); Redmine has no such caller. An admin gets only the union of the roles' transitions, so
   SOIL's 1 issue in "To Wiki" needs another transition out of it or a manual close.
-- FPS's 2 transitions are no review rows today: Accepted and Rejected are missing from staging (B57), so the
-  proposal reports them as "status has no Redmine status". FPS has 0 issues the read token can see.
+- FPS's 2 transitions were no review rows: Accepted and Rejected were missing from staging (B57, now fixed:
+  8 review rows for the group). FPS has 0 issues the read token can see.
 
 **Plugin upgrade rehearsal on 5.1, 2026-10-14** (redmine_project_workflows v0.0.3 `d61b1de` to v0.1.6
 `f2c1c2f`, on the state the runner wrote with the old version). Migrations 004 to 007 ran; 004 made 115
