@@ -239,7 +239,8 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
     run `rake redmine:watchers:prune` after the migration; a watcher without access gets no
     notifications. To prove on both targets after `restore`: a watcher without access is still there, an
     issue whose assignee lost the membership can be edited and saved, the final memberships equal 04's
-    proposal.
+    proposal. **Built** (`52b6fd4`; `RESTORE=1` in `run_all.sh` runs restore and the proofs
+    `temporary_role_proof.rb`, `membership_check.php`); proof runs see Results.
 13. **Workflows** (2026-10-14, relayed by the coordinator):
     - applied by a runner after the migration: it writes the rows Jan approved in
       `migration_mapping_workflow_transitions` into Redmine and replaces the temporary open workflows;
@@ -257,6 +258,11 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
     - transitions limited to groups that are not members of the project: review rows with the group,
       Jan decides per case;
     - the 9 Jira statuses without a Redmine status (unused): skipped.
+    **Built** (`20cc6e8`, `7f1d898`, `8ff9e11`): rule 3 after all, from the field configurations 16 now
+    exports (0 rows on this Jira); `tools/workflow_plan.php` and `tools/apply_workflows.rb` (preview,
+    `--confirm-push`, repeatable); `WORKFLOWS=1` in `run_all.sh`. Runbook section 5. Information for Jan:
+    his plugin redmine_project_workflows (alpha), installed on both test instances, could give each
+    project its own Jira workflow instead of the union.
 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
@@ -937,6 +943,11 @@ cut transfers (B48), the B37/B38 lists, 16's workflow scheme per project.
 
 Watchers stored fell from 960 to 922: the 38 are users without Browse projects in Jira (not in the
 groups the permission schemes name), whom Redmine refuses as watchers; all 38 rows say `[no-access]`.
+
+**Phase 9 at the then head `d692538`, both targets (2026-10-14, `STABILITY=1 run_all.sh 51|70 b2-final5`).**
+**PASS** on 5.1 and 7.0, the second pass of 08 to 15 changed nothing, 4 issues waiting for a parent
+(GSPP 1, WIKI 3). B54 in a full run: 8 issue keys in links asked of Jira, 3 old keys of GEOS issues
+(DATA-n). Superseded by Jan's decisions 12 and 13 (later the same morning): their proof runs follow.
 
 **Workflow proposal (5.1 staging of this run, `tools/workflow_proposal.php`).** 26 Jira workflows over
 74 project and issue type pairs (all 15 projects 01 created): 827 rows proposed, 176 to review. Rules
