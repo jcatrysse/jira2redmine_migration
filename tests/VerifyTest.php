@@ -80,6 +80,13 @@ final class VerifyTest extends TestCase
         self::assertSame(['links' => 1, 'images' => 2], verifyHtmlLinkCounts($html));
     }
 
+    public function testTheBenchLinksAMentionWithAnEmailLoginAsRedmineDoes(): void
+    {
+        $bench = (string)file_get_contents(__DIR__ . '/../tools/conversion_bench.php');
+
+        self::assertStringContainsString("@([A-Za-z0-9_.@-]*[A-Za-z0-9_])/', static fn", $bench, 'the bench cuts a login at its @');
+    }
+
     public function testAnIssueReferenceInsideALinkLabelStaysText(): void
     {
         self::assertSame(

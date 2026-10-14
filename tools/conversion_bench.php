@@ -126,7 +126,8 @@ $userName = static fn (string $ref): ?string => $userNames[$ref] ?? null;
 // Redmine links user#1, @login and #123 when it renders in a project; the plain formatter does not, so do it here.
 $resolveUsers = static function (string $markdown) use ($userName): string {
     $markdown = preg_replace_callback('/\buser#(\d+)/', static fn (array $m): string => ($n = $userName($m[1])) !== null ? '[' . $n . '](/users/' . $m[1] . ')' : $m[0], $markdown) ?? $markdown;
-    $markdown = preg_replace_callback('/(?<![\w@\/])@([A-Za-z0-9_.-]*[A-Za-z0-9_])/', static fn (array $m): string => ($n = $userName($m[1])) !== null ? '[' . $n . '](/users/' . $m[1] . ')' : $m[0], $markdown) ?? $markdown;
+    // a login can be an e-mail address ("@jane.doe@example.eu"): Redmine links it, so does verify (same pattern)
+    $markdown = preg_replace_callback('/(?<![\w@\/])@([A-Za-z0-9_.@-]*[A-Za-z0-9_])/', static fn (array $m): string => ($n = $userName($m[1])) !== null ? '[' . $n . '](/users/' . $m[1] . ')' : $m[0], $markdown) ?? $markdown;
 
     // Redmine does not link "#123" inside a link it already has: neither does the bench (a nested link showed "](")
     return verifyLinkIssueReferences($markdown);
