@@ -1009,6 +1009,10 @@ In short: redmine_project_workflows v0.1.6 with Redmine's workflow model carries
 workflows have, except a field value condition (1 transition, FPS), the transition labels (cosmetic) and
 the transitions limited to a group that is not a member (67, Jan decides per case).
 
+**Extended API version.** Jan rewrote redmine_extended_api's history (trailers removed): `main` =
+`redmine70-migration` = `d103a2d`. The code equals the `c806a17` the runs above cite (only 7 documentation
+files differ); the test instances' checkouts were reset to `d103a2d` on 2026-10-14 after the 7.0 batch.
+
 **Decisions 12 and 13 on 7.0, 2026-10-14** (`STABILITY=1 run_all.sh 70 b2-final7`, then
 `BATCH=1 RESTORE=1 J2R_PROJECTS=geos,sis,oac,wiki run_all.sh 70 b2-final7-wiki`, code `a813ffb`; the workflow
 steps and proof (b) by hand with `45877d5`, plugin v0.1.6 `d951430`). Full run: verify **PASS**, stability
