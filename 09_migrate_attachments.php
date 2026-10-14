@@ -17,6 +17,7 @@ use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\Attachments\AttachmentSample;
 use Jira2Redmine\Attachments\PullRetry;
 use Jira2Redmine\Cli\Phases;
+use Jira2Redmine\Attachments\CreatedAt;
 const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
     'jira' => 'Synchronise Jira attachment metadata with the migration mapping table.',
@@ -458,13 +459,13 @@ function stageAttachmentsFromStagedIssues(PDO $pdo): array
                 $attachmentId = (string)$attachment['id'];
                 $attachmentFilename = isset($attachment['filename']) ? (string)$attachment['filename'] : ('attachment-' . $attachmentId);
                 $attachmentAuthor = isset($attachment['author']['accountId']) ? (string)$attachment['author']['accountId'] : null;
-                $attachmentCreated = isset($attachment['created']) ? normalizeDateTimeString($attachment['created']) : null;
+                $attachmentCreated = isset($attachment['created']) ? CreatedAt::stagingValue((string)$attachment['created']) : null;
                 $attachmentSize = isset($attachment['size']) ? normalizeInteger($attachment['size'], 0) : null;
                 $attachmentMime = isset($attachment['mimeType']) ? (string)$attachment['mimeType'] : null;
                 $attachmentUrl = isset($attachment['content']) ? (string)$attachment['content'] : null;
 
                 if ($attachmentCreated === null) {
-                    $attachmentCreated = normalizeDateTimeString($issueCreatedAt);
+                    $attachmentCreated = CreatedAt::stagingValue($issueCreatedAt);
                 }
 
                 try {
@@ -1203,7 +1204,7 @@ function buildAttachmentOverrideQuery(
         $query['attachment[author_id]'] = $redmineAuthorId;
     }
 
-    $normalizedCreated = normalizeJiraTimestamp($createdAt);
+    $normalizedCreated = CreatedAt::pushValue($createdAt);
     if ($normalizedCreated !== null) {
         $query['attachment[created_on]'] = $normalizedCreated;
     }
@@ -1251,26 +1252,6 @@ function resolveRedmineUserId(array $lookup, ?string $jiraAccountId, ?int $defau
     }
 
     return $defaultAuthorId;
-}
-
-function normalizeJiraTimestamp(mixed $value): ?string
-{
-    if ($value === null) {
-        return null;
-    }
-
-    if (is_string($value) && trim($value) === '') {
-        return null;
-    }
-
-    try {
-        $dt = new DateTimeImmutable((string)$value);
-    } catch (Throwable) {
-        return null;
-    }
-
-    // exact zoals README: UTC + Z + microseconds
-    return $dt->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.u\Z');
 }
 
 function resolveAttachmentWorkingDirectory(array $config): string
@@ -1863,27 +1844,6 @@ function parsePositiveIntOption(string $value, string $optionName): int
     }
 
     return $intValue;
-}
-
-function normalizeDateTimeString(mixed $value): ?string
-{
-    if (!is_string($value)) {
-        return null;
-    }
-
-    $trimmed = trim($value);
-    if ($trimmed === '') {
-        return null;
-    }
-
-    try {
-        $dt = new DateTimeImmutable($trimmed);
-    } catch (Exception) {
-        return null;
-    }
-
-    // bewaar microseconds
-    return $dt->format('Y-m-d H:i:s.u');
 }
 
 function normalizeInteger(mixed $value, int $min = PHP_INT_MIN, ?int $max = null): ?int

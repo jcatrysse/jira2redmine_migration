@@ -326,6 +326,20 @@ foreach ($projectKeys as $projectKey) {
         $record('attachments: file name rule', $exact['missing'] === [], $issueKey,
             count($exact['missing']) . ' of ' . count($expectedNames) . ' under another name, e.g. expected '
             . ($exact['missing'][0] ?? '-') . ', found ' . ($exact['unexpected'][0] ?? '-'));
+        // B58: the creation time, as an instant (09 dropped Jira's offset: 1 or 2 hours late in Redmine)
+        foreach ($fields['attachment'] ?? [] as $attachment) {
+            if (isset($skippedBySample[(string)$attachment['id']])) {
+                continue;
+            }
+            foreach ($rm['attachments'] ?? [] as $rmAttachment) {
+                if (verifyNormaliseFilename((string)$rmAttachment['filename']) === verifyNormaliseFilename((string)$attachment['filename'])
+                    && (int)$rmAttachment['filesize'] === (int)$attachment['size']) {
+                    $record('attachments: created', verifySameInstant((string)($attachment['created'] ?? ''), (string)($rmAttachment['created_on'] ?? '')),
+                        $issueKey . ' ' . $attachment['filename'], 'Jira ' . ($attachment['created'] ?? '-') . ', Redmine ' . ($rmAttachment['created_on'] ?? '-'));
+                    break;
+                }
+            }
+        }
         foreach ($fields['attachment'] ?? [] as $attachment) {
             if ((int)$attachment['size'] > $checksumMax || isset($skippedBySample[(string)$attachment['id']])) {
                 continue;

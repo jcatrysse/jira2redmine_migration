@@ -382,3 +382,20 @@ function verifyJiraValueIsEmpty(mixed $value): bool
 
     return false;
 }
+
+/**
+ * B58: two times are the same instant, to the second (Jira gives milliseconds and an offset, Redmine UTC seconds);
+ * a time without an offset is UTC.
+ */
+function verifySameInstant(string $a, string $b): bool
+{
+    try {
+        $utc = new DateTimeZone('UTC');
+        $first = new DateTimeImmutable($a, $utc);
+        $second = new DateTimeImmutable($b, $utc);
+    } catch (Exception) {
+        return false;
+    }
+
+    return trim($a) !== '' && trim($b) !== '' && $first->getTimestamp() === $second->getTimestamp();
+}
