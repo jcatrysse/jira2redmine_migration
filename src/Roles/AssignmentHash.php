@@ -36,10 +36,11 @@ final class AssignmentHash
      */
     public static function isHandEdited(array $row): bool
     {
-        $stored = trim((string)($row['automation_hash'] ?? ''));
+        // a value that is not a sha256 counts as no hash, as 04 always read it
+        $stored = strtolower(trim((string)($row['automation_hash'] ?? '')));
         $int = static fn (mixed $value): ?int => $value === null || $value === '' ? null : (int)$value;
 
-        return $stored !== '' && $stored !== self::compute(
+        return preg_match('/^[0-9a-f]{64}$/', $stored) === 1 && $stored !== self::compute(
             $int($row['redmine_project_id'] ?? null),
             $int($row['redmine_group_id'] ?? null),
             $int($row['redmine_role_id'] ?? null),

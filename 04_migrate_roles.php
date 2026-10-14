@@ -1274,18 +1274,8 @@ function runProjectRoleAssignmentTransformation(PDO $pdo, array $config, array $
             continue;
         }
 
-        $storedAutomationHash = normalizeStoredAutomationHash($row['automation_hash']);
-        $currentAutomationHash = computeProjectRoleAssignmentAutomationHash(
-            $row['redmine_project_id'],
-            $row['redmine_group_id'],
-            $row['redmine_role_id'],
-            $row['proposed_redmine_role_id'],
-            $row['proposed_redmine_role_name'],
-            $currentStatus,
-            $row['notes']
-        );
-
-        if ($storedAutomationHash !== null && $storedAutomationHash !== $currentAutomationHash) {
+        // Jan reviews the proposals in this table before the push (B31): his edits stay
+        if (AssignmentHash::isHandEdited($row)) {
             printf(
                 "  [preserved] Jira project %s role %s group %s (mapping #%d) has manual overrides; skipping.%s",
                 formatJiraProjectReference($row['jira_project_key'], $row['jira_project_name'], $row['jira_project_id']),
