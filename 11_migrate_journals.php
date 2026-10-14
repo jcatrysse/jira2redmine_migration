@@ -87,7 +87,7 @@ function main(array $config, array $cliOptions): void
         printf("[%s] Fetching Jira comments and changelog entries...%s", formatCurrentTimestamp(), PHP_EOL);
         $jiraClient = createJiraClient(extractArrayConfig($config, 'jira'));
         $jiraSummary = fetchJiraJournals($jiraClient, $pdo, $config);
-        refreshProjectKeyAliases($jiraClient, $pdo);
+        refreshIssueKeyAliases($jiraClient, $pdo);
         printf(
             "[%s] Jira journal extraction complete. Comments: %d (updated %d), Changelog entries: %d (updated %d).%s",
             formatCurrentTimestamp(),

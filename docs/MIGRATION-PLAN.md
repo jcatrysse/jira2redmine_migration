@@ -57,8 +57,8 @@ Advies: niet migreren vanuit `main`. De fixes staan op `redmine70-migration`, el
    Jira-link. (a, aanbevolen) voor productie één run met alle projecten, dan speelt het niet; (b) de
    opt-in stap `tools/relink_issue_links.php` na de laatste batch (gebouwd): alleen teksten waarvan de
    links nu kloppen en die in Redmine niet gewijzigd zijn; (c) laten zo (key leesbaar, link werkt zolang
-   Jira bestaat). Ook nieuw, **B54**: links met de oude projectkey (GEOS heette ooit DATA) worden nu ook
-   omgezet.
+   Jira bestaat). Ook nieuw, **B54**: links met een oude issue-key (GEOS heette ooit DATA, of een verplaatst
+   issue) worden nu ook omgezet.
 4. Automation rules: (a, aanbevolen) één keer met de hand exporteren uit Jira (JSON), buiten deze
    publieke repository bewaren als checklist; (b) via de automation-API (eigen token en scope).
 5. Service desk velden (in de testprojecten leeg): (a, aanbevolen) Request participants worden
@@ -794,7 +794,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B51 | 08's snapshot update used CAST(... AS JSON), which MariaDB refuses | B47's fix added the value in Redmine but 10 read the stale snapshot: the 294 WIKI issues stayed MANUAL in the proof batch | **fixed**: JSON_EXTRACT(:e, '$'); 08 compares with the field's values in Redmine before adding |
 | B52 | A link to an issue that a later batch migrates stays a Jira link | 10 rewrites the links of created issues in staging but pushes only the issues still waiting; 11 pushes a comment once. In the WIKI batch: 1 SIS comment to a WIKI issue | **built** (decided overnight): opt-in `tools/relink_issue_links.php` after the last batch, guarded by the hash of the pushed text (10 and 11 store it); one run with all projects recommended for production |
 | B53 | A field created by an earlier batch was never enabled for a later batch's projects and trackers | 48 empty custom field values in the WIKI batch's verify (Rank, Epic Link, Solution, Time in Status): Redmine dropped them silently | **fixed**: 08's update plan takes the scope the Jira data gives now (FieldScope) against the field as Redmine has it |
-| B54 | A link with a project's former key ("DATA-12" for GEOS-12; GEOS was once DATA) stays a Jira link | the rewrite knew the current keys only; 3 GEOS comments | **fixed**: 10 and 11 ask Jira about link prefixes that are no current key (GET project/{key}) and keep the aliases; every rewrite (10, 11, relink) uses one map with the former keys |
+| B54 | A link with an old issue key stays a Jira link: a renamed project ("DATA-12" for GEOS-12; GEOS was once DATA) or an issue moved to another project (new number) | the rewrite knew the current keys only; 3 GEOS comments | **fixed** (decided overnight, coordinator): 10 and 11 ask Jira once per key in a link that is no staged issue (GET issue/{key}?fields=key) and keep the answer in staging_jira_issue_key_aliases; every rewrite (10, 11, relink) uses one map with the old keys |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2

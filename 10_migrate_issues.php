@@ -227,7 +227,7 @@ function main(array $config, array $cliOptions): void
         printf("[%s] Starting Jira issue extraction...%s", formatCurrentTimestamp(), PHP_EOL);
 
         $jiraSummary = fetchAndStoreJiraIssues($jiraClient, $pdo, $config);
-        refreshProjectKeyAliases($jiraClient, $pdo);
+        refreshIssueKeyAliases($jiraClient, $pdo);
 
         printf(
             "[%s] Completed Jira extraction. Issues: %d (updated %d), Labels captured: %d, Object samples: %d, Flattened rows: %d.%s",
