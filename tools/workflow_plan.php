@@ -23,12 +23,14 @@ $rows = static fn (string $table): array => $pdo->query("SELECT * FROM $table OR
 $plan = WorkflowPlan::fromRows(
     $rows('migration_mapping_workflow_transitions'),
     $rows('migration_mapping_workflow_field_permissions'),
-    $rows('migration_mapping_workflow_scripts')
+    $rows('migration_mapping_workflow_scripts'),
+    (string)($config['migration']['workflows']['mode'] ?? 'project')
 );
 file_put_contents($out, json_encode($plan, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT));
 printf(
-    "Plan: %d transitions over %d tracker/role pairs, %d field permissions, %d scripts; waiting for review: %d transitions, "
+    "Plan (%s): %d transitions over %d project/tracker/role sets, %d field permissions, %d scripts; waiting for review: %d transitions, "
     . "%d field permissions, %d scripts.\nWritten to %s\n",
+    $plan['mode'],
     count($plan['transitions']),
     count($plan['managed']),
     count($plan['field_permissions']),

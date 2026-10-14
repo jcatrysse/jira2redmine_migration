@@ -898,6 +898,7 @@ CREATE TABLE `staging_jira_workflows` (
 
 CREATE TABLE `migration_mapping_workflow_transitions` (
                                                     `id` INT AUTO_INCREMENT PRIMARY KEY,
+                                                    `redmine_project_id` INT NOT NULL DEFAULT 0 COMMENT '0: the union, the global workflow; else the project''s own Jira workflow (redmine_project_workflows)',
                                                     `redmine_tracker_id` INT NOT NULL,
                                                     `redmine_role_id` INT NOT NULL,
                                                     `redmine_old_status_id` INT NOT NULL COMMENT '0: the creation of an issue',
@@ -911,7 +912,7 @@ CREATE TABLE `migration_mapping_workflow_transitions` (
                                                     `notes` TEXT NULL,
                                                     `automation_hash` CHAR(64) NULL,
                                                     `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                                                    UNIQUE KEY `uk_transition` (`redmine_tracker_id`, `redmine_role_id`, `redmine_old_status_id`, `redmine_new_status_id`, `only_assignee`)
+                                                    UNIQUE KEY `uk_transition` (`redmine_project_id`, `redmine_tracker_id`, `redmine_role_id`, `redmine_old_status_id`, `redmine_new_status_id`, `only_assignee`)
 ) COMMENT='Redmine workflow proposal from the Jira workflows (tools/workflow_proposal.php), for review; REVIEW: Jira rules Redmine cannot apply, in notes.';
 
 CREATE TABLE `staging_jira_workflow_scheme_projects` (

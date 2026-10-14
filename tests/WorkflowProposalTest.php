@@ -79,6 +79,11 @@ final class WorkflowProposalTest extends TestCase
         self::assertTrue($rows['2|3|2|5|1']['assignee_only']);
         self::assertContains('Jira permission CLOSE_ISSUES (given to every role of the project)', $rows['2|3|2|5|1']['notes']);
         self::assertContains('ABC: issue type 99999 has no Redmine tracker; workflow "Other" not proposed', $result['problems']);
+        // each project keeps its own workflow too (redmine_project_workflows, Jan 2026-10-14): XYZ has no creation
+        self::assertArrayHasKey('ABC|2|3|0|1|0', $result['project_rows']);
+        self::assertArrayHasKey('XYZ|2|4|1|2|0', $result['project_rows']);
+        self::assertArrayNotHasKey('XYZ|2|4|0|1|0', $result['project_rows']);
+        self::assertSame(['XYZ workflow'], $result['project_rows']['XYZ|2|4|1|2|0']['workflows']);
         self::assertStringContainsString('tracker #2: 2 Jira workflows', implode("\n", $result['problems']));
     }
 

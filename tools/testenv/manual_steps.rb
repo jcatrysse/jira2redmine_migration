@@ -92,8 +92,10 @@ when 'restore'
     JSON.parse(File.read(added_file)).group_by { |tracker_id, role_id, _, _| [tracker_id, role_id] }.each do |(tracker_id, role_id), keys|
       keys.each_slice(500) do |slice|
         pairs = slice.map { |_, _, from, to| "(#{from.to_i},#{to.to_i})" }.join(',')
-        removed += WorkflowTransition.where(tracker_id: tracker_id, role_id: role_id).
-          where("(old_status_id, new_status_id) IN (#{pairs})").delete_all
+        scope = WorkflowTransition.where(tracker_id: tracker_id, role_id: role_id)
+        # the step opened global rules only: a project's own workflow (redmine_project_workflows) stays
+        scope = scope.where(project_id: nil) if WorkflowRule.column_names.include?('project_id')
+        removed += scope.where("(old_status_id, new_status_id) IN (#{pairs})").delete_all
       end
     end
     File.delete(added_file)

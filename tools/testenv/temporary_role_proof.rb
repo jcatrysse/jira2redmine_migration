@@ -3,7 +3,7 @@
 # (a) watchers who are no member of the project any more are still watchers; (b) an issue whose assignee
 # is no member any more can be edited and saved when the assignee is not touched, while assigning that
 # user anew is refused (Redmine validates an assignee only when it changes). Nothing is kept: (b) runs in
-# a transaction that is rolled back. (c), the final memberships, is tools/testenv/membership_check.php.
+# a transaction that is rolled back, with the editor it makes. (c), the final memberships, is tools/testenv/membership_check.php.
 projects = Project.where(identifier: ENV.fetch('J2R_PROJECTS').split(',')).to_a
 ids = projects.map(&:id)
 not_member = ->(column) { "NOT EXISTS (SELECT 1 FROM members m WHERE m.project_id = issues.project_id AND m.user_id = #{column})" }
@@ -17,14 +17,20 @@ issues = Issue.where(project_id: ids).where.not(assigned_to_id: nil).where(not_m
 saved = 0
 refused = 0
 tried = 0
+# after restore the test users are locked again: an editor made for the proof, a member with a role that may edit
+editor_role = Role.where(builtin: 0).detect { |r| r.has_permission?(:edit_issues) && r.has_permission?(:view_issues) }
 issues.find_each do |issue|
-  editor = issue.project.users.active.detect { |u| !u.admin? && u.allowed_to?(:edit_issues, issue.project) }
   other = Issue.where(project_id: issue.project_id).where.not(id: issue.id).
     where('assigned_to_id IS NULL OR assigned_to_id <> ?', issue.assigned_to_id).first
-  next unless editor && other
+  next unless editor_role && other
 
   tried += 1
   ActiveRecord::Base.transaction do
+    editor = User.new(firstname: 'Edit', lastname: 'Proof', mail: "edit.proof.#{issue.id}@example.invalid")
+    editor.login = "j2r_edit_proof_#{issue.id}"
+    editor.password = editor.password_confirmation = 'Proof-2026-only'
+    editor.save!
+    Member.create!(project: issue.project, user: editor, role_ids: [editor_role.id])
     User.current = editor
     issue.init_journal(editor, 'proof: edited without touching the assignee')
     issue.safe_attributes = { 'subject' => "#{issue.subject} (proof)" }

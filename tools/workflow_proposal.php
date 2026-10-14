@@ -221,15 +221,29 @@ function writeReviewTable(PDO $pdo, string $table, array $proposed, array $keyCo
     return $counts;
 }
 
+// project 0: the union, Redmine's global workflow; each project: its own Jira workflow (redmine_project_workflows)
 $transitionRows = [];
 foreach ($proposal['rows'] as $key => $row) {
-    $transitionRows[$key] = ['redmine_tracker_id' => $row['tracker'], 'redmine_role_id' => $row['role'], 'redmine_old_status_id' => $row['old'],
-        'redmine_new_status_id' => $row['new'], 'only_assignee' => $row['assignee_only'] ? 1 : 0,
+    $transitionRows['0|' . $key] = ['redmine_project_id' => 0, 'redmine_tracker_id' => $row['tracker'], 'redmine_role_id' => $row['role'],
+        'redmine_old_status_id' => $row['old'], 'redmine_new_status_id' => $row['new'], 'only_assignee' => $row['assignee_only'] ? 1 : 0,
         'jira_workflows' => implode(', ', $row['workflows']), 'jira_projects' => implode(', ', $row['projects']),
         'jira_transitions' => implode(', ', $row['transitions']), 'notes' => $row['notes']];
 }
-$counts = writeReviewTable($pdo, 'migration_mapping_workflow_transitions', $transitionRows, ['redmine_tracker_id', 'redmine_role_id',
-    'redmine_old_status_id', 'redmine_new_status_id', 'only_assignee'], ['review_role_id']);
+foreach ($proposal['project_rows'] as $key => $row) {
+    $projectId = $redmineProjectOf[$row['project']] ?? null;
+    if ($projectId === null) {
+        $problems[] = sprintf('%s: no Redmine project; its own workflow is not proposed', $row['project']);
+        continue;
+    }
+    $transitionRows[$projectId . substr($key, strlen($row['project']))] = ['redmine_project_id' => $projectId,
+        'redmine_tracker_id' => $row['tracker'], 'redmine_role_id' => $row['role'], 'redmine_old_status_id' => $row['old'],
+        'redmine_new_status_id' => $row['new'], 'only_assignee' => $row['assignee_only'] ? 1 : 0,
+        'jira_workflows' => implode(', ', $row['workflows']), 'jira_projects' => $row['project'],
+        'jira_transitions' => implode(', ', $row['transitions']), 'notes' => $row['notes']];
+}
+$problems = array_values(array_unique($problems));
+$counts = writeReviewTable($pdo, 'migration_mapping_workflow_transitions', $transitionRows, ['redmine_project_id', 'redmine_tracker_id',
+    'redmine_role_id', 'redmine_old_status_id', 'redmine_new_status_id', 'only_assignee'], ['review_role_id']);
 
 $permissionRows = [];
 foreach ($proposal['field_permissions'] as $key => $row) {

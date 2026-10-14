@@ -40,7 +40,10 @@ final class WorkflowProposal
      *     field_permissions: array<string, array{tracker: int, role: int, status: int, field: string, rule: string,
      *     jira_field: string, workflows: list<string>, projects: list<string>, notes: list<string>}>,
      *     scripts: array<string, array{tracker: int, status: int, old: list<int>, workflows: list<string>, projects: list<string>,
-     *     transitions: list<string>}>, problems: list<string>}
+     *     transitions: list<string>}>, problems: list<string>, project_rows: array<string, array{project: string, tracker: int,
+     *     role: int, old: int, new: int, assignee_only: bool, workflows: list<string>, transitions: list<string>, notes: list<string>}>}
+     *     rows: the union per tracker (the global fallback); project_rows: each project's own Jira workflow, for
+     *     redmine_project_workflows (Jan, 2026-10-14), keyed "project|tracker|role|old|new|assignee"
      */
     public static function build(
         array $sources,
@@ -51,6 +54,7 @@ final class WorkflowProposal
         array $context = []
     ): array {
         $rows = [];
+        $projectRows = [];
         $fieldPermissions = [];
         $scripts = [];
         $problems = [];
@@ -106,6 +110,12 @@ final class WorkflowProposal
                         $rows[$key]['projects'] = self::add($rows[$key]['projects'], [$source['project']]);
                         $rows[$key]['transitions'] = self::add($rows[$key]['transitions'], [(string)$transition['name']]);
                         $rows[$key]['notes'] = self::add($rows[$key]['notes'], $rowNotes);
+                        $own = $source['project'] . '|' . $key;
+                        $projectRows[$own] ??= ['project' => $source['project'], 'tracker' => $tracker, 'role' => $role, 'old' => $old,
+                            'new' => $new, 'assignee_only' => $assigneeOnly, 'workflows' => [], 'transitions' => [], 'notes' => []];
+                        $projectRows[$own]['workflows'] = self::add($projectRows[$own]['workflows'], [$source['workflow']]);
+                        $projectRows[$own]['transitions'] = self::add($projectRows[$own]['transitions'], [(string)$transition['name']]);
+                        $projectRows[$own]['notes'] = self::add($projectRows[$own]['notes'], $rowNotes);
                     }
                 }
                 if (($transition['assign_to_current_user'] ?? false) === true) {
@@ -134,11 +144,13 @@ final class WorkflowProposal
             }
         }
         ksort($rows);
+        ksort($projectRows);
         ksort($fieldPermissions);
         ksort($scripts);
         $problems = array_values(array_unique($problems));
 
-        return ['rows' => $rows, 'field_permissions' => $fieldPermissions, 'scripts' => $scripts, 'problems' => $problems];
+        return ['rows' => $rows, 'field_permissions' => $fieldPermissions, 'scripts' => $scripts, 'problems' => $problems,
+            'project_rows' => $projectRows];
     }
 
     /**

@@ -73,6 +73,12 @@ return [
                 'Administer projects (permission scheme)' => 'Manager',
             ],
         ],
+        // tools/workflow_plan.php (Jan, decision 13): 'project' gives each project its own Jira workflow through
+        // redmine_project_workflows, with the union cleaned by Jan as the global workflow; 'union' writes only the
+        // global workflow (Redmine without that plugin).
+        'workflows' => [
+            'mode' => 'project',
+        ],
         'trackers' => [
             // Optional Redmine status identifier to propose when creating new trackers via the extended API.
             // Leave as null to derive the lowest open status from the staging snapshot.

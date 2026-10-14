@@ -41,6 +41,11 @@ final class TemporaryMigrationRoleTest extends TestCase
             'restore skips the callback that removes members left without a role'
         );
         self::assertStringNotContainsString('Watcher.prune', $steps);
+        // the opened workflows were global rules: a project's own workflow is not restore's to remove
+        self::assertStringContainsString(
+            "scope = scope.where(project_id: nil) if WorkflowRule.column_names.include?('project_id')",
+            $restore
+        );
 
         $run = (string)file_get_contents(__DIR__ . '/../tools/testenv/run_all.sh');
         self::assertGreaterThan(
