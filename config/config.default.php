@@ -157,6 +157,9 @@ return [
             // Optional Redmine user identifier used when a comment/changelog author cannot be mapped from Jira.
             // Set to null to skip author overrides when using the extended API.
             'default_redmine_author_id' => null,
+            // Seconds around a Jira comment within which uploaded attachments are listed under it as "> attachment:"
+            // lines (B59). 0 lists none: images the comment shows stay inline and the issue lists every attachment.
+            'comment_attachment_window' => 0,
         ],
         'relations' => [
             // Optional custom mappings for Jira issue link types to Redmine relation types (including plugin-defined types).

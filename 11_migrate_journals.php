@@ -14,6 +14,7 @@ use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\Attachments\AttachmentNames;
+use Jira2Redmine\Journals\AttachmentWindow;
 use Jira2Redmine\Journals\JournalStatus;
 use Jira2Redmine\Text\Relink;
 use Jira2Redmine\Cli\Phases;
@@ -115,7 +116,7 @@ function main(array $config, array $cliOptions): void
             PHP_EOL
         );
         try {
-            $noteSummary = populateProposedJournalNotes($pdo);
+            $noteSummary = populateProposedJournalNotes($pdo, AttachmentWindow::seconds($config));
             printf(
                 "  [transform] Proposed journal notes updated: %d (skipped manual overrides: %d).%s",
                 $noteSummary['updated'],
@@ -711,7 +712,7 @@ function summariseJournalStatuses(PDO $pdo): array
  * @throws JsonException
  * @throws JsonException
  */
-function populateProposedJournalNotes(PDO $pdo): array
+function populateProposedJournalNotes(PDO $pdo, int $commentWindow = 0): array
 {
     $userLookup = buildRedmineUserLookup($pdo);
 
@@ -800,7 +801,7 @@ function populateProposedJournalNotes(PDO $pdo): array
 
             $note = $bodyText;
 
-            $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt);
+            $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt, $commentWindow);
             $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
             if ($attachmentBlock !== null) {
                 $note = trim($note) === ''
@@ -844,7 +845,8 @@ function populateProposedJournalNotes(PDO $pdo): array
             }
             $attachmentItemIds = array_values(array_unique($attachmentItemIds));
 
-            $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt);
+            // B59: a changelog entry lists only the attachments its items name, never those uploaded around it
+            $journalAttachments = [];
             $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
 
             if ($attachmentBlock !== null) {
@@ -985,7 +987,8 @@ function runJournalPushPhase(
             $defaultAuthorId,
             $useExtendedApi,
             $extendedApiPrefix,
-            $adfConverter
+            $adfConverter,
+            AttachmentWindow::seconds($config)
         );
     }
 
@@ -1096,7 +1099,8 @@ function processCommentPush(
     ?int $defaultAuthorId,
     bool $useExtendedApi,
     string $extendedApiPrefix,
-    AdfConverter $adfConverter
+    AdfConverter $adfConverter,
+    int $commentWindow = 0
 ): void
 {
     $mappingId = (int)$comment['mapping_id'];
@@ -1137,7 +1141,7 @@ function processCommentPush(
         $note = $bodyText;
 
         // fetch only attachments that are relevant and already uploaded / have sharepoint links
-        $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt);
+        $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt, $commentWindow);
 
         // append journal attachment references (read-only, no DB modifications here)
         $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
@@ -1295,7 +1299,8 @@ function processChangelogPush(
         $baseNote = $proposedNotes;
     } else {
         // detect attachments referenced for this journal
-        $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt);
+        // B59: only the attachments its items name (below), never those uploaded around it
+        $journalAttachments = [];
 
         // detect whether items mention attachments (best-effort)
         $items = [];
@@ -2270,7 +2275,7 @@ function formatCurrentTimestamp(): string
  *
  * @return array<int,array{mapping_id:int,jira_attachment_id:string,filename:string,sharepoint_url:string|null,redmine_attachment_id:int|null,created_at:string|null}>
  */
-function fetchJournalAttachmentsForNote(PDO $pdo, string $jiraIssueId, ?string $journalCreatedAt): array
+function fetchJournalAttachmentsForNote(PDO $pdo, string $jiraIssueId, ?string $journalCreatedAt, int $windowSeconds): array
 {
     $sql = <<<SQL
 SELECT
@@ -2298,18 +2303,7 @@ SQL;
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $stmt->closeCursor();
 
-    if ($journalCreatedAt !== null) {
-        $journalTimestamp = strtotime($journalCreatedAt);
-        if ($journalTimestamp !== false) {
-            $rows = array_values(array_filter($rows, static function (array $row) use ($journalTimestamp) {
-                $createdAt = isset($row['created_at']) ? (string)$row['created_at'] : null;
-                if ($createdAt === null) return true;
-                $createdTimestamp = strtotime($createdAt);
-                if ($createdTimestamp === false) return true;
-                return abs($createdTimestamp - $journalTimestamp) <= 300; // 5 minute tolerance
-            }));
-        }
-    }
+    $rows = AttachmentWindow::select($rows, $journalCreatedAt, $windowSeconds);
 
     $result = [];
     foreach ($rows as $r) {
