@@ -36,6 +36,19 @@ All notable changes to this project. Steps to take before and after a migration 
 - 10 lists the issues waiting for a parent outside the run, per parent project (`[waiting]`, B38).
 - 16 logs why automation rules are not exported.
 - Bench `--details`: the full measure per item and path.
+- Temporary migration role (Jan, decision 12): the `members` step makes every migrated user a member of
+  every migrated project with `Migration (temporary)`, on top of 04's memberships; `restore` removes it.
+  04's assignee-only (B46) and watcher-only (B50) members are off by default
+  (`migration.roles.assignee_only_members`, `watcher_only_members`). `run_all.sh RESTORE=1` proves it.
+- Workflows (Jan, decision 13): `tools/workflow_proposal.php` writes three review tables (transitions,
+  field permissions from required transition screen fields, "assign to the current user" scripts);
+  `tools/workflow_plan.php` and `tools/apply_workflows.rb` apply the approved rows (preview, then
+  `--confirm-push`). 04 stages every permission holder, 16 the field configuration items.
+- Later batches: 08 adds new select values to fields an earlier batch created (B47) and enables them for
+  the new projects and trackers (B53); `tools/relink_issue_links.php` rewrites links to issues of a later
+  batch in texts Redmine did not change (B52); links with an old issue key are resolved (B54).
+- `tools/testenv/visual_items.php`, `visual_check.mjs`: Jira's rendering next to Redmine's page per
+  curated issue, description and comments (bench step 3; the output stays outside the repository).
 
 ### Changed
 - Issues are created with their description; parents and rewritten Jira links follow in the same
