@@ -164,9 +164,9 @@ CREATE TABLE `staging_jira_project_permission_grants` (
 ) COMMENT='Group grants of Browse projects, Assignable user and Administer projects in each project permission scheme (B31).';
 
 CREATE TABLE `staging_jira_project_permission_holders` (
-                                                    `project_id` VARCHAR(255) NOT NULL,
+                                                    `project_id` VARCHAR(64) NOT NULL,
                                                     `project_key` VARCHAR(255) NULL,
-                                                    `permission` VARCHAR(64) NOT NULL,
+                                                    `permission` VARCHAR(255) NOT NULL COMMENT 'app permissions are long: 69 characters at GEOxyz',
                                                     `holder_type` VARCHAR(64) NOT NULL,
                                                     `holder_id` VARCHAR(255) NOT NULL,
                                                     `holder_name` VARCHAR(255) NULL,

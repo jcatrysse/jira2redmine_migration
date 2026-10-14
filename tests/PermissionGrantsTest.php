@@ -75,6 +75,10 @@ final class PermissionGrantsTest extends TestCase
         ], PermissionGrants::holders($scheme));
         $script = (string)file_get_contents(__DIR__ . '/../04_migrate_roles.php');
         self::assertStringContainsString('PermissionGrants::holders(', $script, '04 keeps only the membership grants');
+        // an app's permission key is longer than Jira's own (69 characters at GEOxyz); 04 stopped on a 64 column
+        $schema = (string)file_get_contents(__DIR__ . '/../database/schema.sql');
+        $table = substr($schema, (int)strpos($schema, 'CREATE TABLE `staging_jira_project_permission_holders`'), 900);
+        self::assertMatchesRegularExpression('/`permission` VARCHAR\(255\)/', $table);
     }
 
     public function testABuiltInGroupMembershipIsRead(): void
