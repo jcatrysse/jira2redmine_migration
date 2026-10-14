@@ -5,7 +5,8 @@
 **Stand.** Phase 9 is groen op 5.1 en 7.0 met de eindcode (`5ef122b`): verify 23 checks, 0 failures, een
 tweede pass van 08 tot 15 verandert niets. GEOS, SIS en OAC: 426 issues, 422 aangemaakt, 4 wachten op
 een parent in GSPP of WIKI. De cumulatieve WIKI-batch op 7.0: 1.883 issues, 1.882 aangemaakt, 1 wacht
-op GSPP; verify 23 checks met 2 open punten in WIKI (een relatie, een commentaar). Alles staat op
+op GSPP; verify 23 checks, de 2 resterende WIKI-fouten bleken meetfouten van verify (B55, B56,
+gefixt). Relaties naar een latere batch komen vanzelf bij de rerun van 12 (bewezen: 30 van 30 naar WIKI). Alles staat op
 `redmine70-migration`. Jira bleef read-only: alleen GET-calls, de schrijfprobe gaf 401
 "scope does not match".
 
@@ -818,6 +819,8 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B52 | A link to an issue that a later batch migrates stays a Jira link | 10 rewrites the links of created issues in staging but pushes only the issues still waiting; 11 pushes a comment once. In the WIKI batch: 1 SIS comment to a WIKI issue | **built** (decided overnight): opt-in `tools/relink_issue_links.php` after the last batch, guarded by the hash of the pushed text (10 and 11 store it); one run with all projects recommended for production |
 | B53 | A field created by an earlier batch was never enabled for a later batch's projects and trackers | 48 empty custom field values in the WIKI batch's verify (Rank, Epic Link, Solution, Time in Status): Redmine dropped them silently | **fixed**: 08's update plan takes the scope the Jira data gives now (FieldScope) against the field as Redmine has it |
 | B54 | A link with an old issue key stays a Jira link: a renamed project ("DATA-12" for GEOS-12; GEOS was once DATA) or an issue moved to another project (new number) | the rewrite knew the current keys only; 3 GEOS comments | **fixed** (decided overnight, coordinator): 10 and 11 ask Jira once per key in a link that is no staged issue (GET issue/{key}?fields=key) and keep the answer in staging_jira_issue_key_aliases; every rewrite (10, 11, relink) uses one map with the old keys |
+| B55 | verify expected a relation for a link between an issue and its own parent or subtask, which 12 leaves to the hierarchy (B40) | 1 WIKI failure (link 11351: a subtask's "To Wiki" link to its parent) | **fixed** in verify (`e0fe77b`), with a test |
+| B56 | verify counted the address of link markup a user typed ("[label\|url]") as Jira text; B42 makes it a link with that label | 1 WIKI failure (comment 29072, 49% of the words) | **fixed** in verify and the bench (`b71306f`), with a test; the comment measures 100% |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
@@ -920,8 +923,16 @@ created, 1 waiting for its parent in GSPP (B38: 92 waiting before the parents ar
 refused for their assignee (B46: 19 assignee-only members); the 294 issues with a value Jira no longer
 offers created (B47, B51); the 7 fields of the first batch enabled for WIKI (B53). Verify (100 issues,
 23 checks): custom fields 440/440 (48 failures before B53), counts 4/4 and 83/83, presence 100/100;
-2 failures left, open for the next session: one WIKI relation (Jira link 11351) and one WIKI comment
-(29072) whose missing words are an old intranet wiki URL (MediaWiki class).
+2 failures left, both in verify's measure, not in the migration: link 11351 is a subtask's link to its
+own parent, left to the hierarchy by design (B55), and comment 29072 holds typed link markup that B42
+makes a real link (B56). Both fixed in verify with a test.
+
+**Relations to a later batch, 7.0.** The first batch (GEOS, SIS, OAC) leaves 49 links MANUAL ("Missing
+Redmine issue mapping"): the other side is in WIKI for 30, in SURV 13, DOC 5, LABO 1. All 30 WIKI ones
+were created by 12 in the cumulative WIKI batch (their link ids are among its `[created]` lines, the
+first after the 71 of batch 1); the 19 others wait for their project. 12 re-evaluates a MANUAL row on
+every run while nobody edited it, so a rerun after the later batch creates them; no extra step, unlike
+links in text (B52).
 
 **Relink after the last batch (B52) and old keys (B54), 5.1.** A GEOS run with the final code stored the
 pushed-text hash of all 97 descriptions and 547 comments; a preview found none "edited", so the hashes
