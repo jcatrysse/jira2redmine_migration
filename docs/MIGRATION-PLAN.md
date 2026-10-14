@@ -1,5 +1,75 @@
 # Jira Cloud to Redmine: test migrations and script upgrade
 
+## Ochtendsamenvatting voor Jan (2026-10-14, B2)
+
+**Stand.** Phase 9 is groen op 5.1 en 7.0 met de eindcode (`5ef122b`): verify 23 checks, 0 failures, een
+tweede pass van 08 tot 15 verandert niets. GEOS, SIS en OAC: 426 issues, 422 aangemaakt, 4 wachten op
+een parent in GSPP of WIKI. De cumulatieve WIKI-batch op 7.0 (1.883 issues) loopt nog: zie Results.
+Alles staat op `redmine70-migration`. Jira bleef read-only: alleen GET-calls, de schrijfprobe gaf 401
+"scope does not match".
+
+**Vannacht gebouwd en bewezen**
+- **Memberships (jouw keuze B31 a).** 04 stelt per project voor uit de permission schemes en de project
+  roles; jij reviewt `migration_mapping_project_role_groups` vóór `--confirm-push` (query in de runbook).
+  Testrun: 79 aangemaakt, 7 keer een rol toegevoegd, 10 bestonden al, 0 fouten. Een handmatige wijziging
+  blijft staan bij een rerun (bewezen).
+- **B46.** Jira houdt een assignee die zijn rechten kwijt is, Redmine niet. 04 stelt zo iemand voor als
+  lid (rol `migration.roles.assignee_only_role`, standaard Developer): 7 in GEOS, SIS en OAC, 19 met WIKI
+  erbij. Zonder dat weigerde Redmine 10 en 47 issues, nu 0. 04 draait daarom na het ophalen van de issues.
+- **B50.** Een watcher zonder toegang tot het project (geen Browse in Jira) wordt niet gemigreerd, zoals
+  in Jira: 38 in de testrun, elk gemeld met `[no-access]`; verify verwacht ze afwezig.
+- **Batches.** Een latere batch voegt nieuwe selectiewaarden toe aan een bestaand veld (B47, B51; anders
+  bleven 294 WIKI-issues hangen) en zet bestaande velden aan voor de nieuwe projecten (B53; anders
+  verdwenen 48 waarden stil). Wachtende issues worden gekoppeld zodra het parent-project binnenkomt (B38,
+  bewezen: van 92 naar 1, de laatste wacht op GSPP).
+- **Conversie.** Pipeline zonder verlies in GEOS, SIS en OAC: 1.432 van 1.444 (99,2%; met de oude meting
+  97,6%). Over de vier projecten vóór de fixes: 96,2%; het cijfer met WIKI na de fixes volgt in de
+  tabel bij "Text conversion protocol". Issue links gesplitst: de eigen linktekst viel weg (gefixt,
+  "tekst (#id)"), de key wordt `#id` (by design), een link buiten de migratie blijft een Jira-link met de
+  key als tekst. Ook gefixt: headings, status-lozenges (inline code), Outlook safelinks (30 naar 0).
+- **Workflows.** `tools/workflow_proposal.php` maakt een reviewtabel en een lokaal rapport: 26 Jira-
+  workflows, 827 overgangen voorgesteld, 176 te reviewen (schermen, permission-condities, "assign to
+  me"). Er gaat niets naar Redmine zolang jij niet kiest hoe.
+- **Non member users.** Een recht voor "alle gelicentieerde users" (GSPP, ROV) wordt een voorstel voor
+  Redmines groep "Non member users", MANUAL tot jij READY zet. Bewezen op 5.1: de API maakt het
+  membership, een niet-lid krijgt de rechten maar is niet toewijsbaar.
+
+**Fouten die ook op `main` zitten (belangrijk voor productie)**
+- **B31**: 04 geeft een project role van één gebruiker aan elke groep van die gebruiker (één admin in
+  een groep van 254 maakte die groep Manager in 8 projecten).
+- **B35**: een rerun van 11 maakt alle journals opnieuw aan.
+- **B41**: 11 herschrijft de beschrijvingen die 10 al pushte.
+- **B43**: een rerun van 08 verwijdert de mapping van cascading parent-velden.
+- **B44**: de opkuis plakt cijfers aan een referentie ("user#332 4" wordt "user#3324", een andere
+  gebruiker).
+- **B49**: een heading met anchor maakt van de hele tekst één HTML-paragraaf; Redmine toont dan de
+  Markdown als tekst.
+
+Advies: niet migreren vanuit `main`. De fixes staan op `redmine70-migration`, elk met een test.
+
+**Te beslissen of te bevestigen (aanbeveling eerst; alternatieven in "Decided overnight")**
+1. Bevestigen: Assignable user als Developer; B46 assignee-only leden met Developer (alternatief: een
+   eigen rol met alleen inzage); Non member-groep pas na jouw READY; B37 oude selectiewaarde toevoegen en
+   na de migratie inactief zetten; B38/B39 cross-project instellingen blijven aan.
+2. **B50, watchers zonder toegang**: (a, aanbevolen) niet migreren, zoals in Jira; (b) als watcher-only
+   lid voorstellen, zoals bij B46 (geeft toegang die Jira niet geeft).
+3. **B52, links naar een latere batch**: een link uit batch 1 naar een issue van batch 2 blijft een
+   Jira-link. (a, aanbevolen) voor productie één run met alle projecten, dan speelt het niet; (b) een
+   opt-in her-push na de laatste batch, alleen voor teksten waarvan de links nu kloppen en die in
+   Redmine niet gewijzigd zijn (wordt nu gebouwd); (c) laten zo (key leesbaar, link werkt zolang Jira
+   bestaat).
+4. Automation rules: (a, aanbevolen) één keer met de hand exporteren uit Jira (JSON), buiten deze
+   publieke repository bewaren als checklist; (b) via de automation-API (eigen token en scope).
+5. Service desk velden (in de testprojecten leeg): (a, aanbevolen) Request participants worden
+   watchers, Organizations een lijstveld, pas bouwen als een project in scope ze gebruikt; (b) een
+   tekstveld; (c) niet migreren.
+6. Conversiekeuzes: status-lozenge als inline code (alternatief: vet); link met eigen tekst als
+   "tekst (#id)".
+7. Workflows toepassen: (a, aanbevolen) een runner die na de migratie de goedgekeurde rijen in Redmine
+   zet; (b) met de hand volgens het rapport; (c) de open workflows van de migratie laten staan.
+8. Nog open van eerder: PHP-versie op de productiemachine, staging MySQL of PostgreSQL, worklogs naar
+   time entries, fase 6 rest (M1).
+
 Start a Claude Code session on this repository, branch `redmine70-migration`, with:
 
 > Read CLAUDE.md and docs/MIGRATION-PLAN.md, then carry on with the first open item of the work
