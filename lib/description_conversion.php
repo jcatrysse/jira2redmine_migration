@@ -14,6 +14,13 @@ use Jira2Redmine\Text\MediaWikiSource;
 use Jira2Redmine\Text\Safelinks;
 
 /**
+ * The label of a Markdown link, on one line: no bracket of its own (escaped ones and images are fine). A lazy "(.*?)" ran
+ * from an earlier link's "[" to a later "](": a profile link then swallowed everything from that earlier link
+ * on ("Linked to [SURV-977](...), second incident ... [Claire](profile)" became "Linked to user#66", WIKI-724).
+ */
+const MARKDOWN_LINK_LABEL = '((?:[^\[\]\\\\\n]|\\\\.|!\[[^\]\n]*\]\([^)\n]*\))*)';
+
+/**
  * Markdown autolinks (<https://...>, <mailto:...>, <name@domain>) look like tags to DOMDocument, which
  * then drops the part after "@" and wraps the text in <p> (B15). The DOM passes over Markdown hide them
  * behind placeholders first and put them back after.
@@ -653,7 +660,7 @@ function transform_text_in_transform_phase(string $text, array $userMap): string
     // 3) Replace profile markdown links and raw profile URLs to user#id
     // markdown [Name](https://.../secure/ViewProfile.jspa?accountId=...)
     $text = preg_replace_callback(
-        '/\[(.*?)]\(\s*(https?:\/\/[^\s)]+\/secure\/ViewProfile(?:\.jspa)?[^)]*)\)/i',
+        '/\[' . MARKDOWN_LINK_LABEL . ']\(\s*(https?:\/\/[^\s)]+\/secure\/ViewProfile(?:\.jspa)?[^)]*)\)/i',
         function($m) use ($unwrapSafelink, $stripTrailing, $userMap) {
             $label = $m[1];
             $url = $unwrapSafelink($m[2]);
@@ -703,7 +710,7 @@ function transform_text_in_transform_phase(string $text, array $userMap): string
 
     // markdown links [label](url)
     $text = preg_replace_callback(
-        '/\[(.*?)]\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\s*\)/i',
+        '/\[' . MARKDOWN_LINK_LABEL . ']\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\s*\)/i',
         function($m) use ($unwrapSafelink, $stripTrailing) {
             $label = $m[1]; $url = $unwrapSafelink($m[2]); $url = $stripTrailing($url);
             // selectedIssue or browse:
@@ -777,7 +784,7 @@ function replaceIssueLinksInText(string $text, array $issueMap): string
     );
 
     $replaced = preg_replace_callback(
-        '/\[(.*?)]\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\s*\)/i',
+        '/\[' . MARKDOWN_LINK_LABEL . ']\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\s*\)/i',
         function($m) use ($issueMap) {
             $key = IssueReference::keyOfUrl($m[2]);
             if ($key === null || !isset($issueMap[$key])) {
@@ -985,7 +992,7 @@ function replaceIssueLinksWithRedmineIds(
         );
 
         // 1a) vervang markdown links [label](url)
-        $new = preg_replace_callback('/\[(.*?)]\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\s*\)/i', function($m) use ($issueMap) {
+        $new = preg_replace_callback('/\[' . MARKDOWN_LINK_LABEL . ']\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\s*\)/i', function($m) use ($issueMap) {
             $key = IssueReference::keyOfUrl($m[2]);
             if ($key === null || !isset($issueMap[$key])) return $m[0]; // geen wijziging
             return IssueReference::forLink($m[1], $key, $issueMap[$key]); // #1234, or "label (#1234)"
@@ -1103,7 +1110,7 @@ function replaceJiraUserLinksWithRedmineIdsOnly(string $text, array $userLookup)
 
     // 1) Markdown links: [Name](https://...ViewProfile.jspa?accountId=...)
     // (also the relative profile link that the ADF path writes for a mention)
-    $text = preg_replace_callback('/\[(.*?)]\(\s*(https?:\/\/[^)\s]+|\/secure\/ViewProfile\.jspa\?[^)\s]+)\s*\)/mi', function ($m) use ($replaceAccountId) {
+    $text = preg_replace_callback('/\[' . MARKDOWN_LINK_LABEL . ']\(\s*(https?:\/\/[^)\s]+|\/secure\/ViewProfile\.jspa\?[^)\s]+)\s*\)/mi', function ($m) use ($replaceAccountId) {
         $label = $m[1];
         $url = $m[2];
         $repl = $replaceAccountId($url);
@@ -1207,7 +1214,7 @@ function inlineReplaceJiraIssueKeysWithHashes(string $text, array $jiraToRedmine
     if (trim($text) === '' || $jiraToRedmine === []) return $text;
 
     // markdown links [label](url)
-    $text = preg_replace_callback('/\[(.*?)]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/mi', function($m) use ($jiraToRedmine) {
+    $text = preg_replace_callback('/\[' . MARKDOWN_LINK_LABEL . ']\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/mi', function($m) use ($jiraToRedmine) {
         $key = IssueReference::keyOfUrl($m[2]);
         if ($key === null || !isset($jiraToRedmine[$key])) return $m[0];
         return IssueReference::forLink($m[1], $key, $jiraToRedmine[$key]);

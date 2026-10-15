@@ -61,4 +61,24 @@ final class ConversionLossesTest extends TestCase
             convertJiraHtmlToMarkdown($html, [], $adf)
         );
     }
+
+    public function testAProfileLinkDoesNotSwallowTheTextBeforeIt(): void
+    {
+        // WIKI-724: "Linked to [KEY](...), second incident ... [Name](profile)" became "Linked to user#66"
+        $text = 'Linked to [https://x.atlassian.net/browse/OTHER-9](https://x.atlassian.net/browse/OTHER-9), second incident. '
+            . '[Jane Doe](https://x.atlassian.net/secure/ViewProfile.jspa?accountId=acc-22) please look';
+        $lookup = ['acc-22' => ['redmine_user_id' => 22, 'redmine_login' => 'jane']];
+
+        $kept = 'Linked to [https://x.atlassian.net/browse/OTHER-9](https://x.atlassian.net/browse/OTHER-9), second incident. ';
+        self::assertSame($kept . 'user#22 please look', transform_text_in_transform_phase($text, ['acc-22' => 22]));
+        self::assertSame($kept . '@jane please look', replaceJiraUserLinksWithRedmineIds($text, $lookup));
+        // an attachment link before an issue link kept its own label too
+        self::assertSame(
+            'see [doc.pdf](/rest/api/3/attachment/content/5) and #40',
+            replaceIssueLinksInText(
+                'see [doc.pdf](/rest/api/3/attachment/content/5) and [WIKI-12](https://x.atlassian.net/browse/WIKI-12)',
+                ['WIKI-12' => 40]
+            )
+        );
+    }
 }
