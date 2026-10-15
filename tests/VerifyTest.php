@@ -240,6 +240,9 @@ final class VerifyTest extends TestCase
         // only where the scripts rewrite it: in a link to the issue, not a key typed as text (WIKI-300)
         $html = 'dup of #WIKI-12? see <a href="https://x.atlassian.net/browse/WIKI-12">WIKI-12</a>';
         self::assertSame('dup of #WIKI-12? see #40', verifyHtmlToText(verifyRewriteIssueLinks($html, ['WIKI-12' => 40])));
+        // a link that shows its address is left out as a whole, as before
+        $html = 'see <a href="https://x.atlassian.net/browse/WIKI-12">https://x.atlassian.net/browse/WIKI-12</a> now';
+        self::assertSame(['see', 'now'], verifyWords(verifyHtmlToText(verifyRewriteIssueLinks($html, ['WIKI-12' => 40]))));
         $words = verifyWords(verifyRewriteIssueKeys('see WIKI-12 and OTHER-3', ['WIKI-12' => 40]));
         self::assertSame(['see', '40', 'and', 'other', '3'], $words);
     }

@@ -51,7 +51,8 @@ function verifyRewriteIssueKeys(string $text, array $keyToId): string
 
     // a link label typed in lower case ("wiki-1333") is the key all the same
     return preg_replace_callback(
-        '/\b([A-Za-z][A-Za-z0-9_]*-\d+)\b/',
+        // not inside an address (".../browse/KEY", "selectedIssue=KEY": left out as a whole) or after "#"
+        '/(?<![\/=#\w-])([A-Za-z][A-Za-z0-9_]*-\d+)\b/',
         static fn (array $m): string => isset($keyToId[strtoupper($m[1])]) ? '#' . $keyToId[strtoupper($m[1])] : $m[0],
         $text
     ) ?? $text;
