@@ -559,7 +559,11 @@ function restoreLiteralMarkupLinks(string $text): string
 
         return strtr(rtrim($url), ['(' => '%28', ')' => '%29', ' ' => '%20']);
     };
-    $label = static fn (string $value): string => trim((string)preg_replace('/\\\\([\\\\`*_{}\[\]()#+\-.!|~])/', '$1', $value));
+    // brackets in the label stay escaped: "[[1]|url]" (a citation) is the link "\[1\]"
+    $label = static fn (string $value): string => strtr(
+        trim((string)preg_replace('/\\\\([\\\\`*_{}\[\]()#+\-.!|~])/', '$1', $value)),
+        ['[' => '\\[', ']' => '\\]']
+    );
 
     // White space inside the brackets separated the link from the words around it ("to[ glossary|url]."): it
     // stays outside the link, where a word touches it (WIKI-613 read "toglossary").
@@ -579,7 +583,7 @@ function restoreLiteralMarkupLinks(string $text): string
 
     // \[label|url\]  (Jira wiki markup typed into the new editor)
     return (string)preg_replace_callback(
-        '/(?:(?<=(\S)))?\\\\\[([^\]|\n]{1,300}?\s*)(?:\\\\)?\|\s*(https?:\/\/(?:[^\s\]\\\\]|\\\\[^\]])+)\\\\?\](?=(\S?))/u',
+        '/(?:(?<=(\S)))?\\\\\[((?:\\\\[\[\]]|[^\]|\n]){1,300}?\s*)(?:\\\\)?\|\s*(https?:\/\/(?:[^\s\]\\\\]|\\\\[^\]])+)\\\\?\](?=(\S?))/u',
         static fn (array $m): string => $link($m[1], $m[2], $m[3], $m[4]),
         $text
     );

@@ -79,4 +79,17 @@ final class LiteralMarkupLinksTest extends TestCase
         self::assertSame('SVPs/[SVS](https://x.example/s)s', restoreLiteralMarkupLinks('SVPs/\\[SVS|https://x.example/s\\]s'));
         self::assertSame('see ([a](https://x.example/a))', restoreLiteralMarkupLinks('see (\\[a|https://x.example/a\\])'));
     }
+
+    public function testALabelWithBracketsBecomesALinkToo(): void
+    {
+        // WIKI-400, WIKI-352 (anonymised): left as text, the address became a broken autolink with backslashes
+        self::assertSame(
+            'the most accurate[\\[1\\]](https://w.example/G_-_C#cite_note-1) ellipsoid',
+            restoreLiteralMarkupLinks('the most accurate\\[\\[1\\]\\|https://w.example/G\\_-\\_C#cite\\_note-1\\] ellipsoid')
+        );
+        self::assertSame(
+            'report [average error \\[cm/m²\\]](http://w.example/P_T#C) ok',
+            restoreLiteralMarkupLinks('report \\[average error \\[cm/m²\\]\\|http://w.example/P\\_T#C\\] ok')
+        );
+    }
 }
