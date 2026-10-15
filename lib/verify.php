@@ -110,10 +110,17 @@ function verifyDropJiraBrowseUrls(string $text): string
  */
 function verifyLinkIssueReferences(string $markdown): string
 {
-    $parts = preg_split('/(!?\[[^\]]*\]\([^)]*\))/', $markdown, -1, PREG_SPLIT_DELIM_CAPTURE) ?: [$markdown];
+    // a link label may hold escaped brackets ("\[staging\]"); Redmine links "#123" only where its own rule does:
+    // not after a letter, and followed by white space, ",", "]", "<", the end, or punctuation that ends the word
+    // ("#03_2607" is no link, GEOS-103)
+    $parts = preg_split('/(!?\[(?:\\\\.|[^\]\\\\])*\]\([^)]*\))/', $markdown, -1, PREG_SPLIT_DELIM_CAPTURE) ?: [$markdown];
     foreach ($parts as $i => $part) {
         if ($i % 2 === 0) {
-            $parts[$i] = preg_replace('/(?<![\w&\/#\[])#(\d+)\b/', '[#$1](/issues/$1)', $part) ?? $part;
+            $parts[$i] = preg_replace(
+                '/(?<![\w&\/#\[])(?<!\w\\\\)#(\d+)(?=[[:punct:]](?:[^A-Za-z0-9_\/]|$)|[,\s\]<]|$)/m',
+                '[#$1](/issues/$1)',
+                $part
+            ) ?? $part;
         }
     }
 

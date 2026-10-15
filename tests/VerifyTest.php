@@ -264,4 +264,12 @@ final class VerifyTest extends TestCase
 
         self::assertSame(['here', 'and', 'more'], verifyWords(verifyDropJiraBrowseUrls($text)));
     }
+
+    public function testIssueReferencesAreLinkedWhereRedmineLinksThem(): void
+    {
+        // GEOS-103: "\#03_2607" is no link; SIS-267: no "#123" linked inside a label with escaped brackets
+        self::assertSame('L1*\\#03\\_2607 and [#5](/issues/5).', verifyLinkIssueReferences('L1*\\#03\\_2607 and #5.'));
+        $label = '[Support #23341 : data \\[staging\\] - Redmine](https://r.example/issues/23341)';
+        self::assertSame($label . ' [#7](/issues/7)', verifyLinkIssueReferences($label . ' #7'));
+    }
 }
