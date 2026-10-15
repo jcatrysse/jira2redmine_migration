@@ -4673,32 +4673,13 @@ function buildExtendedIssueOverrides(array $candidate, ?int $defaultAuthorId = n
  */
 function buildExtendedIssueUpdateOverrides(array $candidate, ?int $defaultAuthorId = null): array
 {
-    $overrides = [];
-
-    $updated = normalizeJiraTimestamp($candidate['jira_updated_at'] ?? null);
-    if ($updated !== null) {
-        $overrides['updated_on'] = $updated;
-    }
-
     $authorId = $candidate['proposed_author_id'] ?? $candidate['redmine_author_id'] ?? $defaultAuthorId;
-    $created = normalizeJiraTimestamp($candidate['jira_created_at'] ?? null);
-    if ($created === null) {
-        $created = $updated;
-    }
 
-    $journal = [];
-    if ($authorId !== null) {
-        $journal['user_id'] = (int)$authorId;
-        $journal['updated_by_id'] = (int)$authorId;
-    }
-    if ($created !== null) {
-        $journal['created_on'] = $created;
-    }
-    if ($journal !== []) {
-        $overrides['journal'] = $journal;
-    }
-
-    return $overrides;
+    return IssueFinalUpdate::overrides(
+        normalizeJiraTimestamp($candidate['jira_updated_at'] ?? null),
+        normalizeJiraTimestamp($candidate['jira_created_at'] ?? null),
+        $authorId !== null ? (int)$authorId : null
+    );
 }
 
 function extractDefaultIssueAuthorId(array $config): ?int

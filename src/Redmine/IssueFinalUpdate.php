@@ -33,6 +33,37 @@ final class IssueFinalUpdate
     }
 
     /**
+     * The Extended API overrides of the final update: the issue keeps Jira's updated time, and the journal Redmine
+     * writes for the change is the author's, at the issue's creation.
+     *
+     * @param string|null $updated Jira's updated time, normalised
+     * @param string|null $created Jira's created time, normalised
+     * @return array<string, mixed>
+     */
+    public static function overrides(?string $updated, ?string $created, ?int $authorId): array
+    {
+        $overrides = [];
+        if ($updated !== null) {
+            $overrides['updated_on'] = $updated;
+        }
+        $created ??= $updated;
+
+        $journal = [];
+        if ($authorId !== null) {
+            $journal['user_id'] = $authorId;
+            $journal['updated_by_id'] = $authorId;
+        }
+        if ($created !== null) {
+            $journal['created_on'] = $created;
+        }
+        if ($journal !== []) {
+            $overrides['journal'] = $journal;
+        }
+
+        return $overrides;
+    }
+
+    /**
      * Redmine stores text with CRLF line ends; compare as LF.
      */
     private static function normalise(string $text): string

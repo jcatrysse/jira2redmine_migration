@@ -25,4 +25,15 @@ final class IssueFinalUpdateTest extends TestCase
         self::assertSame(['parent_issue_id' => 7], IssueFinalUpdate::changes('x', 7, ['description' => 'x']));
         self::assertSame(['parent_issue_id' => 7], IssueFinalUpdate::changes('x', 7, ['description' => 'x', 'parent' => ['id' => 3]]));
     }
+
+    public function testTheOverridesKeepJiraTimesAndTheAuthor(): void
+    {
+        self::assertSame([
+            'updated_on' => '2024-02-01T10:00:00Z',
+            'journal' => ['user_id' => 7, 'updated_by_id' => 7, 'created_on' => '2024-01-02T03:04:05Z'],
+        ], IssueFinalUpdate::overrides('2024-02-01T10:00:00Z', '2024-01-02T03:04:05Z', 7));
+        // without a created time the journal takes the updated time; without anything, nothing
+        self::assertSame('2024-02-01T10:00:00Z', IssueFinalUpdate::overrides('2024-02-01T10:00:00Z', null, null)['journal']['created_on']);
+        self::assertSame([], IssueFinalUpdate::overrides(null, null, null));
+    }
 }
