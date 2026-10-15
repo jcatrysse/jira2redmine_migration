@@ -12,6 +12,7 @@ use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\Cli\Phases;
+use Jira2Redmine\Priorities\PriorityProposal;
 
 const MIGRATE_PRIORITIES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -362,25 +363,17 @@ function runPriorityTransformationPhase(PDO $pdo): array
     syncPriorityMappings($pdo);
     refreshPriorityMetadata($pdo);
 
-    $redmineLookup = buildRedminePriorityLookup($pdo);
-    $mappings = fetchPriorityMappingsForTransform($pdo);
-
-    $usedPositions = [];
-    $maxExistingPosition = 0;
-
-    foreach ($redmineLookup as $details) {
-        $position = isset($details['position']) ? normalizeInteger($details['position'], 1) : null;
-        if ($position === null) {
-            continue;
-        }
-
-        $usedPositions[$position] = true;
-        if ($position > $maxExistingPosition) {
-            $maxExistingPosition = $position;
-        }
+    $redmineByName = [];
+    foreach (buildRedminePriorityLookup($pdo) as $key => $details) {
+        $redmineByName[$key] = [
+            'id' => (int)$details['id'],
+            'name' => (string)normalizeString($details['name'], 255),
+            'is_default' => normalizeBooleanFlag($details['is_default'] ?? null),
+            'position' => isset($details['position']) ? normalizeInteger($details['position'], 1) : null,
+        ];
     }
-
-    $nextAvailablePosition = $maxExistingPosition + 1;
+    $proposals = new PriorityProposal($redmineByName);
+    $mappings = fetchPriorityMappingsForTransform($pdo);
 
     $updateStatement = $pdo->prepare(<<<SQL
         UPDATE migration_mapping_priorities
@@ -459,81 +452,20 @@ function runPriorityTransformationPhase(PDO $pdo): array
         }
 
         $defaultName = $jiraPriorityName !== null ? normalizeString($jiraPriorityName, 255) : null;
-
-        $manualReason = null;
-        $newStatus = $currentStatus;
-        $newRedmineId = $currentRedmineId;
-        $proposedName = $currentProposedName ?? $defaultName;
-        $proposedIsDefault = $currentProposedIsDefault ?? false;
-        $proposedPosition = $currentProposedPosition;
-
-        if ($defaultName === null) {
-            $manualReason = 'Missing Jira priority name in the staging snapshot.';
-        } else {
-            $lookupKey = strtolower($defaultName);
-            $matchedRedmine = $redmineLookup[$lookupKey] ?? null;
-
-            if ($matchedRedmine !== null) {
-                $newStatus = 'MATCH_FOUND';
-                $newRedmineId = (int)$matchedRedmine['id'];
-                $proposedName = normalizeString($matchedRedmine['name'] ?? $defaultName, 255) ?? $defaultName;
-                $proposedIsDefault = normalizeBooleanFlag($matchedRedmine['is_default'] ?? null) ?? false;
-                $proposedPosition = normalizeInteger($matchedRedmine['position'] ?? null, 1);
-            } else {
-                $newStatus = 'READY_FOR_CREATION';
-                $newRedmineId = null;
-                $proposedName = $defaultName;
-                if ($currentProposedIsDefault !== null) {
-                    $proposedIsDefault = $currentProposedIsDefault;
-                } else {
-                    $proposedIsDefault = false;
-                }
-                if ($currentProposedPosition !== null) {
-                    $proposedPosition = $currentProposedPosition;
-                }
-            }
-        }
-
-        if ($manualReason !== null) {
-            $newStatus = 'MANUAL_INTERVENTION_REQUIRED';
-            $newRedmineId = null;
-            if ($proposedName === null) {
-                $proposedName = $jiraPriorityId;
-            }
-            $notes = $manualReason;
-
+        $proposal = $proposals->propose($jiraPriorityId, $defaultName, $currentProposedName, $currentProposedIsDefault, $currentProposedPosition);
+        $newStatus = $proposal['status'];
+        $newRedmineId = $proposal['redmine_id'];
+        $proposedName = $proposal['name'];
+        $proposedIsDefault = $proposal['is_default'];
+        $proposedPosition = $proposal['position'];
+        $notes = $proposal['notes'];
+        if ($newStatus === 'MANUAL_INTERVENTION_REQUIRED') {
             printf(
                 "  [manual] Jira priority %s: %s%s",
                 $defaultName ?? $jiraPriorityId,
-                $manualReason,
+                $notes,
                 PHP_EOL
             );
-        } else {
-            $notes = null;
-        }
-
-        if ($proposedName === null) {
-            $proposedName = $defaultName ?? $jiraPriorityId;
-        }
-
-        if ($proposedPosition !== null) {
-            $proposedPosition = normalizeInteger($proposedPosition, 1);
-        }
-
-        if ($proposedPosition === null && $newStatus === 'READY_FOR_CREATION') {
-            $candidate = max(1, $nextAvailablePosition);
-            while (isset($usedPositions[$candidate])) {
-                $candidate++;
-            }
-
-            $proposedPosition = $candidate;
-        }
-
-        if ($proposedPosition !== null) {
-            $usedPositions[$proposedPosition] = true;
-            if ($nextAvailablePosition <= $proposedPosition) {
-                $nextAvailablePosition = $proposedPosition + 1;
-            }
         }
 
         $newAutomationHash = computePriorityAutomationStateHash(
