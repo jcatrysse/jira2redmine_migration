@@ -1595,7 +1595,7 @@ leaves after an issue is created; "before" is the code of `690e28c`, "after" `d5
 | Redmine core: a parent gets a "Subtask added" journal when a child gets its parent | 32 by the migration account, at the run | the same | E1 |
 | Redmine core: a parent's dates and done ratio follow its subtasks (Settings, Issue tracking, parent tasks' attributes "derived") | 3 parents with a new updated time | the same | option S below; Jira does not derive them, so this also changes those parents' dates |
 | 12, relations | 142 journals (both sides of 71 relations) by the migration account, at the run | the same | E1, or R2 below |
-| 13, tags | 5.1: none (tags route); 7.0: 46 journals, 45 issues with a new updated time | 10 sends the tags with the create (`f39fa35`): on 7.0 46 → 17 journals, the 17 were B75 (the 7.0 rerun with its fix follows below); on an existing issue (a rerun) 13's update keeps the updated time (`d56c2b3`), the journal stays | E1 for that journal |
+| 13, tags | 5.1: none (tags route); 7.0: 46 journals, 45 issues with a new updated time | 10 sends the tags with the create (`f39fa35`): on 7.0 46 → 17 journals, the 17 were B75; with its fix (`5dffd71`) a 7.0 rerun: **0 tag journals**, 46 issues tagged, tags apart (one tag "JIRA," is a Jira label as written, GEOS-58); on an existing issue (a rerun) 13's update keeps the updated time (`d56c2b3`), the journal stays | E1 for that journal |
 | relink, descriptions | a journal by the migration account at the run, a new updated time | updated time kept (`d56c2b3`; proof on 7.0: the 11 issues of the relink all the same before and after), journal stays | E1; or no relink (one run, below) |
 | relink, comments | the comment marked "Edited", "updated by" the migration account | the same | E2; or no relink (one run) |
 | 14 watchers, 09 attachments (attached at creation), 10 open-parent "Resolved" (set at creation), 11 journals (authors and dates from Jira) | none | none | 92 comments edited in Jira keep their own "Edited" (faithful) |
@@ -1640,3 +1640,7 @@ Options for Jan (they need a change in redmine_extended_api, which has its own s
   push (the local copies are not read after the upload).
 - B2's recommendation: **one run of all 14 projects in the window**, with the snapshots at those three pauses, the
   relink kept only as the check, and batches kept as the fallback in the runbook. The rehearsal runs it that way.
+After all of today's changes (7.0 rerun `b2-d33`, code `9f044e3`; 5.1 run on `d56c2b3`, whose code differs only in
+13's 7.0 path): verify **PASS** on both; journals the run writes after creation: 0 tag journals, 0 marked "Edited", 142
+relation journals and 32 "Subtask added" journals left (E1); issues with an updated time in the run: 4 on both, the 3
+parents of option S and 1 issue Jira itself updated that day.
