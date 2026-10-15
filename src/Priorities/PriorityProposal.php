@@ -5,29 +5,20 @@ declare(strict_types=1);
 namespace Jira2Redmine\Priorities;
 
 /**
- * 06's proposal for each Jira priority: the Redmine priority of the same name (case aside), else a new one,
- * with a position after every position already taken.
+ * 06's proposal for each Jira priority: the Redmine priority of the same name (case aside), else a new one.
+ * A new priority gets no position of its own (B73): Redmine's API lists priorities without one, so 06 counted
+ * none and proposed 1, 2, 3, and Redmine inserted the new ones there, below every existing priority (the new
+ * "Blocker" became the lowest). Without a position Redmine puts it after the existing ones and moves none.
+ * A position set by hand on the mapping row is kept.
  */
 final class PriorityProposal
 {
-    /** @var array<int, true> */
-    private array $usedPositions = [];
-    private int $nextPosition;
-
     /**
      * @param array<string, array{id: int, name: string, is_default: ?bool, position: ?int}> $redmineByName the
      *     Redmine priorities by lowercased name
      */
     public function __construct(private readonly array $redmineByName)
     {
-        $max = 0;
-        foreach ($redmineByName as $priority) {
-            if ($priority['position'] !== null) {
-                $this->usedPositions[$priority['position']] = true;
-                $max = max($max, $priority['position']);
-            }
-        }
-        $this->nextPosition = $max + 1;
     }
 
     /**
@@ -56,19 +47,6 @@ final class PriorityProposal
             $name = $jiraName;
         }
         $name ??= $jiraId;
-
-        if ($position === null && $status === 'READY_FOR_CREATION') {
-            $position = max(1, $this->nextPosition);
-            while (isset($this->usedPositions[$position])) {
-                $position++;
-            }
-        }
-        if ($position !== null) {
-            $this->usedPositions[$position] = true;
-            if ($this->nextPosition <= $position) {
-                $this->nextPosition = $position + 1;
-            }
-        }
 
         return ['status' => $status, 'redmine_id' => $redmineId, 'name' => $name, 'is_default' => $isDefault,
             'position' => $position, 'notes' => $notes];
