@@ -1686,7 +1686,7 @@ function convertJournalBodyToMarkdown(?string $bodyHtml, ?string $bodyAdf, array
     $bodyText = null;
 
     if ($bodyHtml !== null && !str_contains($bodyHtml, "<!-- ADF macro (type = 'table') -->")) {
-        $bodyText = convertJiraHtmlToMarkdown($bodyHtml, $issueAttachments);
+        $bodyText = convertJiraHtmlToMarkdown($bodyHtml, $issueAttachments, $bodyAdf);
     }
 
     if ($bodyText === null && $bodyAdf !== null) {

@@ -138,7 +138,7 @@ $adfConverter = new AdfConverter();
 $markdown = [];
 foreach ($items as $id => $item) {
     try {
-        $markdown[$id . ':html'] = convertJiraHtmlToMarkdown($item['html'], []) ?? '';
+        $markdown[$id . ':html'] = convertJiraHtmlToMarkdown($item['html'], [], $item['adf'] !== null ? (string)$item['adf'] : null) ?? '';
     } catch (Throwable $exception) {
         $markdown[$id . ':html'] = '';
     }

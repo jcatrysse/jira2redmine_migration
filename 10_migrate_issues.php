@@ -1293,7 +1293,7 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
         $issueAttachments = $attachmentMetadata[$row['jira_issue_id']] ?? [];
         $proposedSubject = truncateString($issueSummary, 255);
         $proposedDescription = ($issueDescriptionHtml !== null && !str_contains($issueDescriptionHtml, "<!-- ADF macro (type = 'table') -->"))
-            ? convertJiraHtmlToMarkdown($issueDescriptionHtml, $issueAttachments)
+            ? convertJiraHtmlToMarkdown($issueDescriptionHtml, $issueAttachments, is_string($issueDescriptionAdf) ? $issueDescriptionAdf : null)
             : null;
 
         //if ($proposedDescription === null && $issueDescriptionAdf !== null) {

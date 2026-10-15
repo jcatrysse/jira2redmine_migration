@@ -9,6 +9,7 @@ use Karvaka\AdfToGfm\Converter as AdfConverter;
 use Jira2Redmine\Jira\IssueKeyAliases;
 use Jira2Redmine\Text\Emphasis;
 use Jira2Redmine\Text\IssueReference;
+use Jira2Redmine\Text\MediaWikiSource;
 use Jira2Redmine\Text\Safelinks;
 
 /**
@@ -51,7 +52,10 @@ function textHasHtmlTag(string $text, array $tags): bool
     return preg_match('/<(?:' . implode('|', array_map('preg_quote', $tags)) . ')(?=[\s>\/])/i', $text) === 1;
 }
 
-function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
+/**
+ * @param string|null $adf the same text as ADF, when there is one: MediaWiki source in it becomes a code block
+ */
+function convertJiraHtmlToMarkdown(?string $html, array $attachments, ?string $adf = null): ?string
 {
     if ($html === null) {
         return null;
@@ -69,6 +73,9 @@ function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
     if ($withoutComments === '' && stripos($trimmed, 'ADF macro') !== false) {
         return null;
     }
+
+    // MediaWiki source pasted into Jira: Jira rendered it as a broken table; the ADF has the text (decision 26)
+    $trimmed = MediaWikiSource::replaceInHtml($trimmed, MediaWikiSource::paragraphs($adf));
 
     // Heading anchors ("<h3><a name="Title"></a>Title</h3>"): Redmine makes its own. Left in, the empty
     // <a> stayed as HTML in the Markdown, and the DOM passes over it wrapped the whole text in <p>, so
