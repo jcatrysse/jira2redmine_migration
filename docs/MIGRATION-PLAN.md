@@ -1,9 +1,21 @@
 # Jira Cloud to Redmine: test migrations and script upgrade
 
-## Samenvatting voor Jan (2026-10-15, B2, bijgewerkt in de ochtend)
+## Samenvatting voor Jan (2026-10-15, B2, bijgewerkt in de namiddag)
 
-**Stand.** Alles staat op `redmine70-migration`, QA groen op PHP 8.2 en 8.3 (296 tests). Jira bleef
-read-only: alleen GET-calls, de schrijfprobe gaf 401 "scope does not match".
+**Stand.** Alles staat op `redmine70-migration`, QA groen (306 tests). Jira bleef read-only: alleen GET-calls, de
+schrijfprobe gaf 401 "scope does not match".
+
+**Vanmiddag**
+- **Productie-runbook** `docs/PRODUCTION.md`: deel A (upgrade, van de coordinator), deel B (migratie, B2), deel C
+  (prompt voor de lokale sessie). Beslissingen 29 tot 32 en 36 (één onderhoudsvenster) staan erin.
+- **Bestaande Redmine (33 tot 35), gebouwd en bewezen op 5.1 en 7.0** met een Redmine die al een tracker "Task"
+  met eigen workflow had: de globale workflow blijft identiek, de gemigreerde projecten krijgen hun eigen; de
+  prioriteiten worden gemapt, er komt er geen bij; de rollen van de tijdelijke workflows komen uit de config.
+  Onderweg **B73** (nieuwe prioriteit onderaan de rangorde) en **B74** (een gematchte tracker telde als nieuw, door
+  het bewijs gevonden) gefixt.
+- **Geen mail, geen webhooks:** 13 (tags op 7.0) en de relink gaan nu via de Extended API. Bewezen op 7.0: een
+  gewone update geeft 1 mail en 2 webhooks, tags en relink 0 en 0. De journals van tags en herschreven
+  beschrijvingen staan op naam van het migratie-account.
 
 **Vanochtend: jouw beslissing 26 (conversie)**
 - **Gemeten op alle teksten** (4.648 op 7.0 met WIKI, 1.444 op 5.1), wat naar Redmine gaat: voor 4.615
