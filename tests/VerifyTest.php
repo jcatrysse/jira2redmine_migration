@@ -251,4 +251,11 @@ final class VerifyTest extends TestCase
         $words = verifyWords(verifyHtmlToText(verifySeparateAttachmentLinks($html)));
         self::assertSame(['day', 'of', 'year', 'full', 'output', 'zip'], $words);
     }
+
+    public function testABoardLinkThatSelectsAnIssueIsLeftOutLikeABrowseLink(): void
+    {
+        $text = 'here: https://x.atlassian.net/jira/software/c/projects/WIKI/boards/9?search=svs&selectedIssue=WIKI-985 and more';
+
+        self::assertSame(['here', 'and', 'more'], verifyWords(verifyDropJiraBrowseUrls($text)));
+    }
 }

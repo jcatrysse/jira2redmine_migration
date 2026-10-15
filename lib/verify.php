@@ -78,6 +78,8 @@ function verifySeparateAttachmentLinks(string $html): string
 function verifyDropJiraBrowseUrls(string $text): string
 {
     $text = preg_replace('#https?://[^\s"<>()\[\]]+/browse/[A-Z][A-Z0-9_]*-\d+[^\s"<>()\[\]]*#', ' ', $text) ?? $text;
+    // a board link that selects an issue is rewritten the same way (decision 26)
+    $text = preg_replace('#https?://[^\s"<>()\[\]]+[?&]selectedIssue=[A-Z][A-Z0-9_]*-\d+[^\s"<>()\[\]]*#', ' ', $text) ?? $text;
 
     return preg_replace('#https?://[A-Za-z0-9.-]*\.safelinks\.protection\.outlook\.com/\S*#i', ' ', $text) ?? $text;
 }
