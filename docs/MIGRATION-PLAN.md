@@ -1039,6 +1039,22 @@ Then 5.1 again with redmine_custom_workflows at production's commit `0398974` ("
 loaded tag v2.1.2, not the 5.x of `plugins-5.1.tsv`, whose 5.x and master need Redmine 6): `b2-dress2`, the same
 summary as `b2-dress`. That run, with every Redmine request recorded, was also the "before" of the M1 proof.
 
+**M1 rest, behaviour changes proven, 5.1, night of 2026-10-14** (B58 `004b57b`, UTC `bfdcc13`, B59 `e2ca087`; PHP
+8.2.34, core `bcf917c`, the plugins of the dress rehearsal; `RECORD= STABILITY=1 WORKFLOWS=1 RESTORE=1 run_all.sh 51
+b2-b59` against `b2-m1`, the recorded run of `eb53e88`): 7,103 Redmine requests against 7,116, verify **PASS** with
+the new check "attachments: created" 149/149, stability unchanged, the restore proof as before. Every difference,
+aligned request by request (`difflib` over the normalised logs):
+- 576 uploads (every attachment) differ only in `attachment[created_on]`: 374 two hours and 202 one hour earlier,
+  Jira's offset in summer and winter (B58);
+- 13 changelog entries no longer pushed (journals 1,277 to 1,264, skipped 2,937 to 2,950): notes made only of
+  "> attachment:" lines for files uploaded an hour or two before the status change, which the window matched
+  through B58's error; their items name no attachment (B59);
+- 5 comments the same text without those lines (the same cause);
+- watchers 1,142 to 1,140 in Redmine: two of the 13 entries were their author's only journal on the issue, and
+  Redmine adds the author of a journal as watcher. Jira's watchers are pushed unchanged (960, the same requests).
+Nothing else differs. In between, `b2-utc` (B58 and UTC without B59) showed why B59 is needed: 7,365 requests,
+249 more journals, verify FAIL on 6 duplicate journals.
+
 **SURV volume run, 5.1, B2, 2026-10-13** (`J2R_PROJECTS=surv J2R_TEST_SAMPLE=1 run_all.sh 51 b2-surv`,
 code before B44): 1,494 issues, all created (10 in 479 s); attachments 6,323 in Jira, 4,306 in the sample
 (0.98 GB, pull 518 s, push 182 s), 2,017 skipped by sample (97.7 GB); journals 8,674 pushed and 12,882
