@@ -12,6 +12,8 @@ use Karvaka\AdfToGfm\Node;
  */
 class TableCell extends BlockNode
 {
+    use Spans;
+
     public function toMarkdown(): string
     {
         return implode(

@@ -54,6 +54,8 @@ class NodeMapper
         Hydrators\PanelHydrator::class => Nodes\Panel::class,
         Hydrators\StatusHydrator::class => Nodes\Status::class,
         Hydrators\TableHydrator::class => Nodes\Table::class,
+        Hydrators\TableCellHydrator::class => Nodes\TableCell::class,
+        Hydrators\TableHeaderHydrator::class => Nodes\TableHeader::class,
         Hydrators\TextHydrator::class => Nodes\Text::class,
         Hydrators\TaskListHydrator::class => Nodes\TaskList::class,
         Hydrators\TaskItemHydrator::class => Nodes\TaskItem::class,

@@ -8,7 +8,8 @@ use Karvaka\AdfToGfm\BlockNode;
 use Karvaka\AdfToGfm\Node;
 
 /**
- * todo col/row spans
+ * Merged cells (colspan, rowspan) are spread over the grid: a merged cell keeps its text in its first place
+ * and leaves empty cells in the others, so every row is as wide as the table (GFM has no spans).
  *
  * @link https://developer.atlassian.com/cloud/jira/platform/apis/document/nodes/table/
  */
@@ -25,7 +26,7 @@ class Table extends BlockNode
 
     public function toMarkdown(): string
     {
-        $content = $this->content();
+        $content = $this->spreadSpans($this->content());
 
         $length = array_reduce($content, function ($result, TableRow $node) {
             return max(count($node->content()), $result);
@@ -58,6 +59,45 @@ class Table extends BlockNode
             self::BREAK,
             array_map(fn (Node $node) => $node->toMarkdown(), $content)
         );
+    }
+
+    /**
+     * @param list<TableRow> $rows
+     * @return list<TableRow>
+     */
+    private function spreadSpans(array $rows): array
+    {
+        $covered = [];
+        $spread = [];
+        foreach ($rows as $r => $row) {
+            $cells = [];
+            $column = 0;
+            $place = function () use (&$cells, &$column, &$covered, $r): void {
+                while (isset($covered[$r][$column])) {
+                    $cells[] = new TableCell();
+                    $column++;
+                }
+            };
+            foreach ($row->content() as $cell) {
+                $place();
+                $cells[] = $cell;
+                $colspan = $cell instanceof TableCell || $cell instanceof TableHeader ? $cell->colspan : 1;
+                $rowspan = $cell instanceof TableCell || $cell instanceof TableHeader ? $cell->rowspan : 1;
+                for ($k = 1; $k < $colspan; $k++) {
+                    $cells[] = $cell instanceof TableHeader ? new TableHeader() : new TableCell();
+                }
+                for ($below = 1; $below < $rowspan; $below++) {
+                    for ($k = 0; $k < $colspan; $k++) {
+                        $covered[$r + $below][$column + $k] = true;
+                    }
+                }
+                $column += $colspan;
+            }
+            $place();
+            $spread[] = (new TableRow())->setContent($cells);
+        }
+
+        return $spread;
     }
 
     public function hasHeader(): bool
