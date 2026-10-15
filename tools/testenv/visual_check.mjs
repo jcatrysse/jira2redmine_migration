@@ -17,6 +17,12 @@ for (const it of items) {
   await page.goto(`${base}/issues/${it.redmine_id}`);
   // the sticky issue header of newer Redmine versions would cover the element screenshots
   await page.addStyleTag({ content: '#sticky-issue-header{display:none!important}' });
+  // Redmine 7 loads inline images lazily: load them all before the element screenshots (else blank areas)
+  await page.evaluate(async () => {
+    const images = [...document.querySelectorAll('img')];
+    images.forEach((img) => { img.loading = 'eager'; });
+    await Promise.all(images.map((img) => (img.complete ? null : new Promise((done) => { img.onload = img.onerror = done; }))));
+  });
   const shot = `${it.key}-redmine.png`;
   const desc = await page.$('.issue .description');
   if (desc) await desc.screenshot({ path: `${out}/${shot}` }); else await page.screenshot({ path: `${out}/${shot}` });
