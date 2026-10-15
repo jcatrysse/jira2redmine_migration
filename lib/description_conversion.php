@@ -848,7 +848,7 @@ function normalizeRedmineReferenceSpacing(string $text): string
     $text = preg_replace('/(?<=\w)(?<!user)(?=#\d+\b)/iu', ' ', $text) ?? $text;
 
     // Ensure a space after tokens when immediately followed by letters/underscore
-    $text = preg_replace('/(user#\d+)(?=[\p{L}_])/u', '$1 ', $text) ?? $text;
+    $text = preg_replace('/(user#\d+)(?=[\p{L}_\[])/u', '$1 ', $text) ?? $text;
     $text = preg_replace('/(#\d+)(?=[\p{L}_])/u', '$1 ', $text) ?? $text;
 
     // Ensure punctuation after tokens is separated by a space for readability
@@ -1076,12 +1076,13 @@ function rewriteUserIdsAsMentions(string $text, array $userLookup): string
     }
 
     return preg_replace_callback(
-        '/(?<![\w#@\/])user#(\d+)(?!\d)(?: (?=[,;:!?.)]))?(?=(\w?))/',
+        '/(?<![\w#@\/])user#(\d+)(?!\d)(?: (?=[,;:!?.)]))?(?=([\w\[]?))/',
         static function (array $m) use ($logins): string {
             if (!isset($logins[(int)$m[1]])) {
                 return $m[0];
             }
-            // Redmine needs a boundary after the login: a space before a letter, none before punctuation.
+            // Redmine needs a boundary after the login: a space before a letter, none before punctuation; a
+            // link right after a mention is a separate word too, as in Jira (WIKI-37: "Claire Pirotseismic logfiles")
             return '@' . $logins[(int)$m[1]] . ($m[2] !== '' ? ' ' : '');
         },
         $text

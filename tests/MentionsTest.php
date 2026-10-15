@@ -37,6 +37,10 @@ final class MentionsTest extends TestCase
     {
         self::assertSame('@jane.doe@example.eu thanks', rewriteUserIdsAsMentions('user#22thanks', self::LOOKUP));
         self::assertSame('@jane.doe@example.eu.', rewriteUserIdsAsMentions('user#22.', self::LOOKUP));
+        // decision 26: a link right after the mention (WIKI-37, anonymised)
+        $link = '[logfiles](https://x.example/l)';
+        self::assertSame('@jane.doe@example.eu ' . $link, rewriteUserIdsAsMentions('user#22' . $link, self::LOOKUP));
+        self::assertSame('user#23 ' . $link, normalizeRedmineReferenceSpacing('user#23' . $link));
     }
 
     public function testAdfMentionBecomesAtLogin(): void
