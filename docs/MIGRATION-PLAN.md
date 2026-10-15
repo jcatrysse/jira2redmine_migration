@@ -409,6 +409,25 @@ Jan's answers to the six open points of the summary (2026-10-14, evening, relaye
     role), not per status. Jan: keep it as in Jira, where Edit issues allows editing apart from
     transitions; no field permissions are generated for it.
 
+Jan's decisions of 2026-10-15 (afternoon, relayed by the coordinator):
+
+29. **Production order: first the upgrade, then the migration into 7.0.** GEOxyz's Redmine 5.1 is upgraded to 7.0
+    and checked; Jira is then migrated directly into that 7.0. Redmine 5.1 stays a supported target of the
+    scripts, but production goes to 7.0.
+30. **A full test migration (rehearsal) on a clone of Jan's production VM**, with outgoing mail off, run by a
+    local Claude Code session on that VM: first the upgrade, then the migration on the real data. Every project
+    of the four batches of decision 22 (WIKI; GEOS, SIS, OAC; SURV, DOC, LABO; ICT, LLE, SOIL, SSPT, ROV, GSPP,
+    FPS), with relink, workflows and restore, attachments with `attachments.test_sample`. Why: every test so far
+    targeted a fresh, empty Redmine, so matching against existing users, projects, trackers, statuses and custom
+    fields was never exercised, and nine projects (DOC, LABO, ICT, LLE, SOIL, SSPT, ROV, GSPP, FPS) never ran.
+31. **One production runbook**, `docs/PRODUCTION.md`: English like the runbook, a short Dutch summary at the top,
+    no hostnames or secrets. B2 writes and owns the migration part (part B) and the prompt for the local session
+    (part C); the coordinator writes the upgrade part (5.1-stable-GEOxyz to 7.0-stable-GEOxyz with the 44
+    plugins, from the upgrade rehearsal), included as written (part A).
+32. **Main after the rehearsal.** The rehearsal runs from `redmine70-migration`. Afterwards the branches go to
+    main once, rewritten as Jan without AI traces, and the coordinator checks per repository that the tree on
+    main is identical to what was tested. Production runs from main.
+
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
 Taken by B2 on the coordinator's instruction (recommended option, no waiting); each can be reversed.
