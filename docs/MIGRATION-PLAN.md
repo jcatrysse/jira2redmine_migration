@@ -1583,3 +1583,60 @@ to rewrite through 14 keys of projects outside the run mapped onto an existing i
 The first two attempts of this proof did not count (`70-b2-silent-fail1`: Redmine 7 refuses a loopback webhook URL
 and the proof user was never made, so the control showed 0 too; `70-b2-silent-run2`: valid, but the relink had one
 comment and no description). The webhook, the proof user and the fake mapping rows were removed afterwards.
+
+**Traces of post-processing, B2, 2026-10-15** (Jan: "an issue in Redmine and in Jira as identical as possible, also in
+dates, journals and authors"; the target: technical post-processing leaves no visible trace). Measured per run of
+GEOS, SIS and OAC on a Redmine that is not empty (`b2-d33`, 427 issues), every journal and updated time the run
+leaves after an issue is created; "before" is the code of `690e28c`, "after" `d56c2b3` (5.1) and `9f044e3` (7.0):
+
+| write after creation | trace before (5.1 / 7.0) | after | what is left, and how it could go |
+|---|---|---|---|
+| 10, second pass (a description with links to issues created later in the run: 5; a parent created after its child: 32) | 37 journals by the author at the issue's creation, each marked "Edited" (updated time = the run) | 0 marked "Edited" (`560657c`) | the 37 journals themselves ("Description updated", "Parent task set"), by the author at creation; a journal-free update (E1 below) |
+| Redmine core: a parent gets a "Subtask added" journal when a child gets its parent | 32 by the migration account, at the run | the same | E1 |
+| Redmine core: a parent's dates and done ratio follow its subtasks (Settings, Issue tracking, parent tasks' attributes "derived") | 3 parents with a new updated time | the same | option S below; Jira does not derive them, so this also changes those parents' dates |
+| 12, relations | 142 journals (both sides of 71 relations) by the migration account, at the run | the same | E1, or R2 below |
+| 13, tags | 5.1: none (tags route); 7.0: 46 journals, 45 issues with a new updated time | 10 sends the tags with the create (`f39fa35`): on 7.0 46 → 17 journals, the 17 were B75 (the 7.0 rerun with its fix follows below); on an existing issue (a rerun) 13's update keeps the updated time (`d56c2b3`), the journal stays | E1 for that journal |
+| relink, descriptions | a journal by the migration account at the run, a new updated time | updated time kept (`d56c2b3`; proof on 7.0: the 11 issues of the relink all the same before and after), journal stays | E1; or no relink (one run, below) |
+| relink, comments | the comment marked "Edited", "updated by" the migration account | the same | E2; or no relink (one run) |
+| 14 watchers, 09 attachments (attached at creation), 10 open-parent "Resolved" (set at creation), 11 journals (authors and dates from Jira) | none | none | 92 comments edited in Jira keep their own "Edited" (faithful) |
+| 15 checklists | none in these projects; created through the API without a journal; with redmine_checklists' "issue done ratio" on, the issue is saved (journal, updated time) | the same | the setting off for the run (PRODUCTION.md B5) |
+
+Found on the way: **B75** (13's tags on 7.0 were one comma-joined tag), fixed in `5dffd71`.
+
+Options for Jan (they need a change in redmine_extended_api, which has its own session and plan, or a Redmine setting):
+- **E1, journal-free writes in the Extended API** (B2's advice). An admin-only request flag on `/extended_api`, next to
+  `notify=false`, for example `journal=false`. Under it: `Issue#create_journal` (the after_save that saves the
+  issue's current journal; 5.1 `issue.rb:2029`, 7.0 `:2059`) saves nothing; `Issue#create_parent_issue_journal` (the
+  after_commit that writes "Subtask added" on the parent; 5.1 `:2035`, 7.0 `:2065`) writes nothing; on
+  `IssueRelationsController#create` and `#destroy`, `IssueRelation#init_journals` (5.1 and 7.0 `issue_relation.rb:207`)
+  starts no journal on either issue. With the existing issue override `updated_on` the issue's time stays. Tests:
+  per case a request spec that the journal count and the updated time do not change, that the flag does nothing for a
+  non-admin, and that notify=false still works. The scripts would then send the flag on 10's second pass, 12, 13's
+  update and the relink: no trace left by any of them.
+- **E2, a comment edit that keeps its times**: `JournalsController#update` through `/extended_api` with the flag keeps
+  the journal's `updated_on` and `updated_by_id` (restored after the save). Only the relink needs it.
+- **R2, instead of E1 for relations**: date each relation journal by the Jira history entry of the link (its author and
+  time); the journal overrides already reach `init_journal`, but the relations patch would have to accept them, and 11
+  or 12 would have to read the link's history. More faithful only if Jan wants the link history kept; more work.
+- **S, parents' dates and done ratio independent** (Administration, Settings, Issue tracking), as decided for the
+  priority (B13): Jira does not derive them, so the migrated parents keep Jira's dates and no parent is saved again
+  (3 per run). It is a global setting: existing GEOxyz projects whose parents follow their subtasks today would stop
+  doing so. Jan's choice.
+
+**One run instead of four batches** (decision 36 makes it possible; it changes decisions 16 and 22, so Jan decides):
+- the relink becomes (nearly) unnecessary: in one run every issue exists before 11 pushes the comments and before 12
+  creates the relations; 10's second pass rewrites the descriptions that link issues created later in the same run.
+  What is left are links to issues outside the migration (TEST), which stay Jira links anyway. The relink's check
+  stays as the proof (it must say 0).
+- B38 waiting parents and relations to a later batch disappear (only parents and links outside the migration remain).
+- duration: about the same work, a little less (14's jira phase, 16 and 08's transform read everything once instead of
+  four times: roughly 30 to 60 minutes less); one long run of about 7 to 12 hours in production, in tmux.
+- Jan's reviews: the same review points once, larger (all memberships of 14 projects at once); B6's matching review
+  is the same, since 01 to 07 already cover all projects in the first batch.
+- rollback: no batch boundaries, but natural pauses for a VM snapshot: after the structure and its reviews (01 to 08),
+  after 09 and 10, after 11 to 15. Inside the window a rollback costs no user work either way; the scripts can rerun
+  any step, so a failure is usually a rerun.
+- disk: all attachments at once (about 116 GiB in `paths.tmp` and again in `files/`), or empty `paths.tmp` after 09's
+  push (the local copies are not read after the upload).
+- B2's recommendation: **one run of all 14 projects in the window**, with the snapshots at those three pauses, the
+  relink kept only as the check, and batches kept as the fallback in the runbook. The rehearsal runs it that way.

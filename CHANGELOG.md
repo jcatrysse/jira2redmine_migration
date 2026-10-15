@@ -76,6 +76,9 @@ All notable changes to this project. Steps to take before and after a migration 
   review row and 06 creates none by default; the roles the `workflows` step opens come from the configuration,
   and the step stops on a role it cannot use; in mode `project` a tracker Redmine already had keeps its global
   workflow, the union becomes the global workflow only of the trackers 07 created.
+- Fewer traces of the migration's own writes (Jan, 2026-10-15): 10 sends the Jira labels as tags when it creates
+  the issue (no journal); the journal of 10's second pass is no longer marked "Edited"; 13's update on 7.0 and the
+  relink keep the issue's updated time.
 - Issues are created with their description; parents and rewritten Jira links follow in the same
   run, the final update sends only what changed (B10, B11, B22).
 - An open subtask under a closed parent: the parent gets the open status `Resolved` by default
@@ -102,6 +105,7 @@ All notable changes to this project. Steps to take before and after a migration 
   code; Outlook safe links in mailed comments become the link itself.
 
 ### Fixed
+- 13 on 7.0 sent an issue's tags as one comma-joined string, which redmine_tags 7.0 stored as one tag (B75).
 - 06 put new priorities at position 1, 2, 3, below every existing priority (B73): a new priority now goes after
   the existing ones.
 - Text conversion (decision 26, B60 to B70): ADF tables with merged cells and ADF code blocks; bold and
