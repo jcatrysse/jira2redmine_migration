@@ -1,9 +1,24 @@
 # Jira Cloud to Redmine: test migrations and script upgrade
 
-## Samenvatting voor Jan (2026-10-14, B2, bijgewerkt in de avond)
+## Samenvatting voor Jan (2026-10-14, B2, bijgewerkt in de nacht)
 
-**Stand.** Alles staat op `redmine70-migration`, QA groen op PHP 8.2 en 8.3 (259 tests). Jira bleef
+**Stand.** Alles staat op `redmine70-migration`, QA groen op PHP 8.2 en 8.3 (269 tests). Jira bleef
 read-only: alleen GET-calls, de schrijfprobe gaf 401 "scope does not match".
+
+**Vannacht**
+- **Fase 6 (M1), de hulpfuncties die per script verschilden.** Tijdstempels nu overal in UTC (PHP en de
+  MySQL-sessie). Daarbij gevonden: **B58**, bijlagen stonden 1 à 2 uur te laat in Redmine (09 liet de
+  offset van Jira vallen); gefixt, verify controleert het nu (149 van 149). Daarna **B59**: met de juiste
+  tijden zette 11 bij statuswijzigingen de bijlagen die rond dat moment geüpload waren; gefixt, een
+  statuswijziging toont alleen de bijlagen die ze zelf noemt. JSON-decodering, PDO-attributen en
+  optieparsing bewust gelaten: elke variant past bij zijn script, een wijziging levert niets op.
+- **Bewezen op 5.1** met een opgenomen run tegenover die van gisteravond: verify PASS, en alleen de verwachte
+  verschillen: 576 uploads met de juiste aanmaaktijd, 13 notities minder (alleen bijlagen die door B58 fout
+  matchten), 5 commentaren zonder die regels, 2 watchers minder (Redmine maakt de auteur van een notitie
+  watcher).
+- **7.0 op de nieuwe heads** (core `ad17efd`, 9 plugins verschoven, o.a. helpdesk 4.4.0, met hun migraties):
+  volledige run en cumulatieve WIKI-batch PASS, identiek aan de generale repetitie (alle stappen, aantallen,
+  verify, workflows, restore).
 
 **Generale repetitie van vanavond (al je beslissingen, plugins op hun huidige versie)**
 - 7.0: 43 van de 44 plugins naar de `redmine70-migration`-heads; 5.1 met de productieset, ook
@@ -89,6 +104,9 @@ Findings). Advies: niet migreren vanuit `main`; de fixes staan op `redmine70-mig
 1. De visuele controle van de conversie (29 issues, bench stap 3): de pagina's staan klaar.
 2. Vóór de productierun: de reviewtabel van 04 nakijken en READY zetten voor de Non member-groep (beslissing 15).
 3. De productierun zelf volgens het runbook: batches in de beslisde volgorde, daarna relink en de controle 0.
+4. Het bijlagevenster bij commentaren (B59, Open questions): 11 kan onder een commentaar de bestanden
+   vermelden die binnen N seconden geüpload werden. Bij 199 commentaren gaf dat vooral bestanden die het
+   commentaar al toont. **Aanbeveling: 0, uit (standaard).**
 
 Start a Claude Code session on this repository, branch `redmine70-migration`, with:
 
@@ -1038,6 +1056,20 @@ transitions the plan does not own (before: all 112,767).
 Then 5.1 again with redmine_custom_workflows at production's commit `0398974` ("2.1.3 devel"; the instance had
 loaded tag v2.1.2, not the 5.x of `plugins-5.1.tsv`, whose 5.x and master need Redmine 6): `b2-dress2`, the same
 summary as `b2-dress`. That run, with every Redmine request recorded, was also the "before" of the M1 proof.
+
+**7.0 on the new heads, night of 2026-10-14** (coordinator: 7.0-stable-GEOxyz rewritten to `ad17efd`, plugins
+moved). `core.sh --migrate`: 7.0 `1d8c2a3` to `ad17efd` (rewritten branch, 111 files; Rails 8.1.4), 5.1 unchanged
+`bcf917c`. `plugins.sh 70 --migrate`: 9 of 44 changed, redmine_project_workflows `0da1e64`, redmineup_tags
+`2b1fcfa`, redmine_issue_templates `af87c8b`, redmine_mail_digest `18e94e4`, redmine_checklists `bf00557`,
+custom_field_sql `2a752cf`, redmine_contacts_helpdesk `df27ec3` (vendor 4.4.0), redmine_ai_triage `23324fc`,
+redmine_drawio `7ec9013`; plugin migrations ran for checklists (8), contacts_helpdesk (14, 15), mail_digest (12)
+and tags (4, 5). Fresh baseline dump, then the dress rehearsal's two runs with code `040e799` (the dress
+rehearsal's scripts plus the M1 refactor, before B58), PHP 8.3.6: `STABILITY=1 run_all.sh 70 b2-night` and the
+cumulative `BATCH=1 WORKFLOWS=1 RESTORE=1 J2R_PROJECTS=geos,sis,oac,wiki run_all.sh 70 b2-night-wiki`. Both
+**PASS**; both summaries are identical to `b2-dress` and `b2-dress-wiki` apart from the timings (every step
+result, the counts per status, Redmine's counts, the verify tables, the workflow apply and its second run +0 -0,
+the restore proof 0 roles left and 101/101, memberships equal 04's proposal); the warnings in the step logs are
+the same in number. Steps took 1,731 s and 4,800 s (dress rehearsal 1,795 s and 4,835 s).
 
 **M1 rest, behaviour changes proven, 5.1, night of 2026-10-14** (B58 `004b57b`, UTC `bfdcc13`, B59 `e2ca087`; PHP
 8.2.34, core `bcf917c`, the plugins of the dress rehearsal; `RECORD= STABILITY=1 WORKFLOWS=1 RESTORE=1 run_all.sh 51
