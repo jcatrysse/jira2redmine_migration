@@ -24,8 +24,10 @@ addresses or secrets in this file: the repository is public. Placeholders are wr
   config (de repetitie maakt de inventaris, Jan bevestigt); bestaande trackers houden hun globale workflow, alleen
   de gemigreerde projecten krijgen hun eigen; Jira-prioriteiten worden gemapt op bestaande, er komen er geen bij.
   B73 (nieuwe prioriteit onderaan de rangorde) is gefixt.
-- **Productie:** stealth mode aan voor het migratie-account en webhooks uit tijdens deel B, want 13 (tags) en de
-  relink gaan via de gewone API. Review-aanpassingen in staging verhuizen niet mee: zet ze in de config.
+- **Geen mail, geen webhooks:** elke schrijfstap van de migratie gaat via de Extended API met notify=false, sinds
+  vandaag ook 13 (tags op 7.0) en de relink (Jan). Stealth mode blijft als goedkoop vangnet; webhooks uit is alleen
+  nodig als de checklists-instelling "issue done ratio" aan staat (15 bewaart dan het issue via de gewone API).
+  Review-aanpassingen in staging verhuizen niet mee naar productie: zet ze in de config.
 - **Duur (schatting):** WIKI ongeveer 1u15, GEOS, SIS en OAC 40 minuten, SURV, LABO en DOC 2 tot 3 uur met
   steekproef, de laatste batch 40 tot 60 minuten. In productie komen er voor batch 3 nog 2 tot 5 uur bijlagen bij
   (110 GiB). Schijf: ongeveer 110 GiB vrij in de tijdelijke map en 110 GiB in Redmine's `files/`.
@@ -274,7 +276,7 @@ in the rehearsal report: it sets the maintenance window.
 | | rehearsal (decision 30) | production |
 |---|---|---|
 | machine | a clone of the production VM, upgraded to 7.0 by part A | the production server, upgraded by part A and checked |
-| outgoing mail, webhooks, cron | off on the clone (A.1: crontab off, mail to files, webhooks inactive); that covers part B too | on for the users; the migration account in stealth mode, the webhooks inactive during part B (B5) |
+| outgoing mail, webhooks, cron | off on the clone (A.1: crontab off, mail to files, webhooks inactive); that covers part B too | on for the users; every issue write of the migration goes through the Extended API with notify=false, stealth mode as a safety net (B5) |
 | attachments | `attachments.test_sample = true`: every file up to 512 KB plus the largest per extension up to 20 MB; the rest is noted "skipped by sample" | `test_sample = false`: every file |
 | snapshot | A.4 step 3 is the upgrade's rollback point; part B's own is a second snapshot after A.5 | the same two, and **one before every batch** (B10); no batch starts without one |
 | GO | at the review points (B6, B7 steps 2, 4 and 12, B9) | at the review points and before every write |
@@ -418,11 +420,11 @@ Once, on the upgraded Redmine 7.0. Each line is a check the local session report
 | REST API | Administration, Settings, API: REST web service on (A.5 row 16) | `curl -s -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/users/current.json"` gives the migration account, `admin: true` |
 | Extended API | the plugin is installed | `curl -sI -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/extended_api/issues.json"` has the header `X-Redmine-Extended-API` |
 | text formatting | Administration, Settings, General: CommonMark Markdown (A.5 row 16) | `Setting.text_formatting` is `common_mark` |
-| no mail from the migration | rehearsal: outgoing mail is off on the clone. Production: stealth mode on for the migration account: `curl -s -X POST -H "X-Redmine-API-Key: $REDMINE_API_KEY" -d toggle=true "$REDMINE_URL/stealth/toggle.json"` (the account needs the permission "Toggle stealth mode"; it is an admin) | the answer is `{"is_cloaked":true}`. Signing in to the web interface as the migration account switches stealth off again: do not, or toggle it on after |
+| no mail, no webhook from the migration | `redmine.extended_api.enabled` true (B3): 10, 11, 12, 13 (tags on 7.0) and the relink write issues and journals through it with notify=false, which silences the mails and Redmine 7's webhooks of the request (Jan, 2026-10-15); 09's uploads and 14's watchers send none. The one exception: 15 saves the issue's done ratio through the plain API when redmine_checklists' setting "issue done ratio" is on (Administration, Plugins, Checklists; off by default): switch it off for the run. Safety net (production, cheap, B2's advice): stealth mode on for the migration account, `curl -s -X POST -H "X-Redmine-API-Key: $REDMINE_API_KEY" -d toggle=true "$REDMINE_URL/stealth/toggle.json"`; it silences the mails of anything the migration account writes outside the Extended API. Rehearsal: outgoing mail is off on the clone (A.1) | the checklists setting is off; production: the answer is `{"is_cloaked":true}` (signing in to the web interface as the migration account switches stealth off again: do not, or toggle it on after) |
 | relation types | the GEOxyz relation types of `migration.relations.custom_mappings` in `redmine_issue_view_columns` (`tools/testenv/redmine_issue_view_columns.local.rb` is generated from them) | after part A they exist in 7.0 (12 refuses a relation type Redmine does not know) |
 | attachment prune off | the cron job or scheduled task that runs `rake redmine:attachments:prune` is disabled (uploads wait for their issue; prune deletes them after 24 h); on the clone the whole crontab is off (A.1) | the cron entry is commented out |
 | LDAP sync off | the cron job of `redmine_ldap_sync` is disabled (it would lock or change accounts the migration activates); on the clone it runs by hand only (A.1) | the cron entry is commented out |
-| webhooks | production: `UPDATE webhooks SET active = false;` for the duration of part B, after noting which were active (`SELECT id, url, active FROM webhooks;`). The Extended API steps fire none (notify=false), but 13 on 7.0 and the relink update issues through the plain API, and Redmine 7 fires the webhooks for those. Rehearsal: already inactive (A.1, A.4 step 11) | `SELECT COUNT(*) FROM webhooks WHERE active` is 0 |
+| webhooks | no change needed: every issue write goes through the Extended API with notify=false, and Redmine 7 fires no webhook for it. Only if the checklists setting of the row above must stay on: `UPDATE webhooks SET active = false;` for the duration of part B, after noting which were active (`SELECT id, url, active FROM webhooks;`); stealth mode does not silence webhooks. Rehearsal: inactive anyway (A.1, A.4 step 11) | |
 | automation rules | Jan exports them once as JSON (docs/RUNBOOK.md, section 0); kept outside the repository | the file opens as JSON |
 | roles for the open workflows (decision 33) | the inventory of the roles that take part in workflows (Add or Edit issues) and how many memberships hold them: `RAILS_ENV=production bundle exec rails runner 'Role.givable.sorted.select(&:consider_workflow?).each { \|r\| puts [r.id, r.name, r.has_permission?(:add_issues) ? "add_issues" : "-", r.has_permission?(:edit_issues) ? "edit_issues" : "-", MemberRole.where(role_id: r.id).count].join(" \| ") }'`. **GO:** Jan confirms the list in `migration.workflows.open_workflow_roles` (B3); one usable role is enough, `["Migration (temporary)"]` keeps the open workflow away from the existing projects (B6) | `php tools/config_value.php migration.workflows.open_workflow_roles` prints Jan's list |
 | staging | the empty staging database of B2 | `SHOW TABLES` lists the tables of `database/schema.sql` (81 today) |
@@ -635,8 +637,8 @@ hold Jira data: never in the repository).
    php 16_export_workflows.php
    ```
 
-   On 7.0, 13 adds tags through the issue update: one journal "Tags" per tagged issue, by the migration account
-   (B19); with stealth on, no mail.
+   On 7.0, 13 adds tags through the issue update, through the Extended API with notify=false: no mail, no webhook,
+   and one journal with the tag change per tagged issue, by the migration account at the time of the run (B19).
 10. **Counts** (the staging view of the batch):
 
     ```bash
@@ -752,7 +754,9 @@ again (B10).
 
    The check's last line, `Texts that still hold a Jira link to a migrated issue after this run`, must be **0**. A
    text listed as `[left]` was edited in Redmine since the migration: fix it by hand, run the check again. The
-   relink writes through the issue update too: with stealth on, no mail. Also: 12's MANUAL relations and 10's
+   relink writes through the Extended API with notify=false: no mail, no webhook; a rewritten description adds a
+   journal by the migration account, a rewritten comment changes in place (its "updated by" is the migration
+   account). Also: 12's MANUAL relations and 10's
    `[waiting]` parents now name only projects that are not migrated (TEST).
 2. **Workflows** (decision 13; B6 says what the runner changes on an existing Redmine):
 
@@ -783,8 +787,8 @@ again (B10).
    tools/testenv/membership_check.php` (`memberships equal 04's proposal: yes`; on a project that existed before, its
    older memberships show as differences, B6).
 4. **Settings back on** (production; on the clone the crontab stays off): stealth mode off for the migration account
-   (`toggle=false`, answer `{"is_cloaked":false}`), the prune cron job and the LDAP sync cron job back on, the webhooks
-   that were active before part B active again (B5). Leave cross-project subtasks and relations on (B5).
+   (`toggle=false`, answer `{"is_cloaked":false}`), the prune cron job and the LDAP sync cron job back on, the
+   checklists setting and the webhooks as they were if B5 changed them. Leave cross-project subtasks and relations on (B5).
    **Never run `rake redmine:watchers:prune`** afterwards: it deletes the historical watchers the migration kept on
    purpose (decision 12).
 5. **After the run, by hand:** retire the `[unoffered]` select values (docs/RUNBOOK.md, section 2); rebuild what the
@@ -838,8 +842,8 @@ Rules, without exception:
    every rails runner step (manual_steps.rb workflows, members and restore; apply_workflows.rb --confirm-push),
    and run the --dry-run of every push first.
 5. Production: the upgrade does not start without the snapshot of A.4 step 3, part B not without the one after
-   A.5, no batch without a fresh one (B10), each confirmed by Jan. At the start of every batch check that stealth
-   mode is on for the migration account and the webhooks are inactive (B5).
+   A.5, no batch without a fresh one (B10), each confirmed by Jan. At the start of every batch check B5's "no mail"
+   row: the Extended API enabled, the checklists setting off, stealth mode on for the migration account.
 6. Run 09, 10, 11 and 14 in tmux. Log every step with tee into <log-dir>, outside the checkout.
 7. Change no code and no config default of the migration scripts, and nothing in Redmine beyond what the steps
    of this document say. In staging, edit only the review tables Jan asks you to (B6, 04's memberships, the
