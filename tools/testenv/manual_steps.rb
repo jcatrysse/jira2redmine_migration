@@ -1,8 +1,11 @@
-# Stand-in, for the test runs only, for the manual steps of today's workflow (CHANGELOG, plan M8). Run with
+# The manual steps around the migration (CHANGELOG, plan M8, docs/PRODUCTION.md). Run with
 #   J2R_STEP=workflows|members|restore J2R_PROJECTS=geos,sis,oac bundle exec rails runner manual_steps.rb
-# workflows: every transition open for Manager and Developer on every tracker, new issues included
-#            ("open the workflows", reset after the migration); watchers need view_watched_issues
-#            (redmine_view_issue_description), given to both roles; parent priority independent (B13).
+# workflows: every transition open, new issues included, on every tracker for the roles J2R_WORKFLOW_ROLES names
+#            (a JSON list from migration.workflows.open_workflow_roles, decision 33; Manager and Developer
+#            without it); "open the workflows", reset after the migration. A role this Redmine lacks, or one
+#            without Add or Edit issues (Redmine ignores its workflow), stops the step; "Migration (temporary)"
+#            is created here when listed. Watchers need view_watched_issues (redmine_view_issue_description),
+#            given to those roles; parent priority independent (B13).
 # members:   activate locked users, flagged with preference j2r_relock ("activate locked users"), and make
 #            every migrated user a member of every migrated project (J2R_PROJECTS) with the temporary role
 #            "Migration (temporary)": every permission, assignable (Jan, decision 12). It comes on top of the
@@ -14,11 +17,31 @@
 #            final memberships of 04 stay), and lock again the users "members" activated. Watchers stay:
 #            Redmine prunes watchers only with `rake redmine:watchers:prune`, never run it after the migration.
 step = ENV.fetch('J2R_STEP')
-roles = Role.where(name: %w[Manager Developer]).to_a
 TEMPORARY_ROLE = 'Migration (temporary)'.freeze
+# decision 12: every permission, assignable; held by the migrated users in the migrated projects until restore
+temporary_role = lambda do
+  temporary = Role.find_or_initialize_by(name: TEMPORARY_ROLE)
+  if temporary.new_record?
+    temporary.assignable = true
+    temporary.issues_visibility = 'all'
+    temporary.users_visibility = 'all'
+    temporary.time_entries_visibility = 'all'
+    temporary.permissions = Redmine::AccessControl.permissions.reject(&:public?).map(&:name)
+    temporary.save!
+  end
+  temporary
+end
 
 case step
 when 'workflows'
+  names = JSON.parse(ENV['J2R_WORKFLOW_ROLES'].presence || '["Manager", "Developer"]')
+  abort 'J2R_WORKFLOW_ROLES names no role (migration.workflows.open_workflow_roles)' if names.empty?
+  temporary_role.call if names.include?(TEMPORARY_ROLE)
+  roles = Role.where(name: names).to_a
+  missing = names - roles.map(&:name)
+  abort "Roles named in migration.workflows.open_workflow_roles that this Redmine does not have: #{missing.join(', ')}" if missing.any?
+  ignored = roles.reject(&:consider_workflow?).map(&:name)
+  abort "Roles without Add issues or Edit issues (Redmine ignores their workflow): #{ignored.join(', ')}" if ignored.any?
   statuses = IssueStatus.pluck(:id)
   existing = WorkflowTransition.pluck(:tracker_id, :role_id, :old_status_id, :new_status_id).to_set
   rows = []
@@ -47,17 +70,9 @@ when 'workflows'
   Setting.cross_project_issue_relations = '1'
   perms = Redmine::AccessControl.permissions.map(&:name) & %i[view_watched_issues view_issue_description]
   roles.each { |role| perms.each { |p| role.add_permission!(p) } }
-  puts "workflow transitions created=#{created} permissions=#{perms.inspect} cross_project_subtasks=#{Setting.cross_project_subtasks} cross_project_issue_relations=#{Setting.cross_project_issue_relations}"
+  puts "workflow transitions created=#{created} roles=#{roles.map(&:name).sort.inspect} permissions=#{perms.inspect} cross_project_subtasks=#{Setting.cross_project_subtasks} cross_project_issue_relations=#{Setting.cross_project_issue_relations}"
 when 'members'
-  temporary = Role.find_or_initialize_by(name: TEMPORARY_ROLE)
-  if temporary.new_record?
-    temporary.assignable = true
-    temporary.issues_visibility = 'all'
-    temporary.users_visibility = 'all'
-    temporary.time_entries_visibility = 'all'
-    temporary.permissions = Redmine::AccessControl.permissions.reject(&:public?).map(&:name)
-    temporary.save!
-  end
+  temporary = temporary_role.call
   users = User.where(type: 'User').where.not(id: 1)
   ids_file = ENV['J2R_USER_IDS_FILE']
   users = users.where(id: File.readlines(ids_file).map(&:to_i)) if ids_file.present?

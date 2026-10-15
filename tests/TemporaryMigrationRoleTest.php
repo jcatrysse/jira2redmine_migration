@@ -28,7 +28,11 @@ final class TemporaryMigrationRoleTest extends TestCase
         $members = substr($steps, $start, (int)strpos($steps, "when 'restore'") - $start);
         $restore = substr($steps, (int)strpos($steps, "when 'restore'"));
         self::assertStringContainsString("TEMPORARY_ROLE = 'Migration (temporary)'", $steps);
-        self::assertStringContainsString('temporary.assignable = true', $members);
+        // the role's definition is shared with the workflows step (decision 33), the members step uses it
+        $definition = substr($steps, (int)strpos($steps, 'temporary_role = lambda do'), 500);
+        self::assertStringContainsString('temporary.assignable = true', $definition);
+        self::assertStringContainsString('temporary.permissions = Redmine::AccessControl.permissions.reject(&:public?)', $definition);
+        self::assertStringContainsString('temporary = temporary_role.call', $members);
         self::assertStringContainsString(
             'MemberRole.create!(member: member, role: temporary)',
             $members,

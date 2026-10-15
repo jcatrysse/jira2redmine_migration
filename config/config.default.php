@@ -92,6 +92,12 @@ return [
         // global workflow (Redmine without that plugin).
         'workflows' => [
             'mode' => 'project',
+            // Jan, decision 33 (2026-10-15): the roles the "workflows" step of tools/testenv/manual_steps.rb opens every
+            // transition for until "restore" (B12: without it every issue lands in its tracker's default status). The
+            // import runs as an admin, who gets every role's transitions, so one role with Add or Edit issues is
+            // enough; the list decides which users also get the open workflow meanwhile. "Migration (temporary)"
+            // is created by the step and held only by the migrated users in the migrated projects.
+            'open_workflow_roles' => ['Manager', 'Developer'],
             // Jan, decision 14 (2026-10-14): a transition Jira limits to a group that is not a member of the project.
             // Per project key and Jira group: 'G' makes the group a member (04) with its own role, which gets the
             // transitions; 'R' gives them to the roles the group's users hold in the project; 'ignore' does not carry

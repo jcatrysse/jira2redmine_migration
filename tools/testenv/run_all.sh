@@ -28,7 +28,9 @@ step() { # step NAME script args...
   printf '%-14s exit=%d %4ds errors=%d\n' "$name" $rc $(( $(date +%s) - start )) "$(grep -ciE '\[error\]|fatal|exception' "$logdir/$name.log")" | tee -a "$logdir/summary.txt"
 }
 manual() { # manual workflows|members|restore [script]
-  (cd "$BASE/redmine$v" && J2R_STEP=$1 RAILS_ENV=production bundle exec rails runner "$REPO/tools/testenv/${2:-manual_steps.rb}") 2>&1 | tail -1 | sed "s/^/manual-$1   /" | tee -a "$logdir/summary.txt"
+  # decision 33: the roles the workflows step opens come from the configuration
+  local roles; roles=$(cd "$REPO" && php tools/config_value.php migration.workflows.open_workflow_roles)
+  (cd "$BASE/redmine$v" && J2R_STEP=$1 J2R_WORKFLOW_ROLES="$roles" RAILS_ENV=production bundle exec rails runner "$REPO/tools/testenv/${2:-manual_steps.rb}") 2>&1 | tail -1 | sed "s/^/manual-$1   /" | tee -a "$logdir/summary.txt"
 }
 
 : > "$logdir/summary.txt"
