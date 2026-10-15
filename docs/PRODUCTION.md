@@ -12,14 +12,19 @@ addresses or secrets in this file: the repository is public. Placeholders are wr
   gaat niet mee.
 - **Eerst een generale repetitie** op een kloon van de productie-VM: mail uit, bijlagen als steekproef, alle
   projecten, met relink, workflows en restore. Daarna productie: snapshot voor elke batch, alle bijlagen.
+- **Productie deel B in één onderhoudsvenster** (beslissing 36): vanaf de start is Jira alleen-lezen voor de
+  gebruikers (Jan zet dat zelf) en is Redmine dicht (de webserver toont een onderhoudspagina, de migratie gebruikt
+  een lokale ingang); de crontab staat uit. Na de laatste batch, relink, workflows, restore en de controles gaat
+  Redmine open. Binnen het venster kost een rollback geen werk van gebruikers, daarna alleen nog vooruit fixen.
 - **Nieuw risico: de bestaande Redmine.** Tot nu toe ging elke test naar een lege Redmine. De scripts zoeken eerst
   een bestaand project, gebruiker, groep, status, prioriteit, tracker of veld, en dat op naam of identifier. Een
   verkeerde match zet Jira-data in een bestaand object, een gemiste match maakt een dubbel. Jan bekijkt in de
   eerste batch elke match voor de push (B6, met de queries).
 - **Wat bestaande objecten wijzigt:** 03 voegt Jira-leden toe aan een bestaande groep met dezelfde naam, 07 en 08
   voegen trackers en projecten toe aan bestaande trackers en velden, 04 voegt rollen toe aan bestaande
-  lidmaatschappen. De `workflows`-stap opent tijdelijk alle transities voor Manager en Developer op alle trackers,
-  de workflow-runner vervangt de globale workflow van de gebruikte trackers.
+  lidmaatschappen. De `workflows`-stap opent tijdelijk alle transities op alle trackers voor de rollen die Jan
+  bevestigt (beslissing 33); de workflow-runner schrijft de eigen workflow per gemigreerd project en de globale
+  workflow alleen van trackers die 07 nieuw aanmaakt (beslissing 34).
 - **Beslist voor een bestaande Redmine (33 tot 35):** de rollen voor de tijdelijke open workflows komen uit de
   config (de repetitie maakt de inventaris, Jan bevestigt); bestaande trackers houden hun globale workflow, alleen
   de gemigreerde projecten krijgen hun eigen; Jira-prioriteiten worden gemapt op bestaande, er komen er geen bij.
@@ -280,7 +285,8 @@ in the rehearsal report: it sets the maintenance window.
 | attachments | `attachments.test_sample = true`: every file up to 512 KB plus the largest per extension up to 20 MB; the rest is noted "skipped by sample" | `test_sample = false`: every file |
 | snapshot | A.4 step 3 is the upgrade's rollback point; part B's own is a second snapshot after A.5 | the same two, and **one before every batch** (B10); no batch starts without one |
 | GO | at the review points (B6, B7 steps 2, 4 and 12, B9) | at the review points and before every write |
-| Jira | the live Jira, read-only (B4); the data is what Jira holds that day | the same, read-only |
+| Jira | the live Jira, read-only for the token (B4); the data is what Jira holds that day | read-only for the token, and for the users from the start of the window (decision 36) |
+| users | none on the clone | **one maintenance window** for B5 to B9 (decision 36): Redmine closed to users, the crontab off (B5) |
 | afterwards | the clone is thrown away; findings go to Jan | Redmine stays; staging is removed (B9) |
 
 Everything else is the same: the batches, the commands, the checks. The rehearsal is there to find what an
@@ -384,8 +390,8 @@ return [
 
 The environment, in a file only the operator can read (`chmod 600`), outside the checkout, sourced in every shell
 and tmux window: `JIRA_SITE` (`<site>.atlassian.net`), `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_CLOUD_ID` (from
-`https://<site>.atlassian.net/_edge/tenant_info`), `REDMINE_URL`, `REDMINE_API_KEY` (an admin's API key: the
-migration account), `J2R_STAGING_PASSWORD`, `J2R_TMP` (the attachment directory), `J2R_DEFAULT_AUTHOR_ID`,
+`https://<site>.atlassian.net/_edge/tenant_info`), `REDMINE_URL` (production: the local-only entry of the
+maintenance window, `http://127.0.0.1:8080`, B5), `REDMINE_API_KEY` (an admin's API key: the migration account), `J2R_STAGING_PASSWORD`, `J2R_TMP` (the attachment directory), `J2R_DEFAULT_AUTHOR_ID`,
 `J2R_PROJECTS` (per batch, lowercase, B8), `J2R_TEST_SAMPLE` (`1` in the rehearsal only). Never print them, never paste
 them in a chat, never commit them.
 
@@ -412,18 +418,63 @@ After that the scripts send only GET requests to Jira (and the same 401 refuses 
 
 ### B5. Before the first batch
 
-Once, on the upgraded Redmine 7.0. Each line is a check the local session reports.
+**Production: one maintenance window (Jan, decision 36).** Part B, from this section to the end of B9, runs in one
+window; part A is its own window before it (decision 29). Why: the scripts skip an issue that is already migrated, so
+a change made in Jira after a batch's extraction would be lost, and a rollback to a snapshot would erase what users did
+in Redmine meanwhile. The rehearsal measures the window's length (B8 estimates 7 to 12 hours of run time in
+production, plus Jan's reviews and the snapshots); its report gives the real figure, which sets the window.
+
+1. **Announce** the window (Jan): from its start Jira is read-only and Redmine closed; afterwards everyone works in
+   Redmine.
+2. **Jira read-only for the users** (Jan, by hand, as a Jira admin; the scripts and the session never write to Jira,
+   the token cannot): for example a permission scheme with Browse projects only on the 14 migrated projects, or the
+   create, edit, transition and comment permissions taken out of the schemes in use. Jan confirms it before the first
+   batch.
+3. **Redmine closed to the users.** Redmine has no maintenance mode of its own; close it at the web server and give
+   the migration a local-only entry. With Apache (the appendix of docs/RUNBOOK.md; the same idea with nginx):
+
+   ```apache
+   # in the public virtual host, for the window: every request gets the maintenance page
+   RewriteEngine On
+   RewriteCond %{REQUEST_URI} !=/maintenance.html
+   RewriteRule ^ - [R=503,L]
+   ErrorDocument 503 /maintenance.html
+
+   # the migration's own entry, reachable from the server only
+   Listen 127.0.0.1:8080
+   <VirtualHost 127.0.0.1:8080>
+       DocumentRoot /srv/redmine/public
+       PassengerAppRoot /srv/redmine
+       PassengerAppEnv production
+       LimitRequestBody 4294967296
+       TimeOut 600
+       XSendFile On
+       XSendFilePath /srv/redmine/files
+       SetEnv REDMINE_X_SENDFILE_HEADER X-Sendfile
+   </VirtualHost>
+   ```
+
+   `public/maintenance.html` is a plain page saying when Redmine opens. For the window `REDMINE_URL` is
+   `http://127.0.0.1:8080` (B3); the `rails runner` steps do not use HTTP. Check: from another machine every page,
+   the login and the REST API answer 503; on the server `curl -s -o /dev/null -w '%{http_code}' "$REDMINE_URL/login"`
+   gives 200. While Redmine is closed, the accounts the `members` step activates and the workflows the `workflows`
+   step opens reach nobody: an activated former employee cannot log in or use an API key, the web server answers 503.
+4. **The crontab of the Redmine user off** for the window (`crontab -l` saved, then `crontab -r`): mail fetching,
+   digests, recurring issues, scheduled reports, AI triage, LDAP sync and attachment prune all stop; nothing changes
+   Redmine or mails from it, and a rollback to a batch snapshot loses no fetched mail (it waits in the mailbox). B9
+   puts it back.
+
+Then, once, on the upgraded Redmine 7.0. Each line is a check the local session reports.
 
 | what | how | check |
 |---|---|---|
 | snapshot | the second snapshot, after A.5: part B's rollback point (A.4 step 3 is the upgrade's); production: also before every batch (B10) | the snapshot exists and its time is noted |
-| REST API | Administration, Settings, API: REST web service on (A.5 row 16) | `curl -s -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/users/current.json"` gives the migration account, `admin: true` |
+| REST API | Administration > Settings > Integrations: REST web service on (A.5 row 16; "API" on 5.1) | `curl -s -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/users/current.json"` gives the migration account, `admin: true` |
 | Extended API | the plugin is installed | `curl -sI -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/extended_api/issues.json"` has the header `X-Redmine-Extended-API` |
 | text formatting | Administration, Settings, General: CommonMark Markdown (A.5 row 16) | `Setting.text_formatting` is `common_mark` |
 | no mail, no webhook from the migration | `redmine.extended_api.enabled` true (B3): 10, 11, 12, 13 (tags on 7.0) and the relink write issues and journals through it with notify=false, which silences the mails and Redmine 7's webhooks of the request (Jan, 2026-10-15); 09's uploads and 14's watchers send none. The one exception: 15 saves the issue's done ratio through the plain API when redmine_checklists' setting "issue done ratio" is on (Administration, Plugins, Checklists; off by default): switch it off for the run. Safety net (production, cheap, B2's advice): stealth mode on for the migration account, `curl -s -X POST -H "X-Redmine-API-Key: $REDMINE_API_KEY" -d toggle=true "$REDMINE_URL/stealth/toggle.json"`; it silences the mails of anything the migration account writes outside the Extended API. Rehearsal: outgoing mail is off on the clone (A.1) | the checklists setting is off; production: the answer is `{"is_cloaked":true}` (signing in to the web interface as the migration account switches stealth off again: do not, or toggle it on after) |
 | relation types | the GEOxyz relation types of `migration.relations.custom_mappings` in `redmine_issue_view_columns` (`tools/testenv/redmine_issue_view_columns.local.rb` is generated from them) | after part A they exist in 7.0 (12 refuses a relation type Redmine does not know) |
-| attachment prune off | the cron job or scheduled task that runs `rake redmine:attachments:prune` is disabled (uploads wait for their issue; prune deletes them after 24 h); on the clone the whole crontab is off (A.1) | the cron entry is commented out |
-| LDAP sync off | the cron job of `redmine_ldap_sync` is disabled (it would lock or change accounts the migration activates); on the clone it runs by hand only (A.1) | the cron entry is commented out |
+| attachment prune and LDAP sync off | covered by the crontab being off (step 4 above; on the clone A.1): prune would delete uploads still waiting for their issue after 24 h, LDAP sync would lock or change accounts the migration activates | `crontab -l` for the Redmine user is empty |
 | webhooks | no change needed: every issue write goes through the Extended API with notify=false, and Redmine 7 fires no webhook for it. Only if the checklists setting of the row above must stay on: `UPDATE webhooks SET active = false;` for the duration of part B, after noting which were active (`SELECT id, url, active FROM webhooks;`); stealth mode does not silence webhooks. Rehearsal: inactive anyway (A.1, A.4 step 11) | |
 | automation rules | Jan exports them once as JSON (docs/RUNBOOK.md, section 0); kept outside the repository | the file opens as JSON |
 | roles for the open workflows (decision 33) | the inventory of the roles that take part in workflows (Add or Edit issues) and how many memberships hold them: `RAILS_ENV=production bundle exec rails runner 'Role.givable.sorted.select(&:consider_workflow?).each { \|r\| puts [r.id, r.name, r.has_permission?(:add_issues) ? "add_issues" : "-", r.has_permission?(:edit_issues) ? "edit_issues" : "-", MemberRole.where(role_id: r.id).count].join(" \| ") }'`. **GO:** Jan confirms the list in `migration.workflows.open_workflow_roles` (B3); one usable role is enough, `["Migration (temporary)"]` keeps the open workflow away from the existing projects (B6) | `php tools/config_value.php migration.workflows.open_workflow_roles` prints Jan's list |
@@ -568,7 +619,8 @@ hold Jira data: never in the repository).
 
    Output: `workflow transitions created=N roles=[...] ...`; `roles` is Jan's confirmed list (decision 33, B5); on a
    later batch N is 0 or small (new trackers only). A role the Redmine lacks or one without Add or Edit issues
-   stops the step with its name.
+   stops the step with its name. In production Redmine is closed to users meanwhile (B5): the open workflows reach
+   nobody.
 4. **Extract issues, attachments, watchers; propose the memberships.**
 
    ```bash
@@ -600,7 +652,8 @@ hold Jira data: never in the repository).
    ```
 
    Output: `activated=N temporary memberships=N projects=N members=N`; `projects` must equal the number of projects in
-   `J2R_PROJECTS`.
+   `J2R_PROJECTS`. The activated accounts (former employees among them) stay active until `restore` (B9), which
+   comes before Redmine opens; in production nobody can log in with them meanwhile, the web server answers 503 (B5).
 6. **Custom fields.** Review the analysis (B6: fields matched to existing Redmine fields), then push.
 
    ```bash
@@ -739,6 +792,10 @@ batch report). Verify takes about 5 minutes (four projects, `--sample=25`, not i
 last batch, on the WIKI run on 7.0: the workflow proposal and plan a few seconds, the three runner passes, `restore`
 and its proofs together under 2 minutes; the relink was not timed (13 texts on the test instance).
 
+**The window** (decision 36): the four batches together take about 7 to 12 hours of run time in production
+(the table above plus verify, relink, workflows and restore), plus Jan's reviews and the snapshots. The rehearsal
+reports the real figure: the time from B5 to the end of B9, with the run time and the waiting time apart.
+
 **In tmux:** the whole batch, or at least 09 (pull and push), 10, 11 and 14. A step that is interrupted can be run
 again (B10).
 
@@ -786,9 +843,12 @@ again (B10).
    <checkout>/tools/testenv/temporary_role_proof.rb` (with the batch 4 `J2R_PROJECTS`) (read-only: a rolled-back transaction) and `php
    tools/testenv/membership_check.php` (`memberships equal 04's proposal: yes`; on a project that existed before, its
    older memberships show as differences, B6).
-4. **Settings back on** (production; on the clone the crontab stays off): stealth mode off for the migration account
-   (`toggle=false`, answer `{"is_cloaked":false}`), the prune cron job and the LDAP sync cron job back on, the
-   checklists setting and the webhooks as they were if B5 changed them. Leave cross-project subtasks and relations on (B5).
+4. **Settings back on and Redmine open** (production; on the clone the crontab stays off): stealth mode off for the
+   migration account (`toggle=false`, answer `{"is_cloaked":false}`), the checklists setting and the webhooks as they
+   were if B5 changed them, the saved crontab back (`crontab <saved file>`), then **open Redmine**: the maintenance
+   rules and the local entry out of the web server (B5), reload it, check a login from another machine, and Jan
+   announces that everyone works in Redmine. Jira stays read-only. Only `restore` and the checks of steps 1 to 3 come
+   before this; staging (step 6) can go later. Leave cross-project subtasks and relations on (B5).
    **Never run `rake redmine:watchers:prune`** afterwards: it deletes the historical watchers the migration kept on
    purpose (decision 12).
 5. **After the run, by hand:** retire the `[unoffered]` select values (docs/RUNBOOK.md, section 2); rebuild what the
@@ -806,6 +866,9 @@ again (B10).
   then the steps after it. Proved on 5.1 and 7.0: a second run of 08 to 15 changes nothing in Redmine.
 - **A Jira error** (502, 503, 504, 429) is retried by the scripts (decisions 5 and B71) for reads; if a jira phase
   still stops, rerun it.
+- **Inside the window or after it** (decision 36): while Redmine is closed, a rollback to the snapshot before a batch
+  costs no user work. Once Redmine is open only a fix forward is left (a rerun, or a fix by hand), since a rollback would
+  erase what users did.
 - **Roll back** (the upgrade itself: A.7) when a batch left Redmine in a state a rerun cannot repair (a wrong match pushed, B6; data in an
   existing project that should not be there): restore the VM snapshot taken before the batch. The snapshot must hold
   Redmine's database, Redmine's `files/` and `tmp/j2r_added_workflows.json`, **and the staging database**: staging
@@ -842,7 +905,9 @@ Rules, without exception:
    every rails runner step (manual_steps.rb workflows, members and restore; apply_workflows.rb --confirm-push),
    and run the --dry-run of every push first.
 5. Production: the upgrade does not start without the snapshot of A.4 step 3, part B not without the one after
-   A.5, no batch without a fresh one (B10), each confirmed by Jan. At the start of every batch check B5's "no mail"
+   A.5, no batch without a fresh one (B10), each confirmed by Jan. Part B runs in one maintenance window (B5): before
+   the first batch Jan confirms that Jira is read-only for users, check that Redmine answers 503 from outside and
+   200 on the local entry, and that the crontab is off; Redmine opens only after restore and the checks (B9). At the start of every batch check B5's "no mail"
    row: the Extended API enabled, the checklists setting off, stealth mode on for the migration account.
 6. Run 09, 10, 11 and 14 in tmux. Log every step with tee into <log-dir>, outside the checkout.
 7. Change no code and no config default of the migration scripts, and nothing in Redmine beyond what the steps

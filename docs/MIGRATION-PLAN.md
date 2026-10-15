@@ -451,6 +451,21 @@ Jan's answers to B2's three questions about an existing Redmine (2026-10-15, rel
     ones (`2a7c230`, `9c85cc6`). The test instances map Blocker => Immediate, Showstopper => Urgent, Medium =>
     Normal in `config/config.local.php`.
 
+Jan's decisions of 2026-10-15, later in the afternoon (relayed by the coordinator):
+
+- **13 and the relink write through the Extended API with notify=false** like the other steps, so no mail and no
+  webhook leaves from them (`2df782a`; docs/PRODUCTION.md B5: stealth mode stays as a safety net, inactive webhooks
+  are needed only when redmine_checklists' "issue done ratio" stays on).
+36. **Production part B in one maintenance window.** From its start Jira is read-only for the users (Jan sets it by
+    hand as a Jira admin; the scripts and the token never write to Jira) and Redmine is closed to them; after the last
+    batch, the relink, the workflows, restore and the checks, Redmine opens and everyone works in Redmine. Reason: the
+    scripts skip an issue that is already migrated, so a Jira change after a batch's extraction would be lost, and a
+    rollback to a snapshot would erase what users did in Redmine meanwhile. Part A stays its own window before it
+    (decision 29). docs/PRODUCTION.md B5 says how Redmine is closed (the web server answers a maintenance page to
+    everyone; the migration uses a local-only entry) and that the crontab is off for the window; inside the window a
+    rollback costs no user work, after it only a fix forward (B10). The temporarily activated accounts and the open
+    workflows reach nobody while Redmine is closed. The rehearsal measures the window's length.
+
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
 Taken by B2 on the coordinator's instruction (recommended option, no waiting); each can be reversed.
