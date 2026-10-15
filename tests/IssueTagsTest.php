@@ -65,7 +65,8 @@ final class IssueTagsTest extends TestCase
         $endpoint = IssueTags::push($client, 6, ['c'], $endpoint);
         self::assertSame(IssueTags::ENDPOINT_ISSUE, $endpoint);
         self::assertSame(['POST /issues/5/tags.json', 'PUT /issues/5.json', 'PUT /issues/6.json'], $this->calls());
-        self::assertSame('{"issue":{"add_tag_list":"a,b"}}', $this->body(1));
+        // B75: a list, not "a,b" (redmine_tags 7.0 made that one tag named "a,b")
+        self::assertSame('{"issue":{"add_tag_list":["a","b"]}}', $this->body(1));
     }
 
     public function testTheIssueUpdateGoesThroughTheExtendedApiWithoutMail(): void
@@ -80,7 +81,7 @@ final class IssueTagsTest extends TestCase
         self::assertInstanceOf(\Psr\Http\Message\RequestInterface::class, $request);
         self::assertSame('notify=false&send_notification=0', $request->getUri()->getQuery());
         // the issue keeps its updated time (Jan, 2026-10-15: no visible trace)
-        self::assertSame('{"issue":{"add_tag_list":"a,b","updated_on":"2024-03-04T05:06:07Z"}}', $this->body(2));
+        self::assertSame('{"issue":{"add_tag_list":["a","b"],"updated_on":"2024-03-04T05:06:07Z"}}', $this->body(2));
     }
 
     public function testA404AfterTheRouteWorkedIsAnError(): void

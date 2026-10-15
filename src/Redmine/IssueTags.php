@@ -55,7 +55,8 @@ final class IssueTags
             $updatedOn = is_array($current) ? ($current['issue']['updated_on'] ?? null) : null;
             $keepUpdatedOn = is_string($updatedOn) ? $updatedOn : null;
         }
-        TextUpdate::issue($client, $issueId, ['add_tag_list' => implode(',', $tags)], $extendedApiPrefix, false, $keepUpdatedOn);
+        // a list: redmine_tags 7.0 takes a string as one tag ("a,b" became the tag "a,b", B75)
+        TextUpdate::issue($client, $issueId, ['add_tag_list' => array_values($tags)], $extendedApiPrefix, false, $keepUpdatedOn);
 
         return self::ENDPOINT_ISSUE;
     }
