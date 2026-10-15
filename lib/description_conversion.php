@@ -8,6 +8,7 @@ use League\HTMLToMarkdown\Converter\TableConverter;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
 use Jira2Redmine\Jira\IssueKeyAliases;
 use Jira2Redmine\Text\Emphasis;
+use Jira2Redmine\Text\FailedMonospace;
 use Jira2Redmine\Text\IssueReference;
 use Jira2Redmine\Text\MediaWikiSource;
 use Jira2Redmine\Text\Safelinks;
@@ -76,6 +77,8 @@ function convertJiraHtmlToMarkdown(?string $html, array $attachments, ?string $a
 
     // MediaWiki source pasted into Jira: Jira rendered it as a broken table; the ADF has the text (decision 26)
     $trimmed = MediaWikiSource::replaceInHtml($trimmed, MediaWikiSource::paragraphs($adf));
+    // inline code Jira showed as "{{...}}" because the code holds braces itself
+    $trimmed = FailedMonospace::restore($trimmed, $adf);
 
     // Heading anchors ("<h3><a name="Title"></a>Title</h3>"): Redmine makes its own. Left in, the empty
     // <a> stayed as HTML in the Markdown, and the DOM passes over it wrapped the whole text in <p>, so

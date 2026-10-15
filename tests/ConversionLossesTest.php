@@ -45,4 +45,20 @@ final class ConversionLossesTest extends TestCase
         self::assertStringStartsWith("```\n|-\n| <pre>{{Template\n  | A = b}}</pre>||{{Template | A = b}}\n```\n", $markdown);
         self::assertStringEndsWith("\nabout &lt;pre&gt; here", $markdown);
     }
+
+    public function testInlineCodeJiraShowedAsBracesBecomesCode(): void
+    {
+        // WIKI template code (anonymised): the ADF marks "{{lc: {{{X|}}} }}" as code, Jira showed "{{{{lc: ...}}}}"
+        $code = static fn (string $t): array => ['type' => 'text', 'text' => $t, 'marks' => [['type' => 'code']]];
+        $adf = (string)json_encode(['type' => 'doc', 'version' => 1, 'content' => [['type' => 'paragraph', 'content' => [
+            ['type' => 'text', 'text' => 'switch: '], $code('{{lc: {{{X|}}} }}'), ['type' => 'text', 'text' => ' and using '],
+            $code(' <div id="A">Some text</div>'), ['type' => 'text', 'text' => ' then {{other}} stays'],
+        ]]]]);
+        $html = '<p>switch: {{{{lc: {{{X|}}} }}}} and using{{ &lt;div id="A"&gt;Some text&lt;/div&gt;}} then {{other}} stays</p>';
+
+        self::assertSame(
+            'switch: `{{lc: {{{X|}}} }}` and using`<div id="A">Some text</div>` then {{other}} stays',
+            convertJiraHtmlToMarkdown($html, [], $adf)
+        );
+    }
 }
