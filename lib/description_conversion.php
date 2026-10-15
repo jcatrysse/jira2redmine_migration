@@ -561,17 +561,26 @@ function restoreLiteralMarkupLinks(string $text): string
     };
     $label = static fn (string $value): string => trim((string)preg_replace('/\\\\([\\\\`*_{}\[\]()#+\-.!|~])/', '$1', $value));
 
+    // White space inside the brackets separated the link from the words around it ("to[ glossary|url]."): it
+    // stays outside the link, where a word touches it (WIKI-613 read "toglossary").
+    $link = static function (string $before, string $rawLabel, string $url, string $after) use ($label, $address): string {
+        $lead = $before !== '' && preg_match('/^\s/u', $rawLabel) === 1 ? ' ' : '';
+        $trail = $after !== '' && preg_match('/\s$/u', $rawLabel) === 1 ? ' ' : '';
+
+        return $lead . '[' . $label($rawLabel) . '](' . $address($url) . ')' . $trail;
+    };
+
     // \[label\](url\)  (Markdown typed into Jira)
     $text = (string)preg_replace_callback(
-        '/\\\\\[([^\]\n]{1,300}?)\\\\\]\((https?:\/\/(?:[^\s()\\\\]|\\\\.|\([^\s()]*\))+)\\\\?\)/u',
-        static fn (array $m): string => '[' . $label($m[1]) . '](' . $address($m[2]) . ')',
+        '/(?:(?<=(\S)))?\\\\\[([^\]\n]{1,300}?)\\\\\]\((https?:\/\/(?:[^\s()\\\\]|\\\\.|\([^\s()]*\))+)\\\\?\)(?=(\S?))/u',
+        static fn (array $m): string => $link($m[1], $m[2], $m[3], $m[4]),
         $text
     );
 
     // \[label|url\]  (Jira wiki markup typed into the new editor)
     return (string)preg_replace_callback(
-        '/\\\\\[([^\]|\n]{1,300}?)\s*(?:\\\\)?\|\s*(https?:\/\/(?:[^\s\]\\\\]|\\\\[^\]])+)\\\\?\]/u',
-        static fn (array $m): string => '[' . $label($m[1]) . '](' . $address($m[2]) . ')',
+        '/(?:(?<=(\S)))?\\\\\[([^\]|\n]{1,300}?\s*)(?:\\\\)?\|\s*(https?:\/\/(?:[^\s\]\\\\]|\\\\[^\]])+)\\\\?\](?=(\S?))/u',
+        static fn (array $m): string => $link($m[1], $m[2], $m[3], $m[4]),
         $text
     );
 }

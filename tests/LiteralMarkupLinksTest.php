@@ -58,4 +58,25 @@ final class LiteralMarkupLinksTest extends TestCase
 
         self::assertTrue(str_contains($eleven, 'restoreLiteralMarkupLinks('), '11 leaves typed links half converted');
     }
+
+    public function testTheSpaceInsideTheBracketsStaysOutsideTheLink(): void
+    {
+        // decision 26: "to[ glossary|url]." read "toglossary" in Redmine (WIKI-613, WIKI-395; anonymised)
+        self::assertSame(
+            'link when required to [glossary](https://x.example/g).',
+            restoreLiteralMarkupLinks('link when required to\\[ glossary|https://x.example/g\\].')
+        );
+        self::assertSame(
+            'use of [Template A](https://x.example/a) and B',
+            restoreLiteralMarkupLinks('use of\\[ Template A |https://x.example/a\\]and B')
+        );
+        // right after another typed link (WIKI-704: "[FTP push|url][ settings with RINEX files|url]")
+        self::assertSame(
+            '[FTP push](https://x.example/a) [settings](https://x.example/b).',
+            restoreLiteralMarkupLinks('\\[FTP push|https://x.example/a\\]\\[ settings|https://x.example/b\\].')
+        );
+        // without white space inside, the link stays where the user typed it
+        self::assertSame('SVPs/[SVS](https://x.example/s)s', restoreLiteralMarkupLinks('SVPs/\\[SVS|https://x.example/s\\]s'));
+        self::assertSame('see ([a](https://x.example/a))', restoreLiteralMarkupLinks('see (\\[a|https://x.example/a\\])'));
+    }
 }
