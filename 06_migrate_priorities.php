@@ -129,7 +129,7 @@ function main(array $config, array $cliOptions): void
     if (in_array('transform', $phasesToRun, true)) {
         printf("[%s] Starting priority reconciliation & transform phase...%s", formatCurrentTimestamp(), PHP_EOL);
 
-        $transformSummary = runPriorityTransformationPhase($pdo);
+        $transformSummary = runPriorityTransformationPhase($pdo, (array)($config['migration']['priorities'] ?? []));
 
         printf(
             "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
@@ -358,7 +358,7 @@ function fetchAndStoreRedmineIssuePriorities(Client $client, PDO $pdo): int
 /**
  * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int, status_counts: array<string, int>}
  */
-function runPriorityTransformationPhase(PDO $pdo): array
+function runPriorityTransformationPhase(PDO $pdo, array $priorityConfig = []): array
 {
     syncPriorityMappings($pdo);
     refreshPriorityMetadata($pdo);
@@ -372,7 +372,11 @@ function runPriorityTransformationPhase(PDO $pdo): array
             'position' => isset($details['position']) ? normalizeInteger($details['position'], 1) : null,
         ];
     }
-    $proposals = new PriorityProposal($redmineByName);
+    $proposals = new PriorityProposal(
+        $redmineByName,
+        is_array($priorityConfig['mappings'] ?? null) ? $priorityConfig['mappings'] : [],
+        (bool)($priorityConfig['create_missing'] ?? false)
+    );
     $mappings = fetchPriorityMappingsForTransform($pdo);
 
     $updateStatement = $pdo->prepare(<<<SQL
@@ -404,7 +408,8 @@ function runPriorityTransformationPhase(PDO $pdo): array
 
     foreach ($mappings as $row) {
         $currentStatus = (string)$row['migration_status'];
-        $allowedStatuses = ['PENDING_ANALYSIS', 'READY_FOR_CREATION', 'MATCH_FOUND', 'CREATION_FAILED'];
+        // MANUAL too: a mapping added to the configuration later settles the row (a hand edit is kept by its hash)
+        $allowedStatuses = ['PENDING_ANALYSIS', 'READY_FOR_CREATION', 'MATCH_FOUND', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED'];
         if (!in_array($currentStatus, $allowedStatuses, true)) {
             $summary['skipped']++;
             continue;

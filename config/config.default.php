@@ -116,6 +116,14 @@ return [
             // transition is proposed without them (FPS: "Screen" only with one option of a select field).
             'dropped_conditions' => ['FPS' => ['ValueFieldCondition']],
         ],
+        // Jan, decision 35 (2026-10-15): one priority scheme for every project (redmine_itil_priority computes the
+        // priority from impact and urgency). A Jira priority maps onto an existing Redmine priority: the one named
+        // here (Jira name => Redmine name), else the one of the same name; anything else is a review row
+        // (MANUAL) to map by hand. 06 creates a priority only with create_missing (B73: after the existing ones).
+        'priorities' => [
+            'mappings' => [],
+            'create_missing' => false,
+        ],
         'trackers' => [
             // Optional Redmine status identifier to propose when creating new trackers via the extended API.
             // Leave as null to derive the lowest open status from the staging snapshot.
