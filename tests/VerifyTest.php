@@ -272,4 +272,13 @@ final class VerifyTest extends TestCase
         $label = '[Support #23341 : data \\[staging\\] - Redmine](https://r.example/issues/23341)';
         self::assertSame($label . ' [#7](/issues/7)', verifyLinkIssueReferences($label . ' #7'));
     }
+
+    public function testTheAddressOfTypedMarkupWithBracketsInItsLabelIsLeftOut(): void
+    {
+        // SIS-267 (anonymised): "[Support #1 : data [staging] - Redmine|https://r.example/issues/1]"
+        self::assertSame(
+            ['moved', 'support', '1', 'data', 'staging', 'redmine', 'done'],
+            verifyWords(verifyDropTypedLinkAddresses('moved [Support #1 : data [staging] - Redmine|https://r.example/issues/1] done'))
+        );
+    }
 }

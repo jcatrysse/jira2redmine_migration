@@ -32,7 +32,8 @@ function verifyHtmlToText(?string $html): string
  */
 function verifyDropTypedLinkAddresses(string $text): string
 {
-    $text = preg_replace('#\[([^\[\]|]*)\|\s*(?:https?|mailto|ftp):[^\]\s]+\]#i', ' $1 ', $text) ?? $text;
+    // the label may hold brackets of its own ("[[1]|url]", "[... [staging] ...|url]"), as the scripts allow (B67)
+    $text = preg_replace('#\[((?:[^\[\]|]|\[[^\[\]|]*\])*)\|\s*(?:https?|mailto|ftp):[^\]\s]+\]#i', ' $1 ', $text) ?? $text;
 
     return preg_replace('#\[([^\[\]]*)\]\((?:https?|ftp)://[^\s()]*(?:\([^\s()]*\)[^\s()]*)*\)#i', ' $1 ', $text) ?? $text;
 }
