@@ -13,6 +13,7 @@ use Karvaka\AdfToGfm\Converter as AdfConverter;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Redmine\ExtendedApi;
+use Jira2Redmine\Issues\IssueLabels;
 use Jira2Redmine\Redmine\IssueFinalUpdate;
 use Jira2Redmine\Redmine\IssueDates;
 use Jira2Redmine\Issues\AssigneeRule;
@@ -85,6 +86,7 @@ function buildIssueCreationPayloadForPreview(
         'is_private' => $candidate['proposed_is_private'] !== null ? ($candidate['proposed_is_private'] ? 1 : 0) : null,
         'custom_fields' => $customFieldPayload,
         'uploads' => buildIssueUploadPayload($redmineUploads),
+        'tag_list' => issueCreationTags($candidate),
     ], static fn($value) => $value !== null);
 
     if ($useExtendedApi) {
@@ -1870,6 +1872,7 @@ function runIssuePushPhase(
                 $redmineUploads,
                 AttachmentNames::assign(attachmentOriginalNamesByIssue($pdo)[$jiraIssueId] ?? [])
             ),
+            'tag_list' => issueCreationTags($candidate),
         ], static fn($value) => $value !== null);
 
         if ($useExtendedApi) {
@@ -2231,6 +2234,22 @@ function updateParentIssueStatus(
 }
 
 /**
+ * The issue's Jira labels as tags (redmine_tags), sent when the issue is created: a tag set later by 13 is an issue
+ * update, which on 7.0 writes a journal by the migration account and a new updated time (Jan, 2026-10-15: no visible
+ * trace). 13 still runs; for these issues it changes nothing. A Redmine without redmine_tags ignores the attribute.
+ *
+ * @param array<string, mixed> $candidate
+ * @return list<string>|null
+ */
+function issueCreationTags(array $candidate): ?array
+{
+    $labels = isset($candidate['jira_labels']) ? json_decode((string)$candidate['jira_labels'], true) : null;
+    $tags = IssueLabels::tags($labels);
+
+    return $tags !== [] ? $tags : null;
+}
+
+/**
  * @return array<int, array<string, mixed>>
  */
 function fetchIssueCreationCandidates(PDO $pdo): array
@@ -2240,7 +2259,8 @@ function fetchIssueCreationCandidates(PDO $pdo): array
             map.*,
             issue.created_at AS jira_created_at,
             issue.updated_at AS jira_updated_at,
-            issue.raw_payload AS jira_raw_payload
+            issue.raw_payload AS jira_raw_payload,
+            issue.labels AS jira_labels
         FROM migration_mapping_issues map
         JOIN staging_jira_issues issue ON issue.id = map.jira_issue_id
         WHERE map.migration_status = 'READY_FOR_CREATION'
