@@ -380,6 +380,16 @@ Jan's answers to the six open points of the summary (2026-10-14, evening, relaye
     class gets an anonymised PHPUnit case that fails without the fix; refactor and behaviour commits apart.
 27. **Comment attachment window (B59): 0** (2026-10-15, relayed by the coordinator): a comment lists only the
     attachments it names itself; `migration.journals.comment_attachment_window` stays 0, the default.
+28. **No extra field rule for a role without transitions: as in Jira** (Jan, 2026-10-15). Asked whether the
+    status and the other fields can be read-only or hidden where a role has no transition from a status.
+    Redmine 5.1 and 7.0 (same code): without a transition for the user's roles the form shows the status as
+    text and drops a status change sent anyway; an admin gets every role's transitions, so an admin always
+    sees a list (checked on 5.1.13 in a rolled-back transaction: GEOS #15, 8 transitions taken away for the
+    user's roles, 0 statuses offered, the admin still offered 2). Other fields can be read-only per tracker,
+    role and status in core (Workflow > Fields permissions, enforced on the server); hiding is per role only
+    (custom field visibility; redmine_issue_field_visibility, in the plugin set, hides 8 core fields per
+    role), not per status. Jan: keep it as in Jira, where Edit issues allows editing apart from
+    transitions; no field permissions are generated for it.
 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
