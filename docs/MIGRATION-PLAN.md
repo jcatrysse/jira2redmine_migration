@@ -1535,3 +1535,38 @@ on OAC, set READY as Jan would, was pushed (membership "Non member users", Devel
 non-member, non-admin user then has the role's rights and is not assignable, as the note says. The
 test memberships were removed again. Same on 7.0 (membership created through the push, user not
 assignable, removed).
+
+**Decisions 33 to 35 on a Redmine that is not empty, 5.1 and 7.0, B2, 2026-10-15** (code `690e28c`; runs
+`b2-d33`, GEOS, SIS, OAC from the baseline, `WORKFLOWS=1 RESTORE=1`). Before the run
+`tools/testenv/existing_redmine_proof.rb setup` gave each Redmine what an existing one has: a tracker "Task" (Jira
+has an issue type of that name) with its own global workflow (4 rows), used by a project the migration does not
+touch. After the run (`check`), on both targets:
+- decision 34: Task's global workflow 4 rows, the same fingerprint as before; the migrated projects have their own
+  workflow for Task (GEOS 19, SIS 15, OAC 22 rows, and the projects 01 created for later batches); `workflow_plan.php`:
+  "Global workflow left as it is (decision 34) for 2 tracker(s) Redmine already had: 3, 4" (Support and Task; plan
+  2,842 transitions over 220 sets instead of 3,080 over 228); runner +1,904 -134,062, then +0 -0, and +0 -0 after
+  restore; restore removed 24,867 opened transitions (14,914 before: the open transitions of the existing trackers
+  now go back too). The first run of this proof failed (`b2-d33-fail1`: 4 rows became 163, B74, fixed in `690e28c`).
+- decision 35: 06 MATCH_FOUND 5 of 5 through the test mapping, nothing to create; Redmine's priorities Low to
+  Immediate at positions 1 to 5 before and after.
+- decision 33: the workflows step opened the transitions for the configured default roles, `roles=["Developer",
+  "Manager"]`, 159,867 transitions.
+- unchanged: verify **PASS**; 423 issues created, 4 waiting for a parent in a later batch; restore locked the 417
+  activated users again; watchers kept (1,145 on 5.1, 1,172 on 7.0); memberships equal 04's proposal; the existing
+  project has 0 issues and still only its tracker.
+
+**No mail, no webhook from 13 and the relink, 7.0, B2, 2026-10-15** (Jan's decision; code `2df782a`; on the state of
+the 7.0 run above). Mail to files (`delivery_method: :file`), a webhook for issue.created and issue.updated in the
+migrated projects to a local receiver, webhooks switched on, and a user who wants every mail, active, Developer in
+the projects and watcher of the 14 issues of the proof (`tools/testenv/silent_writes_proof.rb`). The relink had texts
+to rewrite through 14 keys of projects outside the run mapped onto an existing issue, as a later batch would.
+- control, a plain `PUT /issues/:id.json` with a note: 1 mail, 2 webhook calls (issue.updated for the issue and its
+  parent): the counting works;
+- 13 with the Extended API, 3 issues untagged first and tagged again (7.0: the issue update): **+0 mails, +0 webhook
+  calls**; each tag change is a new journal (detail `tag_list`) by the migration account at the time of the run;
+- the relink, `--confirm-push`: 9 texts rewritten (4 descriptions, 5 comments), **+0 mails, +0 webhook calls**; a
+  rewritten description is a new journal (detail `description`) by the migration account at the time of the run, a
+  rewritten comment keeps its author and date and gets "updated by" the migration account; the check afterwards: 0.
+The first two attempts of this proof did not count (`70-b2-silent-fail1`: Redmine 7 refuses a loopback webhook URL
+and the proof user was never made, so the control showed 0 too; `70-b2-silent-run2`: valid, but the relink had one
+comment and no description). The webhook, the proof user and the fake mapping rows were removed afterwards.
