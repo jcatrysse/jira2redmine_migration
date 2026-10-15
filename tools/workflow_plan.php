@@ -34,12 +34,16 @@ foreach ($staging['sources'] as $source) {
         }
     }
 }
+// Jan, decision 34: only the trackers 07 created get the union as their global workflow
+$newTrackers = array_map('intval', $pdo->query("SELECT DISTINCT redmine_tracker_id FROM migration_mapping_trackers
+    WHERE migration_status = 'CREATION_SUCCESS' AND redmine_tracker_id IS NOT NULL")->fetchAll(PDO::FETCH_COLUMN));
 $plan = WorkflowPlan::fromRows(
     $rows('migration_mapping_workflow_transitions'),
     $rows('migration_mapping_workflow_field_permissions'),
     $rows('migration_mapping_workflow_scripts'),
     (string)($config['migration']['workflows']['mode'] ?? 'project'),
-    $projectSets
+    $projectSets,
+    $newTrackers
 );
 file_put_contents($out, json_encode($plan, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT));
 printf(
@@ -55,3 +59,10 @@ printf(
     $plan['waiting']['scripts'],
     $out
 );
+if ($plan['kept_global'] !== []) {
+    printf(
+        "Global workflow left as it is (decision 34) for %d tracker(s) Redmine already had: %s\n",
+        count($plan['kept_global']),
+        implode(', ', $plan['kept_global'])
+    );
+}

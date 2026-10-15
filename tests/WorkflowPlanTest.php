@@ -90,6 +90,41 @@ final class WorkflowPlanTest extends TestCase
         WorkflowPlan::fromRows($rows, [], [], 'per-tracker');
     }
 
+    public function testATrackerRedmineAlreadyHadKeepsItsGlobalWorkflow(): void
+    {
+        // Jan, decision 34: in an existing Redmine only each project's own workflow is written; the union becomes the
+        // global workflow of the trackers 07 created (6), not of tracker 2, which Redmine had and other projects use
+        $rows = [
+            self::transition(4, 1, 2, 'PROPOSED'),
+            self::transition(4, 2, 9, 'REVIEW'),
+            self::transition(4, 1, 2, 'PROPOSED', null, 0, 11),
+            ['redmine_tracker_id' => 6] + self::transition(4, 1, 3, 'PROPOSED'),
+        ];
+        $permissions = [
+            ['redmine_tracker_id' => 2, 'redmine_role_id' => 4, 'redmine_status_id' => 5, 'field_name' => '23', 'rule' => 'required',
+                'migration_status' => 'PROPOSED'],
+            ['redmine_tracker_id' => 6, 'redmine_role_id' => 4, 'redmine_status_id' => 5, 'field_name' => '23', 'rule' => 'readonly',
+                'migration_status' => 'PROPOSED'],
+        ];
+
+        $plan = WorkflowPlan::fromRows($rows, $permissions, [], 'project', [[11, 2, 3]], [6]);
+        self::assertSame([[11, 2], [null, 6]], array_map(
+            static fn (array $t): array => [$t['project_id'], $t['tracker_id']],
+            $plan['transitions']
+        ));
+        // no global set of tracker 2: restore puts its global workflow back as it was
+        self::assertSame([[null, 6, 4], [11, 2, 3], [11, 2, 4]], $plan['managed']);
+        self::assertSame([6], array_column($plan['field_permissions'], 'tracker_id'), 'field permissions are global rules');
+        self::assertSame(0, $plan['waiting']['transitions'], 'a global row of tracker 2 waits for nothing');
+        self::assertSame([2], $plan['kept_global']);
+
+        // without the list (null) every tracker gets the union, as before; mode union writes the global workflow anyway
+        self::assertSame([], WorkflowPlan::fromRows($rows, $permissions, [], 'project', [])['kept_global']);
+        $union = WorkflowPlan::fromRows($rows, $permissions, [], 'union', [], [6]);
+        self::assertSame([[null, 2, 4], [null, 6, 4]], $union['managed']);
+        self::assertSame([], $union['kept_global']);
+    }
+
     public function testTheProposalFindsTheRedmineProjectThroughTheStagedJiraProject(): void
     {
         // migration_mapping_projects has no project key: the proposal stopped on "Unknown column jira_project_key"
