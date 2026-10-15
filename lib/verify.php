@@ -58,6 +58,25 @@ function verifyRewriteIssueKeys(string $text, array $keyToId): string
 }
 
 /**
+ * The same rewrite on Jira's HTML, where the scripts make it: in the text of a link to a Jira issue (a browse
+ * link, a board link selecting the issue). A key Jira showed as plain text stays text ("#WIKI-103").
+ *
+ * @param array<string, int> $keyToId
+ */
+function verifyRewriteIssueLinks(string $html, array $keyToId): string
+{
+    if ($keyToId === []) {
+        return $html;
+    }
+
+    return preg_replace_callback(
+        '#(<a\b[^>]*href="[^"]*(?:/browse/|[?&;]selectedIssue=)[A-Za-z][A-Za-z0-9_]*-\d+[^"]*"[^>]*>)(.*?)(</a>)#is',
+        static fn (array $m): string => $m[1] . verifyRewriteIssueKeys($m[2], $keyToId) . $m[3],
+        $html
+    ) ?? $html;
+}
+
+/**
  * An attachment link is a chip in Jira, like a mention: "year<a ...>full_output.zip</a>" reads as two words.
  * Jira's text glued them; Redmine shows "year attachment" (decision 26, a measure correction).
  */
