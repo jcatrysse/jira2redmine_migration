@@ -3,7 +3,8 @@
 # refspec (branches get rewritten upstream), then the branch head, and the hash per plugin. Branches: 7.0 runs every
 # plugin on redmine70-migration; 5.1 runs what production will run: plugins-5.1.tsv, except redmine_custom_workflows
 # (commit 0398974, "2.1.3 devel", what production 5.1 runs; its 5.x and master need Redmine 6) and
-# redmine_project_workflows (its new version on redmine70-migration, which supports 5.1, 6.1 and 7.0; decision 13).
+# redmine_project_workflows (its new version on redmine70-migration, which supports 5.1, 6.1 and 7.0; decision 13)
+# and redmine_extended_api (redmine70-migration: skip_journal from 8e7096c on, which the scripts send; decision 37).
 # With --migrate: bundle install, plugins:migrate and a restart when a plugin changed. The baseline dump that
 # run_all.sh restores holds the old plugin schema: refresh it afterwards (reset.sh, plugins.sh --migrate, pg_dump;
 # docs/MIGRATION-PLAN.md, Results, dress rehearsal).
@@ -30,6 +31,7 @@ while IFS=$'\t' read -r repo branch; do
   [ "$v" = 70 ] && ref=redmine70-migration
   [ "$v" = 51 ] && [ "$repo" = redmine_custom_workflows ] && ref=03989743d72289afa84d62747a447b13a062fd2d
   [ "$v" = 51 ] && [ "$repo" = redmine_project_workflows ] && ref=redmine70-migration
+  [ "$v" = 51 ] && [ "$repo" = redmine_extended_api ] && ref=redmine70-migration
   dir=
   for d in "$BASE/redmine$v/plugins"/*/; do
     case "$(git -C "$d" remote get-url origin 2>/dev/null)" in

@@ -500,6 +500,12 @@ Results, "Traces of post-processing"):
     commit. Then B2 sends the flag from 10's second pass, 12, 13 and the relink, with a test each, and proves it with
     a run on 5.1 and 7.0 on a non-empty Redmine: 0 journals from post-processing, the updated times unchanged apart
     from the derived parent fields (38). Until then nothing changes in the scripts for this.
+    **Built** (2026-10-15, evening): the plugin's parameter is `skip_journal` (redmine_extended_api `506603c`, docs
+    `8e7096c`); the scripts send it with notify=false from 10's second pass (and its open-parent retry), 12, 13 and the
+    relink (`ExtendedApi::NO_TRACE`, `135fa96`); 10's create sets no parent, so it needs none; 11's comments carry notes
+    and go without it (the plugin refuses notes with the flag). **The scripts need redmine_extended_api `8e7096c` or
+    later**, and production's Extended API must be that version: it goes to main with the rest after the rehearsal
+    (decision 32); docs/PRODUCTION.md B2 and B5 check it. Proofs in Results.
 38. **Parents' dates and done ratio stay derived** (option S not taken). The few parents with a new updated time and
     no journal (3 per run of GEOS, SIS and OAC) are accepted.
 39. **One run of all 14 projects instead of four batches** (B2's advice). Three VM snapshots at the natural pauses:

@@ -38,10 +38,10 @@ Placeholders are written `<like-this>`.
   vandaag ook 13 (tags op 7.0) en de relink (Jan). Stealth mode blijft als goedkoop vangnet; webhooks uit is alleen
   nodig als de checklists-instelling "issue done ratio" aan staat (15 bewaart dan het issue via de gewone API).
   Review-aanpassingen in staging verhuizen niet mee naar productie: zet ze in de config.
-- **Geen sporen van nabewerking (beslissingen 37 en 38):** de Extended API krijgt een vlag naast notify=false
-  waarmee 10's tweede pass, 12, 13 en de relink geen journal schrijven en een aangepast commentaar niet "Edited"
-  wordt. De plugin-sessie bouwt die vlag; daarna sturen de scripts hem mee, met een bewijs op 5.1 en 7.0. Tot dan
-  blijven die journals. Datums en % gereed van parents blijven afgeleid.
+- **Geen sporen van nabewerking (beslissingen 37 en 38):** 10's tweede pass, 12, 13 en de relink sturen
+  `skip_journal` mee naast notify=false: geen journal, geen "Subtask added", de bijgewerkt-tijd blijft, een
+  aangepast commentaar wordt niet "Edited". Daarvoor moet de Extended API versie 8e7096c of later zijn (B2, B5).
+  Datums en % gereed van parents blijven afgeleid.
 - **Duur (schatting):** de run ongeveer 4,5 tot 5,5 uur in de repetitie (steekproef), 7 tot 10,5 uur in productie
   (116 GiB bijlagen), plus Jans reviews en de snapshots (B8). Schijf (B2): één pull van alle bijlagen, `paths.tmp`
   leeg direct na 09's push; op dat moment ongeveer 116 GiB in `paths.tmp` en 116 GiB extra in Redmine's `files/`.
@@ -338,7 +338,8 @@ SOIL, SSPT, ROV, GSPP, FPS).
   database stays small next to that (a few GB: the Jira payloads of every issue and comment).
 - **tmux** for the long steps (B8), so a dropped SSH session does not stop a step.
 - **Redmine 7.0** after part A, with the plugins the migration uses: `redmine_extended_api` (issues, journals,
-  relations without mail and with Jira's authors and dates), `redmine_project_workflows` (each project its own
+  relations without mail and with Jira's authors and dates; **8e7096c or later**, for `skip_journal`, decision 37),
+  `redmine_project_workflows` (each project its own
   workflow, decision 13), `redmine_custom_workflows` (the "assign to me" scripts), `redmine_tags`,
   `redmine_checklists`, `redmine_view_issue_description`, `redmine_stealth`, and the GEOxyz relation types in
   `redmine_issue_view_columns` (B5).
@@ -484,9 +485,9 @@ Then, once, on the upgraded Redmine 7.0. Each line is a check the local session 
 |---|---|---|
 | snapshot S0 | part B's rollback point (A.4 step 3 is the upgrade's). Rehearsal: the snapshot after A.5. Production: taken now, at the start of the window, after steps 1 to 4 above (users worked in Redmine since part A). B7 takes S1 to S3 (B10) | the snapshot exists and its time is noted |
 | REST API | Administration > Settings > Integrations: REST web service on (A.5 row 16; "API" on 5.1) | `curl -s -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/users/current.json"` gives the migration account, `admin: true` |
-| Extended API | the plugin is installed | `curl -sI -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/extended_api/issues.json"` has the header `X-Redmine-Extended-API` |
+| Extended API | the plugin is installed, version 8e7096c or later: the scripts send `skip_journal` (decision 37), which an older version ignores, so its journals would come back | `curl -sI -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/extended_api/issues.json"` has the header `X-Redmine-Extended-API`; `grep -c skip_journal <redmine-root>/plugins/redmine_extended_api/lib/redmine_extended_api/patches/api_helpers.rb` is above 0 |
 | text formatting | Administration, Settings, General: CommonMark Markdown (A.5 row 16) | `Setting.text_formatting` is `common_mark` |
-| no mail, no webhook from the migration | `redmine.extended_api.enabled` true (B3): 10, 11, 12, 13 (tags on 7.0) and the relink write issues and journals through it with notify=false, which silences the mails and Redmine 7's webhooks of the request (Jan, 2026-10-15); 09's uploads and 14's watchers send none. The one exception: 15 saves the issue's done ratio through the plain API when redmine_checklists' setting "issue done ratio" is on (Administration, Plugins, Checklists; off by default): switch it off for the run. Safety net (production, cheap, B2's advice): stealth mode on for the migration account, `curl -s -X POST -H "X-Redmine-API-Key: $REDMINE_API_KEY" -d toggle=true "$REDMINE_URL/stealth/toggle.json"`; it silences the mails of anything the migration account writes outside the Extended API. Rehearsal: outgoing mail is off on the clone (A.1) | the checklists setting is off; production: the answer is `{"is_cloaked":true}` (signing in to the web interface as the migration account switches stealth off again: do not, or toggle it on after) |
+| no mail, no webhook from the migration | `redmine.extended_api.enabled` true (B3): 10, 11, 12, 13 (tags on 7.0) and the relink write issues and journals through it with notify=false, which silences the mails and Redmine 7's webhooks of the request (Jan, 2026-10-15), and 10's second pass, 12, 13 and the relink also with `skip_journal` (no journal, decision 37); 09's uploads and 14's watchers send none. The one exception: 15 saves the issue's done ratio through the plain API when redmine_checklists' setting "issue done ratio" is on (Administration, Plugins, Checklists; off by default): switch it off for the run. Safety net (production, cheap, B2's advice): stealth mode on for the migration account, `curl -s -X POST -H "X-Redmine-API-Key: $REDMINE_API_KEY" -d toggle=true "$REDMINE_URL/stealth/toggle.json"`; it silences the mails of anything the migration account writes outside the Extended API. Rehearsal: outgoing mail is off on the clone (A.1) | the checklists setting is off; production: the answer is `{"is_cloaked":true}` (signing in to the web interface as the migration account switches stealth off again: do not, or toggle it on after) |
 | relation types | the GEOxyz relation types of `migration.relations.custom_mappings` in `redmine_issue_view_columns` (`tools/testenv/redmine_issue_view_columns.local.rb` is generated from them) | after part A they exist in 7.0 (12 refuses a relation type Redmine does not know) |
 | attachment prune and LDAP sync off | covered by the crontab being off (step 4 above; on the clone A.1): prune would delete uploads still waiting for their issue after 24 h, LDAP sync would lock or change accounts the migration activates | `crontab -l` for the Redmine user is empty |
 | webhooks | no change needed: every issue write goes through the Extended API with notify=false, and Redmine 7 fires no webhook for it. Only if the checklists setting of the row above must stay on: `UPDATE webhooks SET active = false;` for the duration of part B, after noting which were active (`SELECT id, url, active FROM webhooks;`); stealth mode does not silence webhooks. Rehearsal: inactive anyway (A.1, A.4 step 11) | |
@@ -721,7 +722,9 @@ checkout (the logs hold Jira data: never in the repository).
 
     In one run every issue exists before 11 and 12: the comments get their `#id` links directly, and 12 leaves a
     relation MANUAL only when its other side is not migrated. 13 finds the tags 10 sent; it writes only for an
-    issue created before them (a rerun), through the Extended API with notify=false, keeping the updated time.
+    issue created before them (a rerun), through the Extended API with notify=false and `skip_journal`: no journal,
+    the updated time kept. 10's second pass and 12 send `skip_journal` too (decision 37): the parents get no
+    "Subtask added", the relations no journal on either issue.
 11. **Snapshot S3** (production; rehearsal as at S1). The migration itself is complete; B9 follows.
 12. **Counts** (staging):
 
@@ -835,9 +838,9 @@ again (B10).
    link to a migrated issue after this run: 0`. Why 0: 11 pushes every comment when every issue exists, and 10's
    second pass rewrites the descriptions that link issues created later in the run. A `[would relink]` line means a
    text pushed before its target existed (a rerun after a partial failure, or the fallback of B11): then **GO**,
-   `php tools/relink_issue_links.php --confirm-push` (through the Extended API with notify=false: no mail, no
-   webhook; a rewritten description keeps the issue's updated time, its journal and a rewritten comment's "updated
-   by" stay until decision 37's flag is in), and the preview again until it says 0. A text listed as `[left]` was
+   `php tools/relink_issue_links.php --confirm-push` (through the Extended API with notify=false and `skip_journal`:
+   no mail, no webhook, no journal, the issue keeps its updated time, a rewritten comment keeps its times and is not
+   marked "Edited"), and the preview again until it says 0. A text listed as `[left]` was
    edited in Redmine since the migration: fix it by hand, run the check again. Also: 12's MANUAL relations and 10's
    `[waiting]` parents name only projects that are not migrated (TEST).
 2. **Workflows** (decision 13; B6 says what the runner changes on an existing Redmine):
