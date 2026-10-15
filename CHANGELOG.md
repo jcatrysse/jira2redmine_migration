@@ -65,7 +65,17 @@ All notable changes to this project. Steps to take before and after a migration 
 - `tools/testenv/visual_items.php`, `visual_check.mjs`: Jira's rendering next to Redmine's page per
   curated issue, description and comments (bench step 3; the output stays outside the repository).
 
+- `migration.priorities.mappings` (Jira name => Redmine name) and `migration.priorities.create_missing`
+  (decision 35); `migration.workflows.open_workflow_roles` (decision 33); `tools/config_value.php` prints a
+  `migration.*` value as JSON for the rails runner steps.
+- docs/PRODUCTION.md: the procedure for the rehearsal and production (upgrade to 7.0, then the migration in
+  four batches, the prompt for the local session).
+
 ### Changed
+- An existing Redmine (decisions 33 to 35): Jira priorities map onto existing Redmine priorities, the rest is a
+  review row and 06 creates none by default; the roles the `workflows` step opens come from the configuration,
+  and the step stops on a role it cannot use; in mode `project` a tracker Redmine already had keeps its global
+  workflow, the union becomes the global workflow only of the trackers 07 created.
 - Issues are created with their description; parents and rewritten Jira links follow in the same
   run, the final update sends only what changed (B10, B11, B22).
 - An open subtask under a closed parent: the parent gets the open status `Resolved` by default
@@ -92,6 +102,8 @@ All notable changes to this project. Steps to take before and after a migration 
   code; Outlook safe links in mailed comments become the link itself.
 
 ### Fixed
+- 06 put new priorities at position 1, 2, 3, below every existing priority (B73): a new priority now goes after
+  the existing ones.
 - Text conversion (decision 26, B60 to B70): ADF tables with merged cells and ADF code blocks; bold and
   italic that Jira splits or nests; the text "<pre>" in code blocks; inline code Jira showed as "{{...}}";
   MediaWiki source pasted into Jira becomes a code block with its exact text; a link rewrite no longer

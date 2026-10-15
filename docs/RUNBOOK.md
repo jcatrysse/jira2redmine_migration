@@ -61,8 +61,12 @@ database, which is removed after the migration (no PostgreSQL port of the stagin
 
 `tools/testenv/manual_steps.rb` does the first three on the test instances:
 
-1. **Open the workflows** (`J2R_STEP=workflows`): every transition for the roles that create issues, new
-   issues included. Without it every issue is created in its tracker's default status (B12). The step
+1. **Open the workflows** (`J2R_STEP=workflows`): every transition, new issues included, for the roles in
+   `migration.workflows.open_workflow_roles` (Jan, decision 33; default Manager and Developer), passed as
+   `J2R_WORKFLOW_ROLES="$(php tools/config_value.php migration.workflows.open_workflow_roles)"`. Without it every
+   issue is created in its tracker's default status (B12). A role the Redmine lacks, or one without Add or Edit
+   issues, stops the step. The import runs as an admin, who gets every role's transitions: one role is enough, and
+   `["Migration (temporary)"]` (created by the step) keeps the open workflow away from existing projects. The step
    records what it adds; `J2R_STEP=restore` removes exactly that after the run.
 2. **Activate locked users and give the temporary migration role** (`J2R_STEP=members`, after 04's
    push): Redmine refuses a locked user as author or assignee (B5); activated users are flagged and
@@ -99,6 +103,11 @@ Check the summary line of each (`Matched / Ready / Manual`):
 - trackers: names longer than 30 characters are shortened (note on the mapping row);
 - statuses and trackers: names in the language of the Redmine instance; Jira `Done` maps to a closed
   status, `To Do` to New;
+- priorities (Jan, decision 35): a Jira priority maps onto an existing Redmine priority, the one
+  `migration.priorities.mappings` names (Jira name => Redmine name) or else the one of the same name; the rest
+  is MANUAL with a note and 06 creates none (only with `migration.priorities.create_missing`, then after the
+  existing ones, B73). Map the MANUAL rows in the configuration and run 06 again; 10 holds back the issues of an
+  unmapped priority;
 - 03, 04, 16 need the granular read scopes; without them they stop at the first 401;
 - groups: the first pass creates the groups (members AWAITING_GROUP), the second adds the members;
   members whose Jira account is not migrated stay AWAITING_USER;
@@ -295,7 +304,8 @@ bundle exec rails runner /path/tools/apply_workflows.rb /path/plan.json --confir
 
 - Mode (`migration.workflows.mode`): `project` (Jan, 2026-10-14) needs redmine_project_workflows and gives
   each project exactly its own Jira workflow; the union (rows with `redmine_project_id` 0, cleaned by Jan)
-  is the global workflow for projects without their own. `union` writes only the global workflow. On the
+  is the global workflow for projects without their own, but only of the trackers 07 created: a tracker matched
+  to one Redmine already had keeps its global workflow (Jan, decision 34), and `workflow_plan.php` names it. `union` writes only the global workflow. On the
   plugin's 7.0 branch the runner makes the plugin's scopes itself; on its 5.1 version a project role
   without transitions follows the global workflow (the plugin cannot store an empty one).
 - Only PROPOSED rows are applied. A REVIEW row waits for a decision: set it to PROPOSED or IGNORED.

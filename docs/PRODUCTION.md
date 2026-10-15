@@ -20,9 +20,12 @@ addresses or secrets in this file: the repository is public. Placeholders are wr
   voegen trackers en projecten toe aan bestaande trackers en velden, 04 voegt rollen toe aan bestaande
   lidmaatschappen. De `workflows`-stap opent tijdelijk alle transities voor Manager en Developer op alle trackers,
   de workflow-runner vervangt de globale workflow van de gebruikte trackers.
-- **Gevonden tijdens het schrijven:** B73, nieuwe prioriteiten komen onderaan de rangorde (Blocker werd de laagste).
-  En: in productie moet stealth mode aan voor het migratie-account, want 13 (tags) en de relink sturen anders mail.
-- **Open voor Jan:** de rolnamen Manager en Developer, de globale workflow op bestaande trackers, en B73 (B6).
+- **Beslist voor een bestaande Redmine (33 tot 35):** de rollen voor de tijdelijke open workflows komen uit de
+  config (de repetitie maakt de inventaris, Jan bevestigt); bestaande trackers houden hun globale workflow, alleen
+  de gemigreerde projecten krijgen hun eigen; Jira-prioriteiten worden gemapt op bestaande, er komen er geen bij.
+  B73 (nieuwe prioriteit onderaan de rangorde) is gefixt.
+- **Productie:** stealth mode aan voor het migratie-account en webhooks uit tijdens deel B, want 13 (tags) en de
+  relink gaan via de gewone API. Review-aanpassingen in staging verhuizen niet mee: zet ze in de config.
 - **Duur (schatting):** WIKI ongeveer 1u15, GEOS, SIS en OAC 40 minuten, SURV, LABO en DOC 2 tot 3 uur met
   steekproef, de laatste batch 40 tot 60 minuten. In productie komen er voor batch 3 nog 2 tot 5 uur bijlagen bij
   (110 GiB). Schijf: ongeveer 110 GiB vrij in de tijdelijke map en 110 GiB in Redmine's `files/`.
@@ -364,6 +367,11 @@ return [
             'default_redmine_author_id' => (int)getenv('J2R_DEFAULT_AUTHOR_ID'),
         ],
         'journals' => ['default_redmine_author_id' => (int)getenv('J2R_DEFAULT_AUTHOR_ID')],
+        // decision 35: Jira priority => existing Redmine priority, for every Jira priority Redmine has under
+        // another name (06 lists them as MANUAL; the rehearsal settles the list)
+        'priorities' => ['mappings' => []],
+        // decision 33: the roles the workflows step opens, as Jan confirmed after the inventory of B5
+        'workflows' => ['open_workflow_roles' => ['Manager', 'Developer']],
     ],
     'attachments' => [
         'download_concurrency' => 6,
@@ -416,6 +424,7 @@ Once, on the upgraded Redmine 7.0. Each line is a check the local session report
 | LDAP sync off | the cron job of `redmine_ldap_sync` is disabled (it would lock or change accounts the migration activates); on the clone it runs by hand only (A.1) | the cron entry is commented out |
 | webhooks | production: `UPDATE webhooks SET active = false;` for the duration of part B, after noting which were active (`SELECT id, url, active FROM webhooks;`). The Extended API steps fire none (notify=false), but 13 on 7.0 and the relink update issues through the plain API, and Redmine 7 fires the webhooks for those. Rehearsal: already inactive (A.1, A.4 step 11) | `SELECT COUNT(*) FROM webhooks WHERE active` is 0 |
 | automation rules | Jan exports them once as JSON (docs/RUNBOOK.md, section 0); kept outside the repository | the file opens as JSON |
+| roles for the open workflows (decision 33) | the inventory of the roles that take part in workflows (Add or Edit issues) and how many memberships hold them: `RAILS_ENV=production bundle exec rails runner 'Role.givable.sorted.select(&:consider_workflow?).each { \|r\| puts [r.id, r.name, r.has_permission?(:add_issues) ? "add_issues" : "-", r.has_permission?(:edit_issues) ? "edit_issues" : "-", MemberRole.where(role_id: r.id).count].join(" \| ") }'`. **GO:** Jan confirms the list in `migration.workflows.open_workflow_roles` (B3); one usable role is enough, `["Migration (temporary)"]` keeps the open workflow away from the existing projects (B6) | `php tools/config_value.php migration.workflows.open_workflow_roles` prints Jan's list |
 | staging | the empty staging database of B2 | `SHOW TABLES` lists the tables of `database/schema.sql` (81 today) |
 
 The `workflows` step of `manual_steps.rb` (B7 step 3) also sets three global settings Jan decided, which stay after
@@ -438,7 +447,7 @@ batch Jan reviews every match before its push (**GO**), in later batches the new
 | 03 groups | the group name | **the Jira group's members are added to the existing group** (none removed): they get every role that group has in every project | every matched group; one that only shares a name: set its row `IGNORED` before the push |
 | 04 roles and memberships | `migration.roles.mappings`, else the Jira role's own name | no role definition changes; a membership that exists gets the proposed role added (none removed); the `<group> (workflow)` roles of decision 14 are created, or reused when one has that name | the membership proposal (B7 step 4); on a project that existed before, a Non member row set READY opens it to every logged-in user |
 | 05 statuses | the name | nothing; open or closed is **taken from Redmine**, not from Jira's category | matched statuses whose Jira category (`done`) and Redmine's closed flag disagree (listed first by the query) |
-| 06 priorities | the name | nothing on matched ones; **new ones are inserted at position 1, 2, ... (B73, below)** | the new priorities and their position; map a Jira priority to an existing one where that is meant |
+| 06 priorities | `migration.priorities.mappings` (Jira name => Redmine name), else the name (decision 35) | nothing: one priority scheme for every project; a Jira priority without a match is a review row (MANUAL) and 06 creates none (only with `migration.priorities.create_missing`; then after the existing ones, B73) | every MANUAL row: put the mapping in `migration.priorities.mappings` (it carries over to production) and run 06 again; 10 holds back the issues of an unmapped priority |
 | 07 trackers | the name (shortened to 30 characters) | the tracker itself is not changed; each project gets the trackers it needs **added** to its tracker list | matched trackers that mean something else in GEOxyz's Redmine; new trackers get the lowest open status as default unless `migration.trackers.default_redmine_status_id` is set |
 | 08 custom fields | the name (issue custom fields) | the migrated projects and trackers are **added** to the field (a field "for all projects" gets the trackers, so it shows on them in every project); a dependent field gets its value dependencies; the format, the visibility, the roles and the possible values stay as they are | every matched field: is its format the Jira type? 08 prints `[values] Redmine custom field #N existed before the migration and lacks ...` for Jira values the existing field does not have: add them by hand before 10 (Redmine refuses an issue with a value the field does not list) |
 
@@ -492,32 +501,34 @@ rehearsal before relying on it in production.
 
 **Steps outside 01 to 08 that change existing Redmine objects:**
 
-- `manual_steps.rb workflows` (B7 step 3) opens every transition for the roles named **Manager** and **Developer** on
-  **every tracker** of the Redmine, as global rules: until `restore`, those roles can make any status change in
-  every project that uses the global workflow, the existing projects included. `restore` removes exactly what it
-  added. It also gives those two roles `view_watched_issues` and `view_issue_description` (they keep them) and sets
-  the three settings of B5. If the GEOxyz roles have other names, it opens nothing and every issue lands in its
-  tracker's default status (B12).
+- `manual_steps.rb workflows` (B7 step 3) opens every transition on **every tracker** of the Redmine, as global
+  rules, for the roles in `migration.workflows.open_workflow_roles` (decision 33; default Manager and Developer):
+  until `restore`, those roles can make any status change in every project that uses the global workflow, the
+  existing projects included. `restore` removes exactly what it added. It also gives those roles
+  `view_watched_issues` and `view_issue_description` (they keep them) and sets the three settings of B5. A role the
+  Redmine lacks, or one without Add or Edit issues, stops the step (before, a missing name opened nothing and every
+  issue landed in its tracker's default status, B12). The import runs as an admin, who gets every role's
+  transitions, so one usable role is enough: with `["Migration (temporary)"]` the step creates that role, and the
+  open workflow reaches only the migrated users in the migrated projects (the `members` step gives it to them), not
+  the existing projects; `restore` deletes the role with its transitions. Jan confirms the list after the inventory
+  of B5.
 - `manual_steps.rb members` (B7 step 5) activates locked users and gives the temporary role: on an existing Redmine
   only with `J2R_USER_IDS_FILE`.
-- `apply_workflows.rb` (B9 step 2) gives each migrated project its own workflow (mode `project`), and makes the
-  cleaned union the **global** workflow of every tracker and role in the plan: the global transitions of those
-  trackers and roles that are not in the union are removed. On an existing Redmine that changes the workflow of the
-  existing projects that use a matched tracker (07) and have no workflow of their own. The preview counts it
-  (`transitions +N -N`); on an empty Redmine the `-N` were only the temporary open workflows.
+- `apply_workflows.rb` (B9 step 2) gives each migrated project its own workflow (mode `project`, through
+  redmine_project_workflows). Decision 34: the cleaned union becomes the **global** workflow only of the trackers 07
+  created (decision 18 for those); a tracker matched to one Redmine already had keeps its global workflow (no union
+  rows, no global transitions removed, no field permissions), so existing projects without a workflow of their own
+  see no change. `tools/workflow_plan.php` prints `Global workflow left as it is (decision 34) for N tracker(s)
+  Redmine already had: ...`; `restore` then takes the temporary open transitions of those trackers away again.
 
-**B73 (defect, found while writing this section):** Redmine's priority list in the REST API has no position, so 06
-counts no existing position and proposes 1, 2, 3 for the new ones; Redmine inserts them there and moves the
-existing ones up. Position 1 is the lowest priority: on the 7.0 test instance the new "Blocker" became the
-**lowest** priority, below "Low". Until it is fixed: before 06's push, set `proposed_redmine_position` of each new
-row by hand (Administration, Enumerations shows the order; position 1 is the lowest), or map the Jira priority to
-an existing one.
+**B73 (fixed):** Redmine's priority list in the REST API has no position; 06 proposed 1, 2, 3 for new priorities and
+Redmine inserted them below every existing one (the new "Blocker" became the lowest on the 7.0 test instance). A
+created priority now goes after the existing ones; since decision 35 06 creates none by default.
 
-**Open for Jan** (through the coordinator; the rehearsal can start without the answers, production cannot):
-(1) are the roles that create issues in GEOxyz's Redmine called Manager and Developer (`workflows` step)?
-(2) the global union workflow on trackers existing projects use: write only each project's own workflow and leave
-the global workflow of existing trackers alone (a small change, B2's advice), or accept and review the preview?
-(3) B73: the fix, and where new priorities go relative to the existing ones.
+**Review edits do not travel.** Staging is new in production, so an edit made in the rehearsal's staging tables
+is gone there. Put every choice that has a configuration key in `config/config.local.php` (priorities: decision 35;
+roles: `migration.roles.mappings`; the workflow roles: decision 33; groups in workflows: decision 14), and write the
+other edits down as SQL in the rehearsal report, to replay in production at the same review point.
 
 ### B7. One batch, step by step
 
@@ -549,10 +560,13 @@ hold Jira data: never in the repository).
 3. **Open the workflows** (on the Redmine server, in the Redmine root; B6 says what this touches):
 
    ```bash
-   J2R_STEP=workflows RAILS_ENV=production bundle exec rails runner <checkout>/tools/testenv/manual_steps.rb
+   J2R_WORKFLOW_ROLES="$(php <checkout>/tools/config_value.php migration.workflows.open_workflow_roles)" \
+     J2R_STEP=workflows RAILS_ENV=production bundle exec rails runner <checkout>/tools/testenv/manual_steps.rb
    ```
 
-   Output: `workflow transitions created=N ...`; on a later batch N is 0 or small (new trackers only).
+   Output: `workflow transitions created=N roles=[...] ...`; `roles` is Jan's confirmed list (decision 33, B5); on a
+   later batch N is 0 or small (new trackers only). A role the Redmine lacks or one without Add or Edit issues
+   stops the step with its name.
 4. **Extract issues, attachments, watchers; propose the memberships.**
 
    ```bash
@@ -752,7 +766,8 @@ again (B10).
    RAILS_ENV=production bundle exec rails runner <checkout>/tools/apply_workflows.rb "$LOG/workflow-plan.json"                 # +0 -0
    ```
 
-   The last preview must say `transitions +0 -0` and `waiting for review: transitions 0`.
+   `workflow_plan.php` names the trackers whose global workflow stays as it is (decision 34). The last preview must
+   say `transitions +0 -0` and `waiting for review: transitions 0`.
 3. **Restore** (Redmine server, Redmine root): takes away the workflow transitions the `workflows` step opened (not
    those the runner applied), the role `Migration (temporary)` and the memberships left without a role, and locks
    the activated users again.
@@ -828,8 +843,9 @@ Rules, without exception:
 6. Run 09, 10, 11 and 14 in tmux. Log every step with tee into <log-dir>, outside the checkout.
 7. Change no code and no config default of the migration scripts, and nothing in Redmine beyond what the steps
    of this document say. In staging, edit only the review tables Jan asks you to (B6, 04's memberships, the
-   workflow review tables) and only as he states. On a failure: stop, show the log lines (and the mapping rows),
-   and propose a rerun or a roll back (A.7, B10); Jan decides.
+   workflow review tables) and only as he states, and write each edit down as SQL in the report: staging is new
+   in production, so the edits must be replayed there (B6). On a failure: stop, show the log lines (and the
+   mapping rows), and propose a rerun or a roll back (A.7, B10); Jan decides.
 8. The repository is public: no commit, no push, no pull request from this server. Logs, verify reports and
    anything holding Jira data stay in <log-dir>.
 9. Never run rake redmine:watchers:prune, never clear Redmine's tmp directory before restore, never send mail.

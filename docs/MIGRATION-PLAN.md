@@ -428,6 +428,29 @@ Jan's decisions of 2026-10-15 (afternoon, relayed by the coordinator):
     main once, rewritten as Jan without AI traces, and the coordinator checks per repository that the tree on
     main is identical to what was tested. Production runs from main.
 
+Jan's answers to B2's three questions about an existing Redmine (2026-10-15, relayed by the coordinator):
+
+33. **The roles the `workflows` step opens are configurable** (`migration.workflows.open_workflow_roles`, default
+    Manager and Developer, so the test instances behave as before; `manual_steps.rb` reads them as
+    `J2R_WORKFLOW_ROLES`). The rehearsal lists the roles of GEOxyz's Redmine that create issues (docs/PRODUCTION.md,
+    B5) and Jan confirms the list before the first batch. Built (`93af5ca`): a role the Redmine lacks, or one without
+    Add or Edit issues, stops the step; "Migration (temporary)" can be listed (the step creates it), and then the
+    open workflow reaches only the migrated users. The import runs as an admin, who gets every role's
+    transitions (`Issue#roles_for_workflow`, 5.1 and 7.0), so one usable role is enough.
+34. **Workflows in an existing Redmine: only per project.** The runner writes each migrated project's own Jira
+    workflow (redmine_project_workflows) and leaves the global workflow of existing trackers untouched (no union
+    written as global, no global transitions removed), so existing projects without their own workflow see no
+    change. Decision 18 (the union is the global workflow) still holds for the trackers 07 creates; a tracker
+    matched to an existing one keeps its global workflow. Mode `union` (Redmine without the plugin) is unchanged.
+    Built (`6623bd4`).
+35. **Priorities map onto existing Redmine priorities, no new ones.** 06 proposes the priority
+    `migration.priorities.mappings` names, else the one of the same name; anything else is a review row (MANUAL)
+    Jan maps, and 10 holds back the issues that use it until then. 06 creates a priority only with
+    `migration.priorities.create_missing`. Reason: one priority scheme for every project, as redmine_itil_priority
+    computes the priority from impact and urgency. B73 fixed anyway: a created priority goes after the existing
+    ones (`2a7c230`, `9c85cc6`). The test instances map Blocker => Immediate, Showstopper => Urgent, Medium =>
+    Normal in `config/config.local.php`.
+
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
 Taken by B2 on the coordinator's instruction (recommended option, no waiting); each can be reversed.
@@ -972,8 +995,8 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
 
 ## Open questions for Jan
 
-- **For the rehearsal on an existing Redmine** (decision 30; docs/PRODUCTION.md, B6; asked through the coordinator,
-  2026-10-15): (1) are the roles that create issues in GEOxyz's Redmine called Manager and Developer
+- ~~**For the rehearsal on an existing Redmine** (decision 30; docs/PRODUCTION.md, B6; asked through the coordinator,
+  2026-10-15)~~ **Jan: decisions 33, 34 and 35.** (1) are the roles that create issues in GEOxyz's Redmine called Manager and Developer
   (`manual_steps.rb workflows` opens the transitions for those two names)? (2) the workflow runner makes the union
   the global workflow of every tracker and role it plans, also on trackers existing projects use: write only each
   project's own workflow there (B2's advice, a small change), or accept and review the preview? (3) B73: the fix,
@@ -1133,7 +1156,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B70 | Jira's renderer writes a link inside a link for an address with ">" | nested Markdown links, "](" visible (WIKI-520) | **fixed** (`bebd09b`): the inner link gives up its address |
 | B71 | The central retry (decision 5) covered 429 and 503, not a gateway error | the Atlassian gateway answered 504 to `GET issue/{id}/watchers` and 14's Jira phase stopped (7.0 WIKI batch, 2026-10-15; step 14 read the watchers again, nothing lost) | **fixed**: 502 and 504 are retried for GET and HEAD only (a write may have reached the server behind the gateway), with a test |
 | B72 | A link to a migrated issue whose label ended with a space or inside a word became "text (#461)which" or "comment f (#1015)rom" | Redmine links "#123" only when no letter follows: shown as text (WIKI-42, -594, -1291 and 4 more) | **fixed** (decision 26, `eb045e6`): a link that ends inside a word takes the rest of the word into its text, otherwise a space follows the reference |
-| B73 | 06 reads each Redmine priority's position from the REST API, which has none (`enumerations/index.api.rsb` in 5.1 and 7.0), so it proposes positions 1, 2, 3 for the new priorities | Redmine inserts them below the existing ones (position 1 is the lowest): on the 7.0 test instance "Blocker" became the lowest priority, "Medium" below "Low" (found writing docs/PRODUCTION.md, 2026-10-15) | **open**, for Jan with the review of an existing Redmine (docs/PRODUCTION.md, B6); until fixed, set `proposed_redmine_position` before 06's push |
+| B73 | 06 reads each Redmine priority's position from the REST API, which has none (`enumerations/index.api.rsb` in 5.1 and 7.0), so it proposes positions 1, 2, 3 for the new priorities | Redmine inserts them below the existing ones (position 1 is the lowest): on the 7.0 test instance "Blocker" became the lowest priority, "Medium" below "Low" (found writing docs/PRODUCTION.md, 2026-10-15) | **fixed** (`2a7c230`): a new priority is created without a position, Redmine puts it after the existing ones; proof on 5.1 and 7.0, position 9 after the eight existing ones. Since decision 35 06 creates none by default |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
