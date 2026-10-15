@@ -10,7 +10,12 @@ declare(strict_types=1);
 /**
  * Plain text of Jira's rendered HTML (renderedFields.description, renderedBody of a comment).
  */
-function verifyHtmlToText(?string $html): string
+/**
+ * With $asShown (the bench's corrected measure, decision 26) inline code is a word of its own, as both Jira
+ * and Redmine show it ("{{SOFTWARE}}is", "<code>SOFTWARE</code>is"), and typed link markup reads as the link
+ * the scripts make of it, in place ("SVPs/[SVS|url]s" is "SVPs/SVSs").
+ */
+function verifyHtmlToText(?string $html, bool $asShown = false): string
 {
     if ($html === null || trim($html) === '') {
         return '';
@@ -21,21 +26,25 @@ function verifyHtmlToText(?string $html): string
     $html = preg_replace('#(<a\b[^>]*\buser-hover\b[^>]*>.*?</a>)#is', ' $1 ', $html) ?? $html;
     // Block elements and line breaks separate words.
     $html = preg_replace('#<(br|/p|/div|/li|/tr|/td|/th|/h[1-6]|/pre|/blockquote)\b[^>]*>#i', ' ', $html) ?? $html;
+    if ($asShown) {
+        $html = preg_replace('#</?(?:code|tt)\b[^>]*>#i', ' ', $html) ?? $html;
+    }
     $text = html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
-    return verifyDropJiraBrowseUrls(verifyDropTypedLinkAddresses($text));
+    return verifyDropJiraBrowseUrls(verifyDropTypedLinkAddresses($text, !$asShown));
 }
 
 /**
  * Link markup a user typed and Jira showed as text, "[label|url]" or "[label](url)", becomes a real link
  * with that label by design (B42): Redmine shows the label, not the address. The address is left out.
  */
-function verifyDropTypedLinkAddresses(string $text): string
+function verifyDropTypedLinkAddresses(string $text, bool $padded = true): string
 {
+    $label = $padded ? ' $1 ' : '$1';
     // the label may hold brackets of its own ("[[1]|url]", "[... [staging] ...|url]"), as the scripts allow (B67)
-    $text = preg_replace('#\[((?:[^\[\]|]|\[[^\[\]|]*\])*)\|\s*(?:https?|mailto|ftp):[^\]\s]+\]#i', ' $1 ', $text) ?? $text;
+    $text = preg_replace('#\[((?:[^\[\]|]|\[[^\[\]|]*\])*)\|\s*(?:https?|mailto|ftp):[^\]\s]+\]#i', $label, $text) ?? $text;
 
-    return preg_replace('#\[([^\[\]]*)\]\((?:https?|ftp)://[^\s()]*(?:\([^\s()]*\)[^\s()]*)*\)#i', ' $1 ', $text) ?? $text;
+    return preg_replace('#\[([^\[\]]*)\]\((?:https?|ftp)://[^\s()]*(?:\([^\s()]*\)[^\s()]*)*\)#i', $label, $text) ?? $text;
 }
 
 /**

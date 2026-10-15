@@ -281,4 +281,13 @@ final class VerifyTest extends TestCase
             verifyWords(verifyDropTypedLinkAddresses('moved [Support #1 : data [staging] - Redmine|https://r.example/issues/1] done'))
         );
     }
+
+    public function testAsShownInlineCodeAndTypedLinksReadAsBothSystemsShowThem(): void
+    {
+        // WIKI-561: "{{SOFTWARE}}is" in Jira, "<code>SOFTWARE</code>is" in Redmine; WIKI-112: "SVPs/[SVS|url]s"
+        self::assertSame(['software', 'is'], verifyWords(verifyHtmlToText('<p><code>SOFTWARE</code>is</p>', true)));
+        self::assertSame(['softwareis'], verifyWords(verifyHtmlToText('<p><code>SOFTWARE</code>is</p>')));
+        self::assertSame(['svps', 'svss'], verifyWords(verifyHtmlToText('<p>SVPs/[SVS|https://x.example/s]s</p>', true)));
+        self::assertSame(['svps', 'svs', 's'], verifyWords(verifyHtmlToText('<p>SVPs/[SVS|https://x.example/s]s</p>')));
+    }
 }

@@ -18,11 +18,13 @@ declare(strict_types=1);
  * Three measures (decision 26): "old" as before; "keys" also reads a Jira key of a migrated issue as the
  * "#123" it becomes by design (pipeline only, the converter alone does not rewrite keys); "corrected" also
  * leaves out visible syntax Jira's own text shows ("**" typed in a mail, "<br/>" quoted) and, for the
- * pipeline, reads an attachment link as a word of its own, as Jira shows it. The lists of losses use the
- * corrected measure.
+ * pipeline, reads an attachment link as a word of its own, as Jira shows it; it reads inline code and typed
+ * link markup as both systems show them, counts a link inside a link once and expects no table where the
+ * scripts made MediaWiki source a code block. The lists of losses use the corrected measure.
  * Staging connection: config/config.local.php (STAGING_DSN). The report holds issue keys: keep it local.
  */
 
+use Jira2Redmine\Text\MediaWikiSource;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
 
 require_once __DIR__ . '/../lib/verify.php';
@@ -197,9 +199,13 @@ $defects = [];
 foreach ($items as $id => $item) {
     $expectedWords = verifyWords(verifyHtmlToText($item['html']));
     $keyWords = verifyWords(verifyHtmlToText(verifyRewriteIssueLinks($item['html'], $keyToId)));
-    $chipWords = verifyWords(verifyHtmlToText(verifySeparateAttachmentLinks(verifyRewriteIssueLinks($item['html'], $keyToId))));
+    $chipWords = verifyWords(verifyHtmlToText(verifySeparateAttachmentLinks(verifyRewriteIssueLinks($item['html'], $keyToId)), true));
+    $shownWords = verifyWords(verifyHtmlToText($item['html'], true));
     $jiraResidue = benchResidue($item['html']);
     $expectedLinks = verifyHtmlLinkCounts($item['html']);
+    // corrected: a link inside a link is one link (B70); MediaWiki source is a code block, not Jira's broken table (B64)
+    $unnestedLinks = verifyHtmlLinkCounts(unnestLinks($item['html']));
+    $mediaWikiSource = MediaWikiSource::paragraphs($item['adf'] !== null ? (string)$item['adf'] : null) !== [];
     $constructs = [];
     foreach (BENCH_CONSTRUCTS as $construct => $pattern) {
         if (preg_match($pattern, $item['html']) === 1) {
@@ -229,8 +235,11 @@ foreach ($items as $id => $item) {
         $keysCoverage = $path === 'pipeline' ? verifyWordCoverage($keyWords, $renderedWords) : $coverage;
         $keysLossy = $keysCoverage['coverage'] < 0.99 || $structural || $residue !== [];
         // the pipeline puts a space between a word and an attachment reference; the converter alone does not
-        $coverage = $path === 'pipeline' ? verifyWordCoverage($chipWords, $renderedWords) : $coverage;
+        $shownRendered = verifyWords(verifyHtmlToText($html, true));
+        $coverage = verifyWordCoverage($path === 'pipeline' ? $chipWords : $shownWords, $shownRendered);
         $residue = array_values(array_diff($residue, $jiraResidue));
+        $missingElements = $mediaWikiSource ? array_values(array_diff($missingElements, ['no table'])) : $missingElements;
+        $structural = $links['links'] < $unnestedLinks['links'] || $images < $unnestedLinks['images'] || $missingElements !== [];
         $lossy = $coverage['coverage'] < 0.99 || $structural || $residue !== [];
         $measures['old'][$path] = ($measures['old'][$path] ?? 0) + ($oldLossy ? 0 : 1);
         $measures['keys'][$path] = ($measures['keys'][$path] ?? 0) + ($keysLossy ? 0 : 1);
@@ -250,22 +259,22 @@ foreach ($items as $id => $item) {
         if ($coverage['coverage'] < 0.99) {
             $defects[$path]['words < 99%'] = ($defects[$path]['words < 99%'] ?? 0) + 1;
         }
-        if ($links['links'] < $expectedLinks['links']) {
+        if ($links['links'] < $unnestedLinks['links']) {
             $defects[$path]['fewer links'] = ($defects[$path]['fewer links'] ?? 0) + 1;
         }
-        if ($images < $expectedLinks['images']) {
+        if ($images < $unnestedLinks['images']) {
             $defects[$path]['fewer images'] = ($defects[$path]['fewer images'] ?? 0) + 1;
         }
         if ($detailsPath !== null) {
             $details[] = json_encode([
                 'id' => $id, 'label' => $item['label'], 'path' => $path, 'lossy' => $lossy, 'coverage' => $coverage['coverage'],
-                'missing' => $coverage['missing'], 'links' => $links, 'expected' => $expectedLinks, 'images' => $images,
+                'missing' => $coverage['missing'], 'links' => $links, 'expected' => $unnestedLinks, 'images' => $images,
                 'elements' => $missingElements, 'residue' => $residue, 'constructs' => $constructs,
             ], JSON_UNESCAPED_UNICODE);
         }
         if ($lossy && $path !== 'adf') {
             $losses[] = [$path, $item['label'], sprintf('%.1f%%', 100 * $coverage['coverage']),
-                sprintf('links %d/%d images %d/%d %s', $links['links'], $expectedLinks['links'], $images, $expectedLinks['images'],
+                sprintf('links %d/%d images %d/%d %s', $links['links'], $unnestedLinks['links'], $images, $unnestedLinks['images'],
                     implode(' ', array_merge($missingElements, array_map(static fn (string $r): string => 'shows ' . $r, $residue)))),
                 implode(' ', array_slice($coverage['missing'], 0, 10)), implode(', ', $constructs)];
         }
