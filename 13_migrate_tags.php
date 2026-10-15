@@ -9,6 +9,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\Redmine\IssueTags;
 use Jira2Redmine\Cli\Phases;
 
@@ -93,8 +94,11 @@ function main(array $config, array $cliOptions): void
     if (in_array('push', $phasesToRun, true)) {
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
-        $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
-        runTagPushPhase($pdo, $redmineClient, $confirmPush, $isDryRun);
+        $redmineConfig = extractArrayConfig($config, 'redmine');
+        $redmineClient = createRedmineClient($redmineConfig);
+        // Jan (2026-10-15): the issue update of 7.0 goes through the Extended API with notify=false (no mail, no webhook)
+        $extendedApiPrefix = ExtendedApi::enabled($redmineConfig, false) ? ExtendedApi::prefix($redmineConfig) : null;
+        runTagPushPhase($pdo, $redmineClient, $confirmPush, $isDryRun, $extendedApiPrefix);
     } else {
         printf("[%s] Skipping push phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
     }
@@ -272,7 +276,7 @@ function transformIssueTags(PDO $pdo): array
     ];
 }
 
-function runTagPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $isDryRun): void
+function runTagPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $isDryRun, ?string $extendedApiPrefix = null): void
 {
     $statement = $pdo->query(<<<SQL
         SELECT mapping_id, jira_issue_key, redmine_issue_id, proposed_tags
@@ -339,7 +343,7 @@ function runTagPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $isDr
         }
 
         try {
-            $tagEndpoint = IssueTags::push($client, $redmineIssueId, array_values($tags), $tagEndpoint);
+            $tagEndpoint = IssueTags::push($client, $redmineIssueId, array_values($tags), $tagEndpoint, $extendedApiPrefix);
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
             $message = sprintf('Failed to apply tags to Redmine issue #%d', $redmineIssueId);

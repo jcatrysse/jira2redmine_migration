@@ -13,6 +13,8 @@ use GuzzleHttp\Exception\GuzzleException;
  * POST /issues/:id/tags.json, which adds tags without a journal; the redmine70-migration branch of
  * redmine_tags dropped that route, and tags go through the issue update ("add_tag_list"), which records
  * a journal detail. The first 404 of the route switches to the issue update for the rest of the run.
+ * With the Extended API (Jan, 2026-10-15) the issue update goes through it with notify=false, like 10 and 11:
+ * a plain issue update mails the watchers and fires Redmine 7's webhooks.
  */
 final class IssueTags
 {
@@ -22,11 +24,17 @@ final class IssueTags
     /**
      * @param list<string> $tags
      * @param string|null $endpoint the endpoint that worked before, null on the first call
+     * @param string|null $extendedApiPrefix the Extended API's prefix when it is enabled, for the issue update
      * @return string the endpoint that worked, to pass to the next call
      * @throws GuzzleException
      */
-    public static function push(ClientInterface $client, int $issueId, array $tags, ?string $endpoint): string
-    {
+    public static function push(
+        ClientInterface $client,
+        int $issueId,
+        array $tags,
+        ?string $endpoint,
+        ?string $extendedApiPrefix = null
+    ): string {
         if ($endpoint !== self::ENDPOINT_ISSUE) {
             try {
                 $client->request('POST', sprintf('issues/%d/tags.json', $issueId), ['json' => ['tags' => $tags]]);
@@ -40,9 +48,7 @@ final class IssueTags
             }
         }
 
-        $client->request('PUT', sprintf('issues/%d.json', $issueId), [
-            'json' => ['issue' => ['add_tag_list' => implode(',', $tags)]],
-        ]);
+        TextUpdate::issue($client, $issueId, ['add_tag_list' => implode(',', $tags)], $extendedApiPrefix, false);
 
         return self::ENDPOINT_ISSUE;
     }

@@ -14,9 +14,12 @@ declare(strict_types=1);
  * alone and counted. The rewrite is the one 10 uses ("#123", or "text (#123)").
  * The last line counts the texts that still hold a Jira link to a migrated issue after this run, edited ones
  * included (each listed as [left]): after --confirm-push a preview must say 0 (Jan, B52: batches plus relink).
+ * With the Extended API the rewrites go through it with notify=false (Jan, 2026-10-15): no mail, no webhook.
  */
 
 use Jira2Redmine\Http\ClientFactory;
+use Jira2Redmine\Redmine\ExtendedApi;
+use Jira2Redmine\Redmine\TextUpdate;
 use Jira2Redmine\Text\Relink;
 
 $config = require __DIR__ . '/../bootstrap.php';
@@ -28,6 +31,10 @@ $pdo = new PDO((string)$config['database']['dsn'], (string)$config['database']['
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
 ]);
 $client = ClientFactory::redmine($config['redmine']);
+$extendedApiPrefix = ExtendedApi::enabled($config['redmine'], false) ? ExtendedApi::prefix($config['redmine']) : null;
+if ($confirm && $extendedApiPrefix === null) {
+    printf("  [warn] redmine.extended_api is off: each rewritten description mails its watchers and fires the webhooks.%s", PHP_EOL);
+}
 $issueMap = loadIssueLinkMap($pdo);
 $rewrite = static fn (string $text): string => replaceIssueLinksInText($text, $issueMap);
 $counts = ['relink' => 0, 'nothing' => 0, 'edited' => 0, 'unknown' => 0, 'failed' => 0];
@@ -63,7 +70,7 @@ foreach ($issues as $row) {
         }
         printf("  [%s] %s (#%d): description%s", $confirm ? 'relinked' : 'would relink', $row['jira_issue_key'], $row['redmine_issue_id'], PHP_EOL);
         if ($confirm) {
-            $client->put(sprintf('/issues/%d.json', $row['redmine_issue_id']), ['json' => ['issue' => ['description' => $decision['text']]]]);
+            TextUpdate::issue($client, (int)$row['redmine_issue_id'], ['description' => $decision['text']], $extendedApiPrefix);
             $storeIssue->execute(['h' => Relink::hash($decision['text']), 'm' => $row['mapping_id']]);
         }
     } catch (Throwable $exception) {
@@ -113,7 +120,7 @@ foreach ($journals as $row) {
         }
         printf("  [%s] %s, journal #%d%s", $confirm ? 'relinked' : 'would relink', $row['jira_issue_key'], $row['redmine_journal_id'], PHP_EOL);
         if ($confirm) {
-            $client->put(sprintf('/journals/%d.json', $row['redmine_journal_id']), ['json' => ['journal' => ['notes' => $decision['text']]]]);
+            TextUpdate::journalNotes($client, (int)$row['redmine_journal_id'], $decision['text'], $extendedApiPrefix);
             $storeJournal->execute(['h' => Relink::hash($decision['text']), 'm' => $row['mapping_id']]);
         }
     } catch (Throwable $exception) {
