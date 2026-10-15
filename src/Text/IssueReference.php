@@ -25,6 +25,26 @@ final class IssueReference
         return null;
     }
 
+    /**
+     * forLink() in running text: $after is the letters right after the link. Redmine links "#123" only when no
+     * letter follows ("(#461)which", "comment f (#1015)rom" stayed text, WIKI-42, WIKI-594). A link that ends
+     * inside a word ("[comment f](...)rom") takes the rest of the word into its text; otherwise a space goes
+     * between the reference and the next word.
+     */
+    public static function inText(string $label, string $after, string $jiraKey, int $redmineId): string
+    {
+        if ($after === '') {
+            return self::forLink($label, $jiraKey, $redmineId);
+        }
+        if (preg_match('/\s$/u', $label) !== 1) {
+            $text = self::forLink($label . $after, $jiraKey, $redmineId);
+
+            return $text === '#' . $redmineId ? $text . ' ' . $after : $text;
+        }
+
+        return self::forLink($label, $jiraKey, $redmineId) . ' ' . $after;
+    }
+
     public static function forLink(string $label, string $jiraKey, int $redmineId): string
     {
         $reference = '#' . $redmineId;

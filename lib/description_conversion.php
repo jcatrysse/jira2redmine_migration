@@ -870,13 +870,13 @@ function replaceIssueLinksInText(string $text, array $issueMap): string
     );
 
     $replaced = preg_replace_callback(
-        '/\[' . MARKDOWN_LINK_LABEL . ']\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\s*\)/i',
+        '/\[' . MARKDOWN_LINK_LABEL . ']\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\s*\)([\p{L}\p{N}]*)/iu',
         function($m) use ($issueMap) {
             $key = IssueReference::keyOfUrl($m[2]);
             if ($key === null || !isset($issueMap[$key])) {
                 return $m[0];
             }
-            return IssueReference::forLink($m[1], $key, $issueMap[$key]);
+            return IssueReference::inText($m[1], $m[3], $key, $issueMap[$key]);
         },
         $protected
     );
@@ -1078,10 +1078,10 @@ function replaceIssueLinksWithRedmineIds(
         );
 
         // 1a) vervang markdown links [label](url)
-        $new = preg_replace_callback('/\[' . MARKDOWN_LINK_LABEL . ']\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\s*\)/i', function($m) use ($issueMap) {
+        $new = preg_replace_callback('/\[' . MARKDOWN_LINK_LABEL . ']\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\s*\)([\p{L}\p{N}]*)/iu', function($m) use ($issueMap) {
             $key = IssueReference::keyOfUrl($m[2]);
             if ($key === null || !isset($issueMap[$key])) return $m[0]; // geen wijziging
-            return IssueReference::forLink($m[1], $key, $issueMap[$key]); // #1234, or "label (#1234)"
+            return IssueReference::inText($m[1], $m[3], $key, $issueMap[$key]); // #1234, or "label (#1234)"
         }, $desc);
 
         // 1b) vervang raw urls
@@ -1301,10 +1301,10 @@ function inlineReplaceJiraIssueKeysWithHashes(string $text, array $jiraToRedmine
     if (trim($text) === '' || $jiraToRedmine === []) return $text;
 
     // markdown links [label](url)
-    $text = preg_replace_callback('/\[' . MARKDOWN_LINK_LABEL . ']\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/mi', function($m) use ($jiraToRedmine) {
+    $text = preg_replace_callback('/\[' . MARKDOWN_LINK_LABEL . ']\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)([\p{L}\p{N}]*)/miu', function($m) use ($jiraToRedmine) {
         $key = IssueReference::keyOfUrl($m[2]);
         if ($key === null || !isset($jiraToRedmine[$key])) return $m[0];
-        return IssueReference::forLink($m[1], $key, $jiraToRedmine[$key]);
+        return IssueReference::inText($m[1], $m[3], $key, $jiraToRedmine[$key]);
     }, $text);
 
     // bare browse URLs and selectedIssue params

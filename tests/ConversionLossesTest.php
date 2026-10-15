@@ -118,4 +118,18 @@ final class ConversionLossesTest extends TestCase
             convertJiraHtmlToMarkdown($html, [])
         );
     }
+
+    public function testAnIssueReferenceIsNotFollowedByALetter(): void
+    {
+        // WIKI-42, WIKI-594, WIKI-1291 (anonymised): Redmine links "#123" only when no letter follows it
+        $map = ['WIKI-37' => 461, 'WIKI-594' => 1015];
+        self::assertSame(
+            'to Online Tracks (#461) which has',
+            replaceIssueLinksInText('to [Online Tracks ](https://x.atlassian.net/browse/WIKI-37)which has', $map)
+        );
+        self::assertSame(
+            'previous comment from (#1015) Kim',
+            inlineReplaceJiraIssueKeysWithHashes('previous [comment f](https://x.atlassian.net/browse/WIKI-594?id=1)rom Kim', $map)
+        );
+    }
 }
