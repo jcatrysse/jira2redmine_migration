@@ -840,6 +840,21 @@ function replaceIssueLinksInText(string $text, array $issueMap): string
         return $text;
     }
 
+    return normalizeRedmineReferenceSpacing(replaceIssueLinksOnly($text, $issueMap));
+}
+
+/**
+ * The Jira issue links of a text replaced by #redmine_id references, and nothing else: the rest of the text, its
+ * spacing around references included, stays as it is.
+ *
+ * @param array<string, int> $issueMap
+ */
+function replaceIssueLinksOnly(string $text, array $issueMap): string
+{
+    if ($issueMap === []) {
+        return $text;
+    }
+
     $replaceUrlToHash = function(string $urlOrLink) use ($issueMap): string {
         if (preg_match('~/browse/([A-Z][A-Z0-9]+-[0-9]+)~i', $urlOrLink, $m)) {
             $key = strtoupper($m[1]);
@@ -895,7 +910,7 @@ function replaceIssueLinksInText(string $text, array $issueMap): string
         }
     }
 
-    return normalizeRedmineReferenceSpacing($replaced);
+    return $replaced;
 }
 
 /**
