@@ -267,7 +267,9 @@ foreach ($items as $id => $item) {
         }
         if ($detailsPath !== null) {
             $details[] = json_encode([
-                'id' => $id, 'label' => $item['label'], 'path' => $path, 'lossy' => $lossy, 'coverage' => $coverage['coverage'],
+                'id' => $id, 'label' => $item['label'], 'path' => $path, 'lossy' => $lossy, 'lossy_old' => $oldLossy, 'lossy_keys' => $keysLossy,
+                'missing_keys' => array_slice($keysCoverage['missing'], 0, 12), 'residue_all' => benchResidue($html), 'mediawiki' => $mediaWikiSource,
+                'links_jira' => $expectedLinks, 'coverage' => $coverage['coverage'],
                 'missing' => $coverage['missing'], 'links' => $links, 'expected' => $unnestedLinks, 'images' => $images,
                 'elements' => $missingElements, 'residue' => $residue, 'constructs' => $constructs,
             ], JSON_UNESCAPED_UNICODE);
