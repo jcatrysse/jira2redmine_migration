@@ -9,6 +9,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
+use Jira2Redmine\Issues\IssueLabels;
 use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\Redmine\IssueTags;
 use Jira2Redmine\Cli\Phases;
@@ -210,9 +211,7 @@ function transformIssueTags(PDO $pdo): array
             continue;
         }
 
-        $labels = decodeJsonColumn($row['labels'] ?? null);
-        $labels = is_array($labels) ? array_values(array_filter(array_map('trim', $labels), static fn($label) => $label !== '')) : [];
-        $labels = array_values(array_unique($labels));
+        $labels = IssueLabels::tags(decodeJsonColumn($row['labels'] ?? null));
         $redmineIssueId = $mappingIndex[$jiraIssueId] ?? null;
 
         $proposedTags = $labels !== [] ? encodeJsonColumn($labels) : null;
