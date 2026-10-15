@@ -33,4 +33,16 @@ final class ConversionLossesTest extends TestCase
             convertJiraHtmlToMarkdown($html, [])
         );
     }
+
+    public function testTheTextPreInACodeBlockStays(): void
+    {
+        // WIKI-843: MediaWiki source in a code block lost every "<pre>" and "</pre>" it showed
+        $html = '<div class="preformatted panel"><div class="preformattedContent panelContent"><pre>|-' . "\n"
+            . '| &lt;pre&gt;{{Template' . "\n" . '  | A = b}}&lt;/pre&gt;||{{Template | A = b}}</pre></div></div>'
+            . '<p>about &lt;pre&gt; here</p>';
+
+        $markdown = (string)convertJiraHtmlToMarkdown($html, []);
+        self::assertStringStartsWith("```\n|-\n| <pre>{{Template\n  | A = b}}</pre>||{{Template | A = b}}\n```\n", $markdown);
+        self::assertStringEndsWith("\nabout &lt;pre&gt; here", $markdown);
+    }
 }

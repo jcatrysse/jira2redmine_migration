@@ -104,11 +104,16 @@ function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
         $converter->getEnvironment()->addConverter(new TableConverter());
     }
 
+    // The converter decodes a code block's text and then removes "<pre>" from it, the text "<pre>" a user typed
+    // too (WIKI-843: MediaWiki source lost its "<pre>" lines). That text passes under another name.
+    $rewrittenHtml = preg_replace('#&lt;(/?)pre\b#i', '&lt;$1j2rliteralpre', $rewrittenHtml) ?? $rewrittenHtml;
+
     try {
         $markdown = trim($converter->convert($rewrittenHtml));
     } catch (Throwable) {
         $markdown = trim(strip_tags($rewrittenHtml));
     }
+    $markdown = preg_replace('#(<|&lt;)(/?)j2rliteralpre#i', '$1$2pre', $markdown) ?? $markdown;
 
     // extra safety: xml header die toch doorsijpelt
     $markdown = preg_replace('/^\s*<\?xml[^>]*\?>\s*/i', '', $markdown ?? '') ?? $markdown;
