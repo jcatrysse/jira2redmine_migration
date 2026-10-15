@@ -92,6 +92,12 @@ All notable changes to this project. Steps to take before and after a migration 
   code; Outlook safe links in mailed comments become the link itself.
 
 ### Fixed
+- Text conversion (decision 26, B60 to B70): ADF tables with merged cells and ADF code blocks; bold and
+  italic that Jira splits or nests; the text "<pre>" in code blocks; inline code Jira showed as "{{...}}";
+  MediaWiki source pasted into Jira becomes a code block with its exact text; a link rewrite no longer
+  swallows the text before a profile link; typed link markup keeps its spacing and converts with brackets
+  in its label; a space between a mention and a link; bare addresses without backslashes; a link inside a
+  link. The bench reports the old measure, the key rewrite left out, and the corrected measure.
 - Cascading fields: value dependencies are set as option ids after the child field exists (B7).
 - A due date before the creation date becomes the start date (B8).
 - An unmapped assignee no longer blocks the issue (B9).
