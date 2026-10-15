@@ -14,8 +14,9 @@ use Throwable;
 /**
  * Central retry on rate limits (decision 5), for Jira and Redmine alike.
  *
- * Retried: 429 and 503 for every method (the server did not process the request), and a transport
- * failure for GET/HEAD only: no connection, or a transfer cut off (cURL 18 "transfer closed with
+ * Retried: 429 and 503 for every method (the server did not process the request); for GET/HEAD only a
+ * gateway error, 502 or 504 (the Atlassian gateway timed out on GET issue/{id}/watchers, B71: a write may
+ * have reached the server behind it), and a transport failure: no connection, or a transfer cut off (cURL 18 "transfer closed with
  * outstanding read data", seen on a Jira user page). The middleware sits inside http_errors, so an
  * error that reaches it never is an HTTP status. The wait honours Retry-After (seconds or an HTTP date);
  * without it the wait doubles from 1 s. Waits are capped at $maxDelayMs.
@@ -35,7 +36,10 @@ final class RetryPolicy
             return false;
         }
         if ($response !== null) {
-            return in_array($response->getStatusCode(), [429, 503], true);
+            $status = $response->getStatusCode();
+
+            return in_array($status, [429, 503], true)
+                || (in_array($status, [502, 504], true) && in_array($request->getMethod(), ['GET', 'HEAD'], true));
         }
 
         return $error instanceof TransferException && in_array($request->getMethod(), ['GET', 'HEAD'], true);

@@ -96,4 +96,16 @@ final class RetryPolicyTest extends TestCase
         $client = ClientFactory::jira(['base_url' => 'https://e.atlassian.net', 'username' => 'u', 'api_token' => 't']);
         self::assertStringContainsString("'retry'", (string)$client->getConfig('handler'));
     }
+
+    public function testAGatewayTimeoutIsRetriedForReadsOnly(): void
+    {
+        // B71: the Atlassian gateway answered 504 to GET issue/{id}/watchers and the 14-jira phase stopped
+        $policy = new RetryPolicy(3);
+        self::assertTrue($policy->shouldRetry(0, new Request('GET', '/rest/api/3/issue/1/watchers'), new Response(504), null));
+        self::assertTrue($policy->shouldRetry(1, new Request('GET', '/x'), new Response(502), null));
+        self::assertFalse($policy->shouldRetry(3, new Request('GET', '/x'), new Response(504), null));
+        // a write may have reached the server behind the gateway: not sent again
+        self::assertFalse($policy->shouldRetry(0, new Request('POST', '/issues.json'), new Response(504), null));
+        self::assertFalse($policy->shouldRetry(0, new Request('PUT', '/issues/1.json'), new Response(502), null));
+    }
 }

@@ -1035,6 +1035,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B68 | A mention right before a link | "Claire Pirotseismic logfiles" (WIKI-37) | **fixed** (`b0fe08c`): a space, as Jira shows them apart |
 | B69 | An address left as plain text kept the converter's escapes ("document\\_control") | Redmine 5.1 and 7.0 link it with the backslashes: a broken link (WIKI-777) | **fixed** (`da60cf6`) |
 | B70 | Jira's renderer writes a link inside a link for an address with ">" | nested Markdown links, "](" visible (WIKI-520) | **fixed** (`bebd09b`): the inner link gives up its address |
+| B71 | The central retry (decision 5) covered 429 and 503, not a gateway error | the Atlassian gateway answered 504 to `GET issue/{id}/watchers` and 14's Jira phase stopped (7.0 WIKI batch, 2026-10-15; step 14 read the watchers again, nothing lost) | **fixed**: 502 and 504 are retried for GET and HEAD only (a write may have reached the server behind the gateway), with a test |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
