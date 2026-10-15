@@ -30,7 +30,10 @@ final class IssueFinalUpdateTest extends TestCase
     {
         self::assertSame([
             'updated_on' => '2024-02-01T10:00:00Z',
-            'journal' => ['user_id' => 7, 'updated_by_id' => 7, 'created_on' => '2024-01-02T03:04:05Z'],
+            // updated_on equal to created_on: Redmine marks a journal "Edited" when they differ
+            'journal' => [
+                'user_id' => 7, 'updated_by_id' => 7, 'created_on' => '2024-01-02T03:04:05Z', 'updated_on' => '2024-01-02T03:04:05Z',
+            ],
         ], IssueFinalUpdate::overrides('2024-02-01T10:00:00Z', '2024-01-02T03:04:05Z', 7));
         // without a created time the journal takes the updated time; without anything, nothing
         self::assertSame('2024-02-01T10:00:00Z', IssueFinalUpdate::overrides('2024-02-01T10:00:00Z', null, null)['journal']['created_on']);

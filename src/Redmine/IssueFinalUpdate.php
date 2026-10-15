@@ -34,7 +34,9 @@ final class IssueFinalUpdate
 
     /**
      * The Extended API overrides of the final update: the issue keeps Jira's updated time, and the journal Redmine
-     * writes for the change is the author's, at the issue's creation.
+     * writes for the change is the author's, at the issue's creation. Its updated time is that creation time too:
+     * otherwise it kept the time of the run and Redmine marked it "Edited" (37 journals per run of GEOS, SIS, OAC;
+     * Jan, 2026-10-15: post-processing leaves no visible trace).
      *
      * @param string|null $updated Jira's updated time, normalised
      * @param string|null $created Jira's created time, normalised
@@ -55,6 +57,7 @@ final class IssueFinalUpdate
         }
         if ($created !== null) {
             $journal['created_on'] = $created;
+            $journal['updated_on'] = $created;
         }
         if ($journal !== []) {
             $overrides['journal'] = $journal;
