@@ -7,6 +7,7 @@ use League\HTMLToMarkdown\HtmlConverter;
 use League\HTMLToMarkdown\Converter\TableConverter;
 use Karvaka\AdfToGfm\Converter as AdfConverter;
 use Jira2Redmine\Jira\IssueKeyAliases;
+use Jira2Redmine\Text\Emphasis;
 use Jira2Redmine\Text\IssueReference;
 use Jira2Redmine\Text\Safelinks;
 
@@ -85,6 +86,11 @@ function convertJiraHtmlToMarkdown(?string $html, array $attachments): ?string
         },
         $trimmed
     ) ?? $trimmed;
+
+    // Superscript and subscript have no Markdown; their text stays. Emphasis split by them ("<em>16</em><sup>
+    // <em>th</em></sup>"), or nested and split by Jira, is regrouped so its delimiters do not touch (GEOS-53).
+    $trimmed = preg_replace('#</?(?:sup|sub)\b[^>]*>#i', '', $trimmed) ?? $trimmed;
+    $trimmed = Emphasis::normalize($trimmed);
 
     $rewrittenHtml = rewriteJiraAttachmentLinks($trimmed, $attachments);
 
