@@ -40,7 +40,7 @@ Placeholders are written `<like-this>`.
   Review-aanpassingen in staging verhuizen niet mee naar productie: zet ze in de config.
 - **Geen sporen van nabewerking (beslissingen 37 en 38):** 10's tweede pass, 12, 13 en de relink sturen
   `skip_journal` mee naast notify=false: geen journal, geen "Subtask added", de bijgewerkt-tijd blijft, een
-  aangepast commentaar wordt niet "Edited". Daarvoor moet de Extended API versie 8e7096c of later zijn (B2, B5).
+  aangepast commentaar wordt niet "Edited". Daarvoor moet de Extended API versie 8e7096c of later zijn, getest is ecc7dde (B2, B5).
   Datums en % gereed van parents blijven afgeleid.
 - **Duur (schatting):** de run ongeveer 4,5 tot 5,5 uur in de repetitie (steekproef), 7 tot 10,5 uur in productie
   (116 GiB bijlagen), plus Jans reviews en de snapshots (B8). Schijf (B2): één pull van alle bijlagen, `paths.tmp`
@@ -338,7 +338,7 @@ SOIL, SSPT, ROV, GSPP, FPS).
   database stays small next to that (a few GB: the Jira payloads of every issue and comment).
 - **tmux** for the long steps (B8), so a dropped SSH session does not stop a step.
 - **Redmine 7.0** after part A, with the plugins the migration uses: `redmine_extended_api` (issues, journals,
-  relations without mail and with Jira's authors and dates; **8e7096c or later**, for `skip_journal`, decision 37),
+  relations without mail and with Jira's authors and dates; **8e7096c or later**, for `skip_journal`, decision 37; tested: `ecc7dde`),
   `redmine_project_workflows` (each project its own
   workflow, decision 13), `redmine_custom_workflows` (the "assign to me" scripts), `redmine_tags`,
   `redmine_checklists`, `redmine_view_issue_description`, `redmine_stealth`, and the GEOxyz relation types in
@@ -485,7 +485,7 @@ Then, once, on the upgraded Redmine 7.0. Each line is a check the local session 
 |---|---|---|
 | snapshot S0 | part B's rollback point (A.4 step 3 is the upgrade's). Rehearsal: the snapshot after A.5. Production: taken now, at the start of the window, after steps 1 to 4 above (users worked in Redmine since part A). B7 takes S1 to S3 (B10) | the snapshot exists and its time is noted |
 | REST API | Administration > Settings > Integrations: REST web service on (A.5 row 16; "API" on 5.1) | `curl -s -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/users/current.json"` gives the migration account, `admin: true` |
-| Extended API | the plugin is installed, version 8e7096c or later: the scripts send `skip_journal` (decision 37), which an older version ignores, so its journals would come back | `curl -sI -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/extended_api/issues.json"` has the header `X-Redmine-Extended-API`; `grep -c skip_journal <redmine-root>/plugins/redmine_extended_api/lib/redmine_extended_api/patches/api_helpers.rb` is above 0 |
+| Extended API | the plugin is installed, version 8e7096c or later (tested: `ecc7dde`): the scripts send `skip_journal` (decision 37), which an older version ignores, so its journals would come back | `curl -sI -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/extended_api/issues.json"` has the header `X-Redmine-Extended-API`; `grep -c skip_journal <redmine-root>/plugins/redmine_extended_api/lib/redmine_extended_api/patches/api_helpers.rb` is above 0 |
 | text formatting | Administration, Settings, General: CommonMark Markdown (A.5 row 16) | `Setting.text_formatting` is `common_mark` |
 | no mail, no webhook from the migration | `redmine.extended_api.enabled` true (B3): 10, 11, 12, 13 (tags on 7.0) and the relink write issues and journals through it with notify=false, which silences the mails and Redmine 7's webhooks of the request (Jan, 2026-10-15), and 10's second pass, 12, 13 and the relink also with `skip_journal` (no journal, decision 37); 09's uploads and 14's watchers send none. The one exception: 15 saves the issue's done ratio through the plain API when redmine_checklists' setting "issue done ratio" is on (Administration, Plugins, Checklists; off by default): switch it off for the run. Safety net (production, cheap, B2's advice): stealth mode on for the migration account, `curl -s -X POST -H "X-Redmine-API-Key: $REDMINE_API_KEY" -d toggle=true "$REDMINE_URL/stealth/toggle.json"`; it silences the mails of anything the migration account writes outside the Extended API. Rehearsal: outgoing mail is off on the clone (A.1) | the checklists setting is off; production: the answer is `{"is_cloaked":true}` (signing in to the web interface as the migration account switches stealth off again: do not, or toggle it on after) |
 | relation types | the GEOxyz relation types of `migration.relations.custom_mappings` in `redmine_issue_view_columns` (`tools/testenv/redmine_issue_view_columns.local.rb` is generated from them) | after part A they exist in 7.0 (12 refuses a relation type Redmine does not know) |

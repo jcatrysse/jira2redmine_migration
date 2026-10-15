@@ -504,7 +504,8 @@ Results, "Traces of post-processing"):
     `8e7096c`); the scripts send it with notify=false from 10's second pass (and its open-parent retry), 12, 13 and the
     relink (`ExtendedApi::NO_TRACE`, `135fa96`); 10's create sets no parent, so it needs none; 11's comments carry notes
     and go without it (the plugin refuses notes with the flag). **The scripts need redmine_extended_api `8e7096c` or
-    later**, and production's Extended API must be that version: it goes to main with the rest after the rehearsal
+    later** (final and tested in the 44-plugin set on 7.0: `ecc7dde`, a test guard after `8e7096c`; Jan agreed with its
+    choices: the name, 403 for a non-admin, 422 for notes with the flag, the updated time kept on every saved issue), and production's Extended API must be that version: it goes to main with the rest after the rehearsal
     (decision 32); docs/PRODUCTION.md B2 and B5 check it. Proofs in Results.
 38. **Parents' dates and done ratio stay derived** (option S not taken). The few parents with a new updated time and
     no journal (3 per run of GEOS, SIS and OAC) are accepted.
