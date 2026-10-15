@@ -12,10 +12,10 @@ read-only: alleen GET-calls, de schrijfprobe gaf 401 "scope does not match".
   tijden zette 11 bij statuswijzigingen de bijlagen die rond dat moment geüpload waren; gefixt, een
   statuswijziging toont alleen de bijlagen die ze zelf noemt. JSON-decodering, PDO-attributen en
   optieparsing bewust gelaten: elke variant past bij zijn script, een wijziging levert niets op.
-- **Bewezen op 5.1** met een opgenomen run tegenover die van gisteravond: verify PASS, en alleen de verwachte
-  verschillen: 576 uploads met de juiste aanmaaktijd, 13 notities minder (alleen bijlagen die door B58 fout
-  matchten), 5 commentaren zonder die regels, 2 watchers minder (Redmine maakt de auteur van een notitie
-  watcher).
+- **Bewezen op 5.1 en 7.0**, verify PASS op beide. Op 5.1 met een opgenomen run tegenover die van
+  gisteravond, alleen de verwachte verschillen: 576 uploads met de juiste aanmaaktijd, 13 notities minder
+  (alleen bijlagen die door B58 fout matchten), 5 commentaren zonder die regels, 2 watchers minder (Redmine
+  maakt de auteur van een notitie watcher). Op 7.0 dezelfde verschillen.
 - **7.0 op de nieuwe heads** (core `ad17efd`, 9 plugins verschoven, o.a. helpdesk 4.4.0, met hun migraties):
   volledige run en cumulatieve WIKI-batch PASS, identiek aan de generale repetitie (alle stappen, aantallen,
   verify, workflows, restore).
@@ -1086,6 +1086,9 @@ aligned request by request (`difflib` over the normalised logs):
   Redmine adds the author of a journal as watcher. Jira's watchers are pushed unchanged (960, the same requests).
 Nothing else differs. In between, `b2-utc` (B58 and UTC without B59) showed why B59 is needed: 7,365 requests,
 249 more journals, verify FAIL on 6 duplicate journals.
+On 7.0 the same (`STABILITY=1 run_all.sh 70 b2-head`, code `975c5bf`, core `ad17efd`, PHP 8.3.6, against
+`b2-night`): verify **PASS** with "attachments: created" 149/149, journals 1,277 to 1,264 (skipped 2,937 to
+2,950), watchers in Redmine 1,169 to 1,167, stability unchanged; the rest of the summary is identical.
 
 **SURV volume run, 5.1, B2, 2026-10-13** (`J2R_PROJECTS=surv J2R_TEST_SAMPLE=1 run_all.sh 51 b2-surv`,
 code before B44): 1,494 issues, all created (10 in 479 s); attachments 6,323 in Jira, 4,306 in the sample
