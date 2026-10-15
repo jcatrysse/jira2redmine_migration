@@ -47,6 +47,27 @@ final class RelinkTest extends TestCase
         self::assertFalse(Relink::linkLeft(null, $rewrite));
     }
 
+    public function testATextWithoutAJiraLinkIsNotTouched(): void
+    {
+        // B76: the relink rewrote with replaceIssueLinksInText, whose spacing cleanup made "#203," into "#203 ,"; 10's
+        // own rewrite of a description does not do that, so a text 10 had already relinked was reported as one to
+        // relink, and the check counted it as still holding a Jira link (SIS-112 in a single run of GEOS, SIS, OAC)
+        $text = "Linked to #203, if a heading is off.\nSee also #204.";
+        self::assertNotSame($text, replaceIssueLinksInText($text, ['ABC-12' => 812]));
+
+        $tool = (string)file_get_contents(__DIR__ . '/../tools/relink_issue_links.php');
+        self::assertStringContainsString('$rewrite = static fn (string $text): string => replaceIssueLinksOnly($text, $issueMap);', $tool);
+        $rewrite = static fn (string $text): string => replaceIssueLinksOnly($text, ['ABC-12' => 812]);
+        self::assertSame(['action' => 'nothing', 'text' => $text], Relink::decide($text, Relink::hash($text), $rewrite));
+        self::assertFalse(Relink::linkLeft($text, $rewrite));
+        // a real link is still rewritten, the rest of the text as it is
+        $pushed = "Linked to #203, see [the plan](https://site.atlassian.net/browse/ABC-12).";
+        self::assertSame(
+            ['action' => 'relink', 'text' => 'Linked to #203, see the plan (#812).'],
+            Relink::decide($pushed, Relink::hash($pushed), $rewrite)
+        );
+    }
+
     public function testTheRewritesGoThroughTheExtendedApiWithoutMail(): void
     {
         // Jan (2026-10-15): the relink's description and comment updates leave no mail and no webhook

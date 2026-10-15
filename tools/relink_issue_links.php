@@ -11,7 +11,7 @@ declare(strict_types=1);
  *
  * Only texts that hold a Jira issue link and are still what the migration pushed (the hash 10 and 11
  * stored) are rewritten; a text edited in Redmine since, or pushed before this hash existed, is left
- * alone and counted. The rewrite is the one 10 uses ("#123", or "text (#123)").
+ * alone and counted. The rewrite is the one 10 uses ("#123", or "text (#123)"): the links only (B76).
  * The last line counts the texts that still hold a Jira link to a migrated issue after this run, edited ones
  * included (each listed as [left]): after --confirm-push a preview must say 0 (Jan, B52: batches plus relink).
  * With the Extended API the rewrites go through it with notify=false (Jan, 2026-10-15): no mail, no webhook.
@@ -36,7 +36,9 @@ if ($confirm && $extendedApiPrefix === null) {
     printf("  [warn] redmine.extended_api is off: each rewritten description mails its watchers and fires the webhooks.%s", PHP_EOL);
 }
 $issueMap = loadIssueLinkMap($pdo);
-$rewrite = static fn (string $text): string => replaceIssueLinksInText($text, $issueMap);
+// the links only, as 10 rewrites a description: replaceIssueLinksInText's spacing cleanup also changed texts without a
+// Jira link ("#203," became "#203 ,"), which were then reported and counted as still linking a migrated issue (B76)
+$rewrite = static fn (string $text): string => replaceIssueLinksOnly($text, $issueMap);
 $counts = ['relink' => 0, 'nothing' => 0, 'edited' => 0, 'unknown' => 0, 'failed' => 0];
 $left = 0;
 $get = static function (string $path, array $query = []) use ($client): array {
