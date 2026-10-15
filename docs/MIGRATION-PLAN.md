@@ -104,9 +104,7 @@ Findings). Advies: niet migreren vanuit `main`; de fixes staan op `redmine70-mig
 1. De visuele controle van de conversie (29 issues, bench stap 3): de pagina's staan klaar.
 2. Vóór de productierun: de reviewtabel van 04 nakijken en READY zetten voor de Non member-groep (beslissing 15).
 3. De productierun zelf volgens het runbook: batches in de beslisde volgorde, daarna relink en de controle 0.
-4. Het bijlagevenster bij commentaren (B59, Open questions): 11 kan onder een commentaar de bestanden
-   vermelden die binnen N seconden geüpload werden. Bij 199 commentaren gaf dat vooral bestanden die het
-   commentaar al toont. **Aanbeveling: 0, uit (standaard).**
+4. ~~Het bijlagevenster bij commentaren (B59).~~ **Jij: 0** (beslissing 27), de standaard.
 
 Start a Claude Code session on this repository, branch `redmine70-migration`, with:
 
@@ -380,6 +378,8 @@ Jan's answers to the six open points of the summary (2026-10-14, evening, relaye
     old and the corrected number and the remaining losses by class after fresh 5.1 and 7.0 runs, WIKI batch
     included. (4) New side-by-side pages of the curated set for Jan's visual check, outside the repository. Each
     class gets an anonymised PHPUnit case that fails without the fix; refactor and behaviour commits apart.
+27. **Comment attachment window (B59): 0** (2026-10-15, relayed by the coordinator): a comment lists only the
+    attachments it names itself; `migration.journals.comment_attachment_window` stays 0, the default.
 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
@@ -901,7 +901,7 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
   deprecated; `/rest/api/3/automation/rules` is not a Jira platform endpoint (16 already skips it on
   404). Logged as B25. **Confirmed and fixed (B2)**: see B25 to B28.
 - ~~Project memberships (B31)~~ **Jan: option (a)**, see decision 10.
-- **Comment attachment window (B59, 2026-10-14 night).** The original 11 listed under a Jira comment, as
+- ~~**Comment attachment window (B59, 2026-10-14 night).**~~ **Jan: 0** (decision 27). The original 11 listed under a Jira comment, as
   "> attachment:" lines, every file of the issue uploaded within 5 minutes of the comment. With B58 fixed that
   gave 199 of the 1,277 comments of the 5.1 test run such lines, mostly files the comment already shows (267 of
   the 390 listed); the issue's attachment list shows every file anyway. 11 now has the setting
