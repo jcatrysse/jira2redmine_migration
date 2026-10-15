@@ -79,7 +79,8 @@ final class IssueTagsTest extends TestCase
         $entry = $this->history[2];
         $request = is_array($entry) ? $entry['request'] : null;
         self::assertInstanceOf(\Psr\Http\Message\RequestInterface::class, $request);
-        self::assertSame('notify=false&send_notification=0', $request->getUri()->getQuery());
+        // decision 37: no journal for it either
+        self::assertSame('notify=false&send_notification=0&skip_journal=1', $request->getUri()->getQuery());
         // the issue keeps its updated time (Jan, 2026-10-15: no visible trace)
         self::assertSame('{"issue":{"add_tag_list":["a","b"],"updated_on":"2024-03-04T05:06:07Z"}}', $this->body(2));
     }

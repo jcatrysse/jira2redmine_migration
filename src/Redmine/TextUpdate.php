@@ -10,13 +10,13 @@ use GuzzleHttp\Exception\GuzzleException;
 /**
  * Updates of an issue or a journal after the import: 13's tags on Redmine 7.0 and tools/relink_issue_links.php.
  * Jan (2026-10-15): with the Extended API they go through it with notify=false, like the import itself, so no mail
- * and no Redmine 7 webhook leaves from them (its proxy serves the core routes under its prefix). Without it, the
- * plain core route, as before. With the Extended API an issue keeps its updated time when the caller passes it
- * (Jan, 2026-10-15: post-processing leaves no visible trace); the journal Redmine writes for the change stays.
+ * and no Redmine 7 webhook leaves from them (its proxy serves the core routes under its prefix), and with skip_journal
+ * (decision 37), so Redmine writes no journal for them, the issue keeps its updated time and a rewritten comment is
+ * not marked "Edited". Without the Extended API, the plain core route, as before.
  */
 final class TextUpdate
 {
-    public const SILENT = ['notify' => 'false', 'send_notification' => 0];
+    public const SILENT = ExtendedApi::NO_TRACE;
 
     /**
      * @param array<string, mixed> $attributes the issue attributes to update

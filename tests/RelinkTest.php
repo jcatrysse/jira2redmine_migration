@@ -76,12 +76,12 @@ final class RelinkTest extends TestCase
                 . ' ' . $request->getBody();
         }
         self::assertSame([
-            'PUT /sub/extended_api/issues/7.json?notify=false&send_notification=0 {"issue":{"description":"x (#8)"}}',
-            'PUT /sub/extended_api/journals/9.json?notify=false&send_notification=0 {"journal":{"notes":"y (#8)"}}',
+            'PUT /sub/extended_api/issues/7.json?notify=false&send_notification=0&skip_journal=1 {"issue":{"description":"x (#8)"}}',
+            'PUT /sub/extended_api/journals/9.json?notify=false&send_notification=0&skip_journal=1 {"journal":{"notes":"y (#8)"}}',
             // without the Extended API the plain routes, as before
             'PUT /issues/7.json? {"issue":{"description":"x (#8)"}}',
             'PUT /journals/9.json? {"journal":{"notes":"y (#8)"}}',
-            'PUT /sub/extended_api/issues/7.json?notify=false&send_notification=0 '
+            'PUT /sub/extended_api/issues/7.json?notify=false&send_notification=0&skip_journal=1 '
                 . '{"issue":{"description":"x (#8)","updated_on":"2024-03-04T05:06:07Z"}}',
             'PUT /issues/7.json? {"issue":{"description":"x (#8)"}}',
         ], $calls);

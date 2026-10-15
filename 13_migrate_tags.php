@@ -97,7 +97,7 @@ function main(array $config, array $cliOptions): void
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         $redmineConfig = extractArrayConfig($config, 'redmine');
         $redmineClient = createRedmineClient($redmineConfig);
-        // Jan (2026-10-15): the issue update of 7.0 goes through the Extended API with notify=false (no mail, no webhook)
+        // Jan (2026-10-15): the issue update of 7.0 goes through the Extended API with notify=false and skip_journal
         $extendedApiPrefix = ExtendedApi::enabled($redmineConfig, false) ? ExtendedApi::prefix($redmineConfig) : null;
         runTagPushPhase($pdo, $redmineClient, $confirmPush, $isDryRun, $extendedApiPrefix);
     } else {

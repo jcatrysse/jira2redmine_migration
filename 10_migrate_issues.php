@@ -2074,7 +2074,8 @@ function runIssuePushPhase(
         $method = $useExtendedApi ? 'patch' : 'put';
         $options = ['json' => $payload];
         if ($useExtendedApi) {
-            $options['query'] = ['notify' => 'false', 'send_notification' => 0];
+            // no journal and no "Subtask added" on the parent (decision 37)
+            $options['query'] = ExtendedApi::NO_TRACE;
         }
 
         try {
@@ -2221,7 +2222,7 @@ function updateParentIssueStatus(
     $method = $useExtendedApi ? 'patch' : 'put';
     $options = ['json' => $payload];
     if ($useExtendedApi) {
-        $options['query'] = ['notify' => 'false', 'send_notification' => 0];
+        $options['query'] = ExtendedApi::NO_TRACE;
     }
 
     try {

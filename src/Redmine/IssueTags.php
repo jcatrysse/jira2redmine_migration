@@ -14,7 +14,8 @@ use GuzzleHttp\Exception\GuzzleException;
  * redmine_tags dropped that route, and tags go through the issue update ("add_tag_list"), which records
  * a journal detail. The first 404 of the route switches to the issue update for the rest of the run.
  * With the Extended API (Jan, 2026-10-15) the issue update goes through it with notify=false, like 10 and 11:
- * a plain issue update mails the watchers and fires Redmine 7's webhooks.
+ * a plain issue update mails the watchers and fires Redmine 7's webhooks; and with skip_journal (decision 37), so
+ * that update writes no journal either.
  */
 final class IssueTags
 {

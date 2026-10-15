@@ -19,6 +19,16 @@ use Throwable;
 final class ExtendedApi
 {
     /**
+     * The query of a write the migration makes after an issue exists, without notes: 10's second pass (description,
+     * parent, an open parent), 12's relations, 13's tags and the relink (descriptions and comments). notify=false: no
+     * mail and no Redmine 7 webhook. skip_journal (redmine_extended_api 8e7096c or later; Jan, decision 37): no journal,
+     * no "Subtask added" on a parent, every issue the request saves keeps its updated time unless the request sends
+     * its own, and an edited comment keeps its times (not marked "Edited"). Never with notes: the plugin refuses an
+     * issue update with notes and the flag (422), so 11's comments go without it.
+     */
+    public const NO_TRACE = ['notify' => 'false', 'send_notification' => 0, 'skip_journal' => 1];
+
+    /**
      * @param array<string, mixed> $redmineConfig
      */
     public static function enabled(array $redmineConfig, bool $cliFlag): bool

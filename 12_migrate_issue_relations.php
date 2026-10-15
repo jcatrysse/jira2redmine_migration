@@ -891,6 +891,8 @@ function buildRelationPayload(int $issueToId, string $relationType, bool $includ
 
     if ($includeNotify) {
         $payload['notify'] = false;
+        // the Extended API stores no journal on either issue for it (decision 37)
+        $payload['skip_journal'] = true;
     }
 
     return $payload;

@@ -71,7 +71,7 @@ foreach ($issues as $row) {
         }
         printf("  [%s] %s (#%d): description%s", $confirm ? 'relinked' : 'would relink', $row['jira_issue_key'], $row['redmine_issue_id'], PHP_EOL);
         if ($confirm) {
-            // the issue keeps its updated time (Jan, 2026-10-15); the journal of the change stays
+            // no journal, the issue keeps its updated time (skip_journal, decision 37)
             TextUpdate::issue($client, (int)$row['redmine_issue_id'], ['description' => $decision['text']], $extendedApiPrefix, true, $issue['updated_on'] ?? null);
             $storeIssue->execute(['h' => Relink::hash($decision['text']), 'm' => $row['mapping_id']]);
         }
