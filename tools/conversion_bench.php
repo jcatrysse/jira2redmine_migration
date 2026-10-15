@@ -17,8 +17,9 @@ declare(strict_types=1);
  * and images. Results are split per construct found in Jira's HTML (tables, code, panels, ...).
  * Three measures (decision 26): "old" as before; "keys" also reads a Jira key of a migrated issue as the
  * "#123" it becomes by design (pipeline only, the converter alone does not rewrite keys); "corrected" also
- * leaves out visible syntax Jira's own text shows ("**" typed in a mail, "<br/>" quoted) and reads an
- * attachment link as a word of its own, as Jira shows it. The lists of losses use the corrected measure.
+ * leaves out visible syntax Jira's own text shows ("**" typed in a mail, "<br/>" quoted) and, for the
+ * pipeline, reads an attachment link as a word of its own, as Jira shows it. The lists of losses use the
+ * corrected measure.
  * Staging connection: config/config.local.php (STAGING_DSN). The report holds issue keys: keep it local.
  */
 
@@ -228,8 +229,8 @@ foreach ($items as $id => $item) {
         $renderedWords = verifyWords(verifyHtmlToText($html));
         $keysCoverage = $path === 'pipeline' ? verifyWordCoverage($keyWords, $renderedWords) : $coverage;
         $keysLossy = $keysCoverage['coverage'] < 0.99 || $structural || $residue !== [];
-        $coverage = $path === 'pipeline' ? verifyWordCoverage($chipWords, $renderedWords)
-            : verifyWordCoverage(verifyWords(verifyHtmlToText(verifySeparateAttachmentLinks($item['html']))), $renderedWords);
+        // the pipeline puts a space between a word and an attachment reference; the converter alone does not
+        $coverage = $path === 'pipeline' ? verifyWordCoverage($chipWords, $renderedWords) : $coverage;
         $residue = array_values(array_diff($residue, $jiraResidue));
         $lossy = $coverage['coverage'] < 0.99 || $structural || $residue !== [];
         $measures['old'][$path] = ($measures['old'][$path] ?? 0) + ($oldLossy ? 0 : 1);

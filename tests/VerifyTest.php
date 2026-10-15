@@ -236,6 +236,7 @@ final class VerifyTest extends TestCase
     {
         // decision 26: "WIKI-12" becomes "#40" by design; a key outside the migration stays
         self::assertSame('see #40 and OTHER-3', verifyRewriteIssueKeys('see WIKI-12 and OTHER-3', ['WIKI-12' => 40]));
+        self::assertSame('(see #40)', verifyRewriteIssueKeys('(see wiki-12)', ['WIKI-12' => 40]));
         $words = verifyWords(verifyRewriteIssueKeys('see WIKI-12 and OTHER-3', ['WIKI-12' => 40]));
         self::assertSame(['see', '40', 'and', 'other', '3'], $words);
     }

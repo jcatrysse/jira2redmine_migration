@@ -49,9 +49,10 @@ function verifyRewriteIssueKeys(string $text, array $keyToId): string
         return $text;
     }
 
+    // a link label typed in lower case ("wiki-1333") is the key all the same
     return preg_replace_callback(
-        '/\b([A-Z][A-Z0-9_]*-\d+)\b/',
-        static fn (array $m): string => isset($keyToId[$m[1]]) ? '#' . $keyToId[$m[1]] : $m[0],
+        '/\b([A-Za-z][A-Za-z0-9_]*-\d+)\b/',
+        static fn (array $m): string => isset($keyToId[strtoupper($m[1])]) ? '#' . $keyToId[strtoupper($m[1])] : $m[0],
         $text
     ) ?? $text;
 }
