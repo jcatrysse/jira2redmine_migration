@@ -97,7 +97,9 @@ All notable changes to this project. Steps to take before and after a migration 
   MediaWiki source pasted into Jira becomes a code block with its exact text; a link rewrite no longer
   swallows the text before a profile link; typed link markup keeps its spacing and converts with brackets
   in its label; a space between a mention and a link; bare addresses without backslashes; a link inside a
-  link. The bench reports the old measure, the key rewrite left out, and the corrected measure.
+  link; an issue reference no longer followed by a letter (Redmine linked none). The bench reports the old
+  measure, the key rewrite left out, and the corrected measure.
+- Central retry: 502 and 504 from a gateway are retried for GET and HEAD (B71).
 - Cascading fields: value dependencies are set as option ids after the child field exists (B7).
 - A due date before the creation date becomes the start date (B8).
 - An unmapped assignee no longer blocks the issue (B9).

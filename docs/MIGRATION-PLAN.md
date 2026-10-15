@@ -1,9 +1,27 @@
 # Jira Cloud to Redmine: test migrations and script upgrade
 
-## Samenvatting voor Jan (2026-10-14, B2, bijgewerkt in de nacht)
+## Samenvatting voor Jan (2026-10-15, B2, bijgewerkt in de ochtend)
 
-**Stand.** Alles staat op `redmine70-migration`, QA groen op PHP 8.2 en 8.3 (269 tests). Jira bleef
+**Stand.** Alles staat op `redmine70-migration`, QA groen op PHP 8.2 en 8.3 (296 tests). Jira bleef
 read-only: alleen GET-calls, de schrijfprobe gaf 401 "scope does not match".
+
+**Vanochtend: jouw beslissing 26 (conversie)**
+- **Gemeten op alle teksten** (4.648 op 7.0 met WIKI, 1.444 op 5.1), wat naar Redmine gaat: voor 4.615
+  zonder verlies (99,3%), na 4.634 (99,7%) met dezelfde meting; met de gecorrigeerde meting 4.647 van 4.648
+  op 7.0 en 1.444 van 1.444 op 5.1. De oude meting (sleutel→#id telde als verlies): 4.604 (99,1%) en 1.435.
+- **Echte fouten gefixt** (B60 tot B72, elk met een test): tabellen met samengevoegde cellen, vet/cursief
+  dat Jira splitst (sterretjes zichtbaar), "<pre>" in codeblokken, een profiellink die de tekst ervoor
+  opslokte (15 teksten, hele zinnen weg), getypte links zonder spatie (34), "#123" gevolgd door een letter
+  (geen link in Redmine), kale adressen met backslashes (kapotte link), link in link, mention plak aan link.
+- **MediaWiki:** geplakte broncode (WIKI-280, -282, -294, -295) wordt een codeblok met de exacte tekst uit
+  Jira, i.p.v. Jira's kapotte tabel. Bewust geen Markdown-tabel: het is sjablooncode met `<pre>` in de
+  cellen. Vet, [[links]] en {{sjablonen}} in een zin blijven zoals Jira ze toont.
+- **Restverschillen** zijn verklaard: 20 sleutels→#id (zo beslist), 12 meetartefacten, 7 syntax die Jira
+  zelf ook toont, 4 MediaWiki als codeblok, 1 link in link. Eén rest: WIKI-1160 (link midden in een woord).
+- **Runs met de eindcode:** 5.1 en 7.0 volledig plus WIKI-batch, verify PASS. Onderweg **B71**: een 504
+  van Atlassian stopte een leesfase; leesverzoeken worden nu opnieuw geprobeerd.
+- **Visuele controle:** 43 vergelijkingspagina's klaar (buiten de repository).
+- **Beslissing 27** (bijlagevenster 0) en **28** (geen extra veldregels, zoals in Jira) vastgelegd.
 
 **Vannacht**
 - **Fase 6 (M1), de hulpfuncties die per script verschilden.** Tijdstempels nu overal in UTC (PHP en de
@@ -808,11 +826,64 @@ nested list, mailto, img), and no visible Markdown syntax (`**`, `\|`, `](`, `|-
   inside raw HTML (3), a word glued to an attachment reference (2), one table row and one literal link
   markup shown as text.
 
+**Results B2, 2026-10-15 (decision 26).** Every staged description and comment (4,648 texts of GEOS, SIS,
+OAC and WIKI; 1,444 of GEOS, SIS, OAC on 5.1), rendered by Redmine 5.1, "pipeline" = what is pushed. Three
+measures: *old* as before; *keys* also reads a Jira key in a link to a migrated issue as the "#123" it
+becomes by design (Jan); *corrected* also leaves out what Jira and Redmine show alike (see below). Before:
+the 7.0 baseline batch with the code before decision 26 (`458bf21`, run `70-b2-convbase`); after: fresh
+runs with the final code (`bc533bf`: 5.1 `51-b2-d26`, 7.0 `70-b2-d26` and the cumulative WIKI batch
+`70-b2-d26-wiki`, all verify **PASS**, stability unchanged, restore proofs 12/12 and 101/101, workflows
++0 -0 on the second run). Before and after with the same measure version (`332198f`), then after with the
+final measure:
+
+| pipeline, without loss | old | keys | corrected |
+|---|---:|---:|---:|
+| 7.0, four projects, before (old code) | 4,580 of 4,648 (98.5%) | 4,598 (98.9%) | 4,615 (99.3%) |
+| 7.0, four projects, after, same measure | 4,597 (98.9%) | 4,617 (99.3%) | 4,634 (99.7%) |
+| 7.0, four projects, after, final measure | 4,604 (99.1%) | 4,624 (99.5%) | **4,647 (100.0%)** |
+| 5.1, GEOS, SIS, OAC, after, final measure | 1,435 of 1,444 (99.4%) | 1,440 (99.7%) | **1,444 (100.0%)** |
+
+- **The 44 texts between the old measure and 100% (7.0, final code), by class:** the Jira key rewritten to
+  "#id" by design 20; words around an attachment link, inline code or typed link markup that Jira glues
+  in its HTML and both systems show apart, or in place 12; syntax Jira's own text shows too ("**" typed in
+  a mail, "<br/>" quoted in a sentence, "[...|url]" Jira could not render) 7; MediaWiki source shown as a
+  code block instead of Jira's broken table (B64, decision 26; one of them also with syntax Jira shows) 4; a
+  link inside a link counted twice in Jira's HTML (B70) 1. **Left: 1** (WIKI-1160): a link Jira's user put in the middle of an italic word
+  ("*Qins*[y]"), shown as "Qins (#1571) y".
+- **Fixed** (each with an anonymised PHPUnit case that fails without the fix; Findings B60 to B70): ADF
+  tables with merged cells and ADF code blocks; bold and italic that Jira splits or nests, also around a
+  link; the text "<pre>" in code blocks; inline code Jira showed as "{{...}}" (21 spans in 7 texts);
+  MediaWiki source as a code block with its exact text (WIKI-280, -282, -294, -295); a profile link that
+  swallowed the text before it (15 texts, whole sentences); typed link markup that lost its spacing (30
+  texts) or did not convert with brackets in its label (4); a mention glued to a link; bare addresses with
+  backslashes (broken links); a link inside a link; an issue reference followed by a letter, which Redmine
+  does not link (7 texts). The bench's corpus checks showed no text changed beyond those classes.
+- **MediaWiki (decision 26, part 2):** converted, conservatively: a top-level paragraph that is MediaWiki
+  source without doubt (a table "{| ... |}", or `<pre>`, `<syntaxhighlight>`, `<source>` over several
+  lines) becomes a code block with the exact source from the ADF, where Jira rendered a broken table. It
+  is shown as code, not converted to a Markdown table: these texts document template code ("is replaced
+  with the following code"), and the cells hold `<pre>` blocks and templates that a table cannot hold
+  without guessing. Left as Jira shows them (no guessing): `'''bold'''`, `[[links]]` and `{{templates}}`
+  in a sentence (WIKI-205, -291, -316, -421 and the texts that name a template), tags quoted in a sentence
+  ("there should be no <br/>", WIKI-255 and 6 comments): Jira shows them as text, so does Redmine.
+- **Measure corrections**, each tested, each a case where Jira and Redmine show the same thing: the key to
+  "#id" rewrite only in links to the issue, not in an address, also in lower case; board links that select
+  an issue left out like browse links; an attachment link a word of its own (pipeline); visible syntax
+  Jira's own text shows; inline code a word of its own; typed link markup read in place, also with
+  brackets in its label; "#123" linked where Redmine's own rule links it; a link inside a link once; no
+  table expected where MediaWiki source became a code block.
+- Visual check (step 3), 2026-10-15: 43 side-by-side pages from the final 7.0 WIKI batch (the curated set
+  below plus the decision 26 items), outside the repository, handed to Jan in B2's session. The tool now
+  loads Redmine 7's lazy inline images first (they were blank in the screenshots).
+
 - Curated set (step 1), two or three per construct: table GEOS-10, OAC-39, SIS-12; code block SIS-249,
   WIKI-66, WIKI-843; panel WIKI-161, WIKI-185; nested list GEOS-15, OAC-19; image GEOS-87, OAC-47;
   attachment link GEOS-8, GEOS-23; mention GEOS-10, SIS-162; issue link GEOS-65, OAC-16; heading
   GEOS-102, WIKI-254; quote GEOS-10, OAC-17; colour WIKI-185, WIKI-406; emoji GEOS-22, SIS-151; status
-  lozenge SIS-85, WIKI-13; email link GEOS-41, SIS-211; MediaWiki text WIKI-280, WIKI-294.
+  lozenge SIS-85, WIKI-13; email link GEOS-41, SIS-211; MediaWiki text WIKI-280, WIKI-294. Decision 26
+  added: MediaWiki source WIKI-282, WIKI-295; emphasis GEOS-53, GEOS-103, WIKI-1373; swallowed text
+  WIKI-724, WIKI-625; typed links WIKI-613, WIKI-400; inline code WIKI-561; mention and link WIKI-37; link
+  inside a link WIKI-520; issue reference WIKI-42, WIKI-594.
 - Step 3 (B2, 2026-10-14): 29 side-by-side pages of the curated set (Jira's rendered HTML on the left,
   a screenshot of the Redmine 7.0 issue page on the right), in B2's session only and handed to Jan
   there; nothing committed. The first version showed descriptions only, while 14 of the 29 constructs
@@ -1025,7 +1096,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B58 | 09 stored an attachment's Jira creation time without its offset ("2024-07-04T10:31:35.833+0200" became 10:31:35) and pushed it as UTC | every attachment one or two hours late in Redmine (issues and comments were right: 10 and 11 convert to UTC); verify had no check for it | **fixed** (`004b57b`, found by the M1 review of the timestamp helpers): staging holds the instant in UTC, a value without an offset is read as UTC; verify's new "attachments: created" fails 149 of 149 on the old data |
 | B59 | 11 listed under a journal every attachment uploaded within 5 minutes of it; with B58's late times that matched 5 comments of the 5.1 test run (files uploaded an hour or two before them) | with B58 fixed (recorded run `b2-utc`): 228 status changes got a note of the files uploaded around them (so 249 more journals) and 199 comments extra lines; verify "journals: no duplicates" failed 6 | **fixed** (`e2ca087`): a changelog entry lists only the attachments its items name; for comments the window is the setting `migration.journals.comment_attachment_window`, 0 by default (Open questions) |
 | B60 | The ADF path wrote a table with merged cells (rowspan, colspan) as a header narrower than its delimiter | no table in Redmine, the rows as text with "\|---" (GEOS-10, "the lost table row") | **fixed** (decision 26, `209f906`): the vendored converter spreads merged cells over the grid |
-| B61 | Bold and italic that Jira splits or nests ("<em>16</em><sup><em>th</em></sup>", "<em><b>x</em></b>", emphasis split by a link) were written element by element; the delimiters touched | Redmine showed the asterisks (GEOS-53, GEOS-103, GEOS-36, WIKI-1373, WIKI-1040) | **fixed** (`ad0c83c`, `fa5079c`): `Jira2Redmine\Text\Emphasis` regroups a run of inline text by its emphasis and leaves out a delimiter CommonMark would not read; 3 and 17 texts change, none with more visible asterisks or fewer links on Redmine 5.1 |
+| B61 | Bold and italic that Jira splits or nests ("<em>16</em><sup><em>th</em></sup>", "<em><b>x</em></b>", emphasis split by a link) were written element by element; the delimiters touched | Redmine showed the asterisks (GEOS-53, GEOS-103, GEOS-36, WIKI-1373, WIKI-1040) | **fixed** (`ad0c83c`; around a link `fa5079c`): `Jira2Redmine\Text\Emphasis` regroups a run of inline text by its emphasis and leaves out a delimiter CommonMark would not read; 3 and 17 texts change, none with more visible asterisks or fewer links on Redmine 5.1 |
 | B62 | The HTML converter (league/html-to-markdown) decodes a code block's text and then removes "<pre>" from it, also the text "<pre>" a user typed | MediaWiki source in a code block lost its `<pre>` lines (WIKI-843) | **fixed** (`df00c95`): that text passes the converter under another name |
 | B63 | The ADF path wrote a code block between single backticks | inline code with its lines run together (31 of 33 ADF items; the pipeline uses the ADF path for ADF-macro texts) | **fixed** (`7e2c053`): fenced, longer fence when the code holds backticks |
 | B64 | MediaWiki source pasted into Jira (template documentation) is rendered by Jira as a broken table | the broken table in Redmine too (WIKI-280, -282, -294, -295) | **fixed** (decision 26, `a18cc18`): the exact source from the ADF as a code block in its place (only a table "{\| ... \|}" or a block tag over several lines; anything less certain stays as Jira shows it) |
@@ -1036,6 +1107,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B69 | An address left as plain text kept the converter's escapes ("document\\_control") | Redmine 5.1 and 7.0 link it with the backslashes: a broken link (WIKI-777) | **fixed** (`da60cf6`) |
 | B70 | Jira's renderer writes a link inside a link for an address with ">" | nested Markdown links, "](" visible (WIKI-520) | **fixed** (`bebd09b`): the inner link gives up its address |
 | B71 | The central retry (decision 5) covered 429 and 503, not a gateway error | the Atlassian gateway answered 504 to `GET issue/{id}/watchers` and 14's Jira phase stopped (7.0 WIKI batch, 2026-10-15; step 14 read the watchers again, nothing lost) | **fixed**: 502 and 504 are retried for GET and HEAD only (a write may have reached the server behind the gateway), with a test |
+| B72 | A link to a migrated issue whose label ended with a space or inside a word became "text (#461)which" or "comment f (#1015)rom" | Redmine links "#123" only when no letter follows: shown as text (WIKI-42, -594, -1291 and 4 more) | **fixed** (decision 26, `eb045e6`): a link that ends inside a word takes the rest of the word into its text, otherwise a space follows the reference |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
