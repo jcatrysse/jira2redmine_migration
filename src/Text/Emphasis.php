@@ -20,7 +20,8 @@ use DOMText;
 final class Emphasis
 {
     private const TAGS = ['em' => 'i', 'i' => 'i', 'strong' => 'b', 'b' => 'b'];
-    private const NEEDS_WORK = '#</(?:em|i|strong|b)>\s*<(?:em|i|strong|b)\b|<(?:em|i|strong|b)\b[^>]*>\s*<(?:em|i|strong|b)\b'
+    private const NEEDS_WORK = '#</(?:em|i|strong|b)>\s*(?:<a\b[^>]*>\s*|</a>\s*)?<(?:em|i|strong|b)\b'
+        . '|<(?:em|i|strong|b)\b[^>]*>\s*<(?:em|i|strong|b)\b'
         . '|<(?:em|i|strong|b)\b[^>]*>[ \t]|[ \t]</(?:em|i|strong|b)>#i';
     /** Block elements end a run of inline content; their own content is a run of its own. */
     private const BLOCKS = ['p', 'div', 'li', 'ul', 'ol', 'table', 'tbody', 'thead', 'tr', 'td', 'th', 'blockquote', 'pre',
@@ -117,9 +118,36 @@ final class Emphasis
 
             return true;
         }
+        // a link whose whole text is emphasised takes part in the emphasis around it ("<em>N</em><a><em>MEA
+        // messages</em></a>" read "*N**MEA messages*", WIKI-1373): the emphasis moves outside the link
+        if ($tag === 'a' && $node instanceof DOMElement) {
+            while (($only = self::onlyChild($node)) !== null && isset(self::TAGS[strtolower($only->nodeName)])) {
+                $format = self::with($format, self::TAGS[strtolower($only->nodeName)]);
+                foreach (iterator_to_array($only->childNodes) as $child) {
+                    $node->insertBefore($child, $only);
+                }
+                $node->removeChild($only);
+            }
+        }
         $atoms[] = [$node, $format];
 
         return true;
+    }
+
+    private static function onlyChild(DOMElement $element): ?DOMElement
+    {
+        $only = null;
+        foreach ($element->childNodes as $child) {
+            if ($child instanceof DOMText && trim($child->data) === '') {
+                continue;
+            }
+            if (!$child instanceof DOMElement || $only !== null) {
+                return null;
+            }
+            $only = $child;
+        }
+
+        return $only;
     }
 
     private static function with(string $format, string $flag): string

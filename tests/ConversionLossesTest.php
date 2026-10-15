@@ -106,4 +106,16 @@ final class ConversionLossesTest extends TestCase
         $expected = 'depth: [https://w.example/C#Depths\\_&gt;\\_50\\_m](https://w.example/C#Depths_%3E_50_m)';
         self::assertSame($expected, convertJiraHtmlToMarkdown($html, []));
     }
+
+    public function testEmphasisAroundALinkWithEmphasisIsOneRun(): void
+    {
+        // WIKI-1373, WIKI-1040 (anonymised): "<em>N</em><a><em>MEA messages</em></a>" read "*N**MEA messages*"
+        $html = '<p>is in <em>N</em><a href="https://x.example/b"><em>MEA &amp; messages</em></a> glossary, '
+            . 'pages <em>G</em><a href="https://x.example/g"><em>eodesy</em></a></p>';
+
+        self::assertSame(
+            'is in *N[MEA &amp; messages](https://x.example/b)* glossary, pages *G[eodesy](https://x.example/g)*',
+            convertJiraHtmlToMarkdown($html, [])
+        );
+    }
 }
