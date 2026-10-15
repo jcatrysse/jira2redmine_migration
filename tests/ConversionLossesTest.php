@@ -81,4 +81,19 @@ final class ConversionLossesTest extends TestCase
             )
         );
     }
+
+    public function testABareAddressInTextKeepsNoBackslashes(): void
+    {
+        // WIKI-777 (anonymised): broken link markup Jira showed as text; Redmine linked the address with "\\_" in it
+        $html = '<p><span class="error">&#91;https://docs.example.eu/document_control/view_file/473|?url=a%2Fb||'
+            . 'https://docs.example.eu/view_file/473%7C&#93;</span></p>'
+            . '<p>and <a href="https://x.example/a_b">https://x.example/a_b</a></p>';
+
+        self::assertSame(
+            "\\[https://docs.example.eu/document_control/view_file/473|?url=a%2Fb||https://docs.example.eu/view_file/473%7C\\]\n\n"
+            . 'and [https://x.example/a\\_b](https://x.example/a_b)',
+            convertJiraHtmlToMarkdown($html, [])
+        );
+        self::assertSame('`https://x\\_y` [https://x\\_y](https://x_y)', unescapeBareUrls('`https://x\\_y` [https://x\\_y](https://x_y)'));
+    }
 }

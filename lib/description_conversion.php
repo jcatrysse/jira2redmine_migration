@@ -148,8 +148,35 @@ function convertJiraHtmlToMarkdown(?string $html, array $attachments, ?string $a
 
     // mailed comments: Outlook's safe-link wrapper around every link
     $markdown = Safelinks::unwrap((string)$markdown);
+    $markdown = unescapeBareUrls($markdown);
 
     return $markdown !== '' ? $markdown : null;
+}
+
+/**
+ * An address left as plain text (Jira showed broken link markup as text, WIKI-777) is escaped by the converter
+ * like any text ("document\\_control"). Redmine links a bare address as it stands, backslashes included: a
+ * broken link that shows them (both versions, checked). Inside such an address the escapes go; escaped
+ * brackets stay, they end the address. Code, link labels and targets are left alone (Markdown reads escapes there).
+ */
+function unescapeBareUrls(string $markdown): string
+{
+    if (!str_contains($markdown, '://') || !str_contains($markdown, '\\')) {
+        return $markdown;
+    }
+    $parts = preg_split('/(```.*?```|`[^`\n]*`)/s', $markdown, -1, PREG_SPLIT_DELIM_CAPTURE) ?: [$markdown];
+    foreach ($parts as $i => $part) {
+        if ($i % 2 === 1) {
+            continue;
+        }
+        $parts[$i] = preg_replace_callback(
+            '/(?<![(<])(?<!(?<!\\\\)\[)\bhttps?:\/\/(?:[^\s<>()\[\]\\\\]|\\\\[^\s\[\]])+/',
+            static fn (array $m): string => (string)preg_replace('/\\\\([\\\\`*_{}()#+\-.!|~])/', '$1', $m[0]),
+            $part
+        ) ?? $part;
+    }
+
+    return implode('', $parts);
 }
 
 function rewriteJiraAttachmentLinks(string $html, array $attachments): string
