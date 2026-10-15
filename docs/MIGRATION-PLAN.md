@@ -369,6 +369,17 @@ Jan's answers to the six open points of the summary (2026-10-14, evening, relaye
     alias_method on details_to_strings clashes with redmine_checklists' prepend). The test setup never installed
     them (`tools/testenv/plugins-5.1.tsv` does not list them, neither instance has them), so nothing to drop;
     `redmine_reporter_dashboards` is a different plugin and stays.
+26. **The remaining text conversion losses: fix the real defects and convert WIKI's MediaWiki text** (2026-10-15
+    morning, relayed by the coordinator). (1) The real defects in GEOS, SIS, OAC and WIKI: `**` visible inside raw
+    HTML blocks, a word glued to an attachment reference, the lost table row, literal link markup shown as text,
+    literal MediaWiki HTML tags shown as text, the remaining "link's own text" cases, and any other real loss found
+    on the way. (2) WIKI's MediaWiki content that Jira itself shows as raw text (table syntax, `<nowiki>`, `<pre>`
+    and the like; WIKI-280, -282, -294, -295, -843 and others) becomes proper Markdown (tables, code blocks, plain
+    text), conservatively: only what converts without guessing; anything ambiguous stays a code block, and the plan
+    says which. (3) The measure no longer counts the Jira key to `#id` rewrite as a loss (by design); report the
+    old and the corrected number and the remaining losses by class after fresh 5.1 and 7.0 runs, WIKI batch
+    included. (4) New side-by-side pages of the curated set for Jan's visual check, outside the repository. Each
+    class gets an anonymised PHPUnit case that fails without the fix; refactor and behaviour commits apart.
 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
