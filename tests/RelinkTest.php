@@ -54,6 +54,7 @@ final class RelinkTest extends TestCase
         $stack = \GuzzleHttp\HandlerStack::create(new \GuzzleHttp\Handler\MockHandler([
             new \GuzzleHttp\Psr7\Response(204), new \GuzzleHttp\Psr7\Response(204),
             new \GuzzleHttp\Psr7\Response(204), new \GuzzleHttp\Psr7\Response(204),
+            new \GuzzleHttp\Psr7\Response(204), new \GuzzleHttp\Psr7\Response(204),
         ]));
         $stack->push(\GuzzleHttp\Middleware::history($history));
         self::assertInstanceOf(\ArrayObject::class, $history);
@@ -63,6 +64,9 @@ final class RelinkTest extends TestCase
         TextUpdate::journalNotes($client, 9, 'y (#8)', 'extended_api');
         TextUpdate::issue($client, 7, ['description' => 'x (#8)'], null);
         TextUpdate::journalNotes($client, 9, 'y (#8)', null);
+        // the issue keeps its updated time through the Extended API (Jan, 2026-10-15); the plain route cannot
+        TextUpdate::issue($client, 7, ['description' => 'x (#8)'], 'extended_api', true, '2024-03-04T05:06:07Z');
+        TextUpdate::issue($client, 7, ['description' => 'x (#8)'], null, true, '2024-03-04T05:06:07Z');
 
         $calls = [];
         foreach ($history as $entry) {
@@ -77,12 +81,15 @@ final class RelinkTest extends TestCase
             // without the Extended API the plain routes, as before
             'PUT /issues/7.json? {"issue":{"description":"x (#8)"}}',
             'PUT /journals/9.json? {"journal":{"notes":"y (#8)"}}',
+            'PUT /sub/extended_api/issues/7.json?notify=false&send_notification=0 '
+                . '{"issue":{"description":"x (#8)","updated_on":"2024-03-04T05:06:07Z"}}',
+            'PUT /issues/7.json? {"issue":{"description":"x (#8)"}}',
         ], $calls);
 
         $tool = (string)file_get_contents(__DIR__ . '/../tools/relink_issue_links.php');
         self::assertStringNotContainsString('$client->put(', $tool);
         $description = "TextUpdate::issue(\$client, (int)\$row['redmine_issue_id'], ['description' => \$decision['text']], "
-            . "\$extendedApiPrefix)";
+            . "\$extendedApiPrefix, true, \$issue['updated_on'] ?? null)";
         self::assertStringContainsString($description, $tool);
         $notes = "TextUpdate::journalNotes(\$client, (int)\$row['redmine_journal_id'], \$decision['text'], \$extendedApiPrefix)";
         self::assertStringContainsString($notes, $tool);

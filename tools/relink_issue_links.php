@@ -53,7 +53,8 @@ $storeIssue = $pdo->prepare('UPDATE migration_mapping_issues SET pushed_text_has
 foreach ($issues as $row) {
     $decision = null;
     try {
-        $current = $get(sprintf('/issues/%d.json', $row['redmine_issue_id']))['issue']['description'] ?? '';
+        $issue = $get(sprintf('/issues/%d.json', $row['redmine_issue_id']))['issue'] ?? [];
+        $current = $issue['description'] ?? '';
         $decision = Relink::decide((string)$current, $row['pushed_text_hash'], $rewrite);
         $counts[$decision['action']]++;
         if ($decision['action'] === 'edited') {
@@ -70,7 +71,8 @@ foreach ($issues as $row) {
         }
         printf("  [%s] %s (#%d): description%s", $confirm ? 'relinked' : 'would relink', $row['jira_issue_key'], $row['redmine_issue_id'], PHP_EOL);
         if ($confirm) {
-            TextUpdate::issue($client, (int)$row['redmine_issue_id'], ['description' => $decision['text']], $extendedApiPrefix);
+            // the issue keeps its updated time (Jan, 2026-10-15); the journal of the change stays
+            TextUpdate::issue($client, (int)$row['redmine_issue_id'], ['description' => $decision['text']], $extendedApiPrefix, true, $issue['updated_on'] ?? null);
             $storeIssue->execute(['h' => Relink::hash($decision['text']), 'm' => $row['mapping_id']]);
         }
     } catch (Throwable $exception) {

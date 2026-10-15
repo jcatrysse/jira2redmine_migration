@@ -48,7 +48,14 @@ final class IssueTags
             }
         }
 
-        TextUpdate::issue($client, $issueId, ['add_tag_list' => implode(',', $tags)], $extendedApiPrefix, false);
+        $keepUpdatedOn = null;
+        if ($extendedApiPrefix !== null) {
+            // the issue keeps its updated time (Jan, 2026-10-15)
+            $current = json_decode((string)$client->request('GET', sprintf('issues/%d.json', $issueId))->getBody(), true);
+            $updatedOn = is_array($current) ? ($current['issue']['updated_on'] ?? null) : null;
+            $keepUpdatedOn = is_string($updatedOn) ? $updatedOn : null;
+        }
+        TextUpdate::issue($client, $issueId, ['add_tag_list' => implode(',', $tags)], $extendedApiPrefix, false, $keepUpdatedOn);
 
         return self::ENDPOINT_ISSUE;
     }

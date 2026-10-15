@@ -71,14 +71,16 @@ final class IssueTagsTest extends TestCase
     public function testTheIssueUpdateGoesThroughTheExtendedApiWithoutMail(): void
     {
         // Jan (2026-10-15): a plain issue update mails the watchers and fires Redmine 7's webhooks; the 5.1 route stays
-        $client = $this->client(new Response(404), new Response(204));
+        $current = (string)json_encode(['issue' => ['id' => 5, 'updated_on' => '2024-03-04T05:06:07Z']]);
+        $client = $this->client(new Response(404), new Response(200, [], $current), new Response(204));
         IssueTags::push($client, 5, ['a', 'b'], null, 'extended_api');
-        self::assertSame(['POST /issues/5/tags.json', 'PUT /extended_api/issues/5.json'], $this->calls());
-        $entry = $this->history[1];
+        self::assertSame(['POST /issues/5/tags.json', 'GET /issues/5.json', 'PUT /extended_api/issues/5.json'], $this->calls());
+        $entry = $this->history[2];
         $request = is_array($entry) ? $entry['request'] : null;
         self::assertInstanceOf(\Psr\Http\Message\RequestInterface::class, $request);
         self::assertSame('notify=false&send_notification=0', $request->getUri()->getQuery());
-        self::assertSame('{"issue":{"add_tag_list":"a,b"}}', $this->body(1));
+        // the issue keeps its updated time (Jan, 2026-10-15: no visible trace)
+        self::assertSame('{"issue":{"add_tag_list":"a,b","updated_on":"2024-03-04T05:06:07Z"}}', $this->body(2));
     }
 
     public function testA404AfterTheRouteWorkedIsAnError(): void
