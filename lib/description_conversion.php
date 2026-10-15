@@ -109,6 +109,7 @@ function convertJiraHtmlToMarkdown(?string $html, array $attachments, ?string $a
     $trimmed = preg_replace('#</?(?:sup|sub)\b[^>]*>#i', '', $trimmed) ?? $trimmed;
     $trimmed = Emphasis::normalize($trimmed);
 
+    $trimmed = unnestLinks($trimmed);
     $rewrittenHtml = rewriteJiraAttachmentLinks($trimmed, $attachments);
 
     static $converter = null;
@@ -177,6 +178,51 @@ function unescapeBareUrls(string $markdown): string
     }
 
     return implode('', $parts);
+}
+
+/**
+ * A link inside a link: Jira's renderer writes one for an address with ">" in it (WIKI-520), and the converter
+ * made nested Markdown links that Redmine showed as "[...](...)". The inner link gives up its address, its
+ * text stays in the outer one.
+ */
+function unnestLinks(string $html): string
+{
+    if (preg_match('#<a\b[^>]*>(?:(?!</a>).)*?<a\b#is', $html) !== 1) {
+        return $html;
+    }
+    $doc = new DOMDocument();
+    $previous = libxml_use_internal_errors(true);
+    $wrapped = '<?xml encoding="utf-8"?><div id="j2r-root">' . $html . '</div>';
+    $loaded = $doc->loadHTML($wrapped, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    libxml_clear_errors();
+    libxml_use_internal_errors($previous);
+    $root = $loaded ? $doc->getElementById('j2r-root') : null;
+    if ($root === null) {
+        return $html;
+    }
+    $changed = false;
+    foreach (iterator_to_array($root->getElementsByTagName('a')) as $outer) {
+        foreach (iterator_to_array($outer->getElementsByTagName('a')) as $inner) {
+            $parent = $inner->parentNode;
+            if ($parent === null) {
+                continue;
+            }
+            foreach (iterator_to_array($inner->childNodes) as $child) {
+                $parent->insertBefore($child, $inner);
+            }
+            $parent->removeChild($inner);
+            $changed = true;
+        }
+    }
+    if (!$changed) {
+        return $html;
+    }
+    $out = '';
+    foreach ($root->childNodes as $child) {
+        $out .= $doc->saveHTML($child);
+    }
+
+    return $out;
 }
 
 function rewriteJiraAttachmentLinks(string $html, array $attachments): string

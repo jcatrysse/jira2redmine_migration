@@ -96,4 +96,14 @@ final class ConversionLossesTest extends TestCase
         );
         self::assertSame('`https://x\\_y` [https://x\\_y](https://x_y)', unescapeBareUrls('`https://x\\_y` [https://x\\_y](https://x_y)'));
     }
+
+    public function testALinkInsideALinkGivesUpItsAddress(): void
+    {
+        // WIKI-520 (anonymised): Jira wrote a link inside a link for an address with ">"; Redmine showed "]("
+        $html = '<p>depth: <a href="https://w.example/C#Depths_%3E_50_m"><font color="#36b37e">'
+            . '<a href="https://w.example/C#Depths_">https://w.example/C#Depths_</a>&gt;_50_m</font></a></p>';
+
+        $expected = 'depth: [https://w.example/C#Depths\\_&gt;\\_50\\_m](https://w.example/C#Depths_%3E_50_m)';
+        self::assertSame($expected, convertJiraHtmlToMarkdown($html, []));
+    }
 }
