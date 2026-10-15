@@ -23,13 +23,12 @@ class CodeBlock extends BlockNode
 
     public function toMarkdown(): string
     {
-        $content = $this->content();
+        $code = implode('', array_map(fn (Node $node) => $node->toMarkdown(), $this->content()));
+        // a fence longer than any run of backticks in the code (CommonMark), three at least
+        preg_match_all('/`+/', $code, $runs);
+        $fence = str_repeat('`', max(3, ...array_map(static fn (string $run): int => strlen($run) + 1, $runs[0] ?: [''])));
 
-        return implode(self::BREAK, [
-            '`' . $this->language,
-            ...array_map(fn (Node $node) => $node->toMarkdown(), $content),
-            '`',
-        ]);
+        return implode(self::BREAK, [$fence . $this->language, $code, $fence]);
     }
 
     public function contains(): array
