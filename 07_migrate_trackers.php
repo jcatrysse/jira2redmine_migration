@@ -1319,7 +1319,9 @@ function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array 
             WHERE mapping_id = :mapping_id
         SQL);
 
-        if ($updateStatement === false) {
+        // decision 34: a tracker 07 created, as opposed to one it matched (both end CREATION_SUCCESS after the push)
+        $createdStatement = $pdo->prepare('UPDATE migration_mapping_trackers SET created_by_migration = 1 WHERE mapping_id = :mapping_id');
+        if ($updateStatement === false || $createdStatement === false) {
             throw new RuntimeException('Failed to prepare update statement for migration_mapping_trackers during the push phase.');
         }
 
@@ -1383,6 +1385,7 @@ function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array 
                     'automation_hash' => $automationHash,
                     'mapping_id' => $mappingId,
                 ]);
+                $createdStatement->execute(['mapping_id' => $mappingId]);
 
                 printf(
                     '  [created] Jira issue type %s (%s) -> Redmine tracker #%d.%s',

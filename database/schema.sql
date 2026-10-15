@@ -375,6 +375,7 @@ CREATE TABLE `migration_mapping_trackers` (
                                               `proposed_redmine_name` VARCHAR(255) NULL,
                                               `proposed_redmine_description` TEXT NULL,
                                               `proposed_default_status_id` INT NULL,
+                                              `created_by_migration` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '07 created the tracker (decision 34); a matched one stays 0, also after its push to the projects',
                                               `migration_status` ENUM('PENDING_ANALYSIS', 'MATCH_FOUND', 'READY_FOR_CREATION', 'READY_FOR_UPDATE', 'CREATION_SUCCESS', 'CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED', 'IGNORED') NOT NULL DEFAULT 'PENDING_ANALYSIS',
                                               `notes` TEXT,
                                               `automation_hash` CHAR(64) NULL,

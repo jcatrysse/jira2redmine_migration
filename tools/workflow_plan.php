@@ -34,9 +34,10 @@ foreach ($staging['sources'] as $source) {
         }
     }
 }
-// Jan, decision 34: only the trackers 07 created get the union as their global workflow
+// Jan, decision 34: only the trackers 07 created get the union as their global workflow; 07 marks them, since a matched
+// tracker also ends CREATION_SUCCESS once its push added it to the projects
 $newTrackers = array_map('intval', $pdo->query("SELECT DISTINCT redmine_tracker_id FROM migration_mapping_trackers
-    WHERE migration_status = 'CREATION_SUCCESS' AND redmine_tracker_id IS NOT NULL")->fetchAll(PDO::FETCH_COLUMN));
+    WHERE created_by_migration = 1 AND redmine_tracker_id IS NOT NULL")->fetchAll(PDO::FETCH_COLUMN));
 $plan = WorkflowPlan::fromRows(
     $rows('migration_mapping_workflow_transitions'),
     $rows('migration_mapping_workflow_field_permissions'),

@@ -125,6 +125,23 @@ final class WorkflowPlanTest extends TestCase
         self::assertSame([], $union['kept_global']);
     }
 
+    public function testTheTrackers07CreatedAreMarkedApartFromTheOnesItMatched(): void
+    {
+        // decision 34 on a Redmine that was not empty: 07 matched the existing "Task" and, once its push added it to the
+        // projects, marked it CREATION_SUCCESS like a tracker it created; the plan took it for new and wrote the union as
+        // its global workflow (4 rows became 163, 5.1 and 7.0)
+        $schema = (string)file_get_contents(__DIR__ . '/../database/schema.sql');
+        self::assertStringContainsString('`created_by_migration` TINYINT(1) NOT NULL DEFAULT 0', $schema);
+        $trackers = (string)file_get_contents(__DIR__ . '/../07_migrate_trackers.php');
+        $created = (int)strpos($trackers, "'  [created] Jira issue type %s (%s) -> Redmine tracker #%d.%s'");
+        $mark = (int)strpos($trackers, "\$createdStatement->execute(['mapping_id' => \$mappingId]);");
+        self::assertGreaterThan(0, $mark);
+        self::assertLessThan($created, $mark, 'marked where the tracker is created, not where projects are added');
+        $plan = (string)file_get_contents(__DIR__ . '/../tools/workflow_plan.php');
+        self::assertStringContainsString('WHERE created_by_migration = 1 AND redmine_tracker_id IS NOT NULL', $plan);
+        self::assertStringNotContainsString("WHERE migration_status = 'CREATION_SUCCESS' AND redmine_tracker_id", $plan);
+    }
+
     public function testTheProposalFindsTheRedmineProjectThroughTheStagedJiraProject(): void
     {
         // migration_mapping_projects has no project key: the proposal stopped on "Unknown column jira_project_key"
