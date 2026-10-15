@@ -23,8 +23,9 @@ addresses or secrets in this file: the repository is public. Placeholders are wr
 - **Gevonden tijdens het schrijven:** B73, nieuwe prioriteiten komen onderaan de rangorde (Blocker werd de laagste).
   En: in productie moet stealth mode aan voor het migratie-account, want 13 (tags) en de relink sturen anders mail.
 - **Open voor Jan:** de rolnamen Manager en Developer, de globale workflow op bestaande trackers, en B73 (B6).
-- **Duur:** WIKI ongeveer 1 uur, GEOS, SIS en OAC 40 minuten, SURV 80 minuten met steekproef. In productie komen
-  daar voor SURV 2,5 tot 4 uur bijlagen bij. De negen projecten die nog nooit liepen meet de repetitie.
+- **Duur (schatting):** WIKI ongeveer 1u15, GEOS, SIS en OAC 40 minuten, SURV, LABO en DOC 2 tot 3 uur met
+  steekproef, de laatste batch 40 tot 60 minuten. In productie komen er voor batch 3 nog 2 tot 5 uur bijlagen bij
+  (110 GiB). Schijf: ongeveer 110 GiB vrij in de tijdelijke map en 110 GiB in Redmine's `files/`.
 - **Deel C** is de prompt voor de lokale Claude-sessie op de server: Jira alleen lezen, standaard rechten, Jans go
   voor elke schrijfstap in productie, rapport in het Nederlands.
 
@@ -46,7 +47,7 @@ docs/MIGRATION-PLAN.md (Jan's decisions, findings B1 to B72). This document is t
 
 <!-- Part A is written by the coordinator session and included here as written. -->
 
-## Part A: upgrade Redmine 5.1 (GEOxyz) to 7.0 (GEOxyz)
+## Part A: Upgrade Redmine 5.1-stable-GEOxyz to 7.0-stable-GEOxyz
 
 Written by the coordinator from the upgrade rehearsal of 2026-10-14/15 and the "After the upgrade
 (production)" section of each plugin's `docs/REDMINE7-MIGRATION.md` (branch `redmine70-migration`). Jan's
@@ -304,11 +305,11 @@ SOIL, SSPT, ROV, GSPP, FPS).
   mysql jira2redmine < database/schema.sql
   ```
 - **Disk.** `paths.tmp` holds the downloaded attachments; 09 does not delete them after the upload, so it grows
-  with every batch until it is emptied (B7 step 14). Redmine's `files/` grows by the same amount. Measured: GEOS,
-  SIS, OAC 1.6 GB; WIKI 4.7 GB; SURV 98.7 GB in Jira (0.98 GB with the sample). Plan for production: the SURV
-  batch alone needs about **100 GB free in `paths.tmp` and 100 GB in Redmine's `files/`**, plus DOC and LABO
-  (sizes in B8). The staging database stays small next to that (a few GB: the Jira payloads of every issue and
-  comment).
+  with every batch until it is emptied (B7 step 14). Redmine's `files/` grows by the same amount. Sizes in B8: the
+  third batch (SURV, LABO, DOC) holds about 110 GiB of attachments, so production needs **about 110 GiB free in
+  `paths.tmp` and 110 GiB more in Redmine's `files/`** for that batch, and all batches together add about 116 GiB to
+  `files/`. With the sample (rehearsal) SURV took 0.98 GB. The staging database stays small next to that (a few GB:
+  the Jira payloads of every issue and comment).
 - **tmux** for the long steps (B8), so a dropped SSH session does not stop a step.
 - **Redmine 7.0** after part A, with the plugins the migration uses: `redmine_extended_api` (issues, journals,
   relations without mail and with Jira's authors and dates), `redmine_project_workflows` (each project its own
@@ -667,31 +668,55 @@ the list for the scripts (B3).
 
 TEST is not migrated (decision 22). The order puts first what others link to: GEOS issues hang under WIKI epics.
 
+**Sizes** (the coordinator's count through the gateway on 2026-10-13, GET only; attachments in GiB, 1 GiB = 1,024
+MiB; LLE, FPS and TEST had no issues that day):
+
+| batch | project | issues | comments | attachments | GiB | largest file MiB | links | subtasks |
+|---|---|---|---|---|---|---|---|---|
+| 1 | WIKI | 1,457 | 2,434 | 837 | 4.4 | 1,794 | 1,680 | 586 |
+| 2 | GEOS | 97 | 547 | 320 | 1.0 | 165 | 26 | 3 |
+| 2 | SIS | 265 | 477 | 199 | 0.2 | 67 | 104 | 7 |
+| 2 | OAC | 64 | 77 | 57 | 0.2 | 52 | 61 | 22 |
+| 3 | SURV | 1,494 | 7,344 | 6,323 | 98.7 | 1,811 | 617 | 133 |
+| 3 | LABO | 577 | 1,383 | 1,705 | 9.5 | 1,770 | 456 | 21 |
+| 3 | DOC | 601 | 983 | 383 | 1.3 | 283 | 131 | 81 |
+| 4 | GSPP | 165 | 0 | 0 | 0 | 0 | 304 | 129 |
+| 4 | SOIL | 127 | 268 | 201 | 0.3 | 16 | 2 | 1 |
+| 4 | SSPT | 47 | 123 | 0 | 0 | 0 | 0 | 0 |
+| 4 | ROV | 15 | 37 | 70 | 0.3 | 84 | 4 | 0 |
+| 4 | ICT | 2 | 4 | 0 | 0 | 0 | 1 | 0 |
+| 4 | LLE, FPS | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+Per batch: (1) 1,457 issues, 4.4 GiB; (2) 426 issues, 1.5 GiB; (3) 2,672 issues, 109.5 GiB; (4) 356 issues, 0.6 GiB.
+Jira keeps changing: the rehearsal's own counts (B7 step 10) are the ones to plan production with.
+
 **Measured** (test instances, Redmine and staging on the same machine, `download_concurrency` 6; the logs per step
 are in `runs/` of the test environment, not in this repository):
 
 | run | issues | attachments | duration | longest steps |
 |---|---|---|---|---|
-| GEOS, SIS, OAC, first batch, 7.0 (5.1 the same) | 426 | 576, 1.6 GB, all | 24 min (25 on 5.1) | 11 8 min, 14 3 min, 09 push 2.4 min, 10 2.3 min |
-| WIKI, second batch after GEOS, SIS, OAC, 7.0 | 1,457 (1,883 in the run) | 837, 4.7 GB, all | 76 min | 11 26 min, 14 13 min, 14 jira phase 8 min, 10 11 min, 09 7 min, 13 4 min |
-| SURV alone, 5.1, with the sample | 1,494 | 4,306 of 6,323 sampled: 0.98 GB of 98.7 GB | 80 min | 11 43 min, 14 11 min, 09 12 min, 10 8 min |
+| GEOS, SIS, OAC, first batch, 7.0 (5.1 the same) | 426 | 576, 1.5 GiB, all | 24 min (25 on 5.1) | 11 8 min, 14 3 min, 09 push 2.4 min, 10 2.3 min |
+| WIKI, second batch after GEOS, SIS, OAC, 7.0 | 1,457 (1,883 in the run) | 837, 4.4 GiB, all | 76 min | 11 26 min, 14 13 min, 14 jira phase 8 min, 10 11 min, 09 7 min, 13 4 min |
+| SURV alone, 5.1, with the sample | 1,494 | 4,306 of 6,323 sampled: 0.98 GB of 98.7 GiB | 80 min | 11 43 min, 14 11 min, 09 12 min, 10 8 min |
 
-Steps that grow with **every project migrated so far**, not only the batch's new ones: 14's jira phase reads the
-watchers of every issue in `J2R_PROJECTS` (about 0.25 s per issue: 459 s for 1,883 issues), 16 reads every Jira
-workflow (1.5 min), 08's transform (2 min). The other steps skip what is migrated.
+Those three runs took 0.5 to 1.2 s per issue plus comment (SURV the fastest per item, WIKI the slowest). Steps that
+grow with **every project migrated so far**, not only the batch's new ones: 14's jira phase reads the watchers of
+every issue in `J2R_PROJECTS` (about 0.25 s per issue: 459 s for 1,883 issues), 16 reads every Jira workflow
+(1.5 min), 08's transform (2 min). The other steps skip what is migrated.
 
 **Attachments without the sample** (production): pull measured at 18 to 27 MB/s, upload at 11 to 18 MB/s into a
-local Puma and 33 MB/s behind Apache with X-Sendfile (docs/RUNBOOK.md, appendix). SURV's 97.7 GB beyond the sample
-then take about 1 to 1.5 hours to pull and 1 to 2.5 hours to upload, depending on the server's network.
+local Puma and 33 MB/s behind Apache with X-Sendfile (docs/RUNBOOK.md, appendix). The third batch's 110 GiB then
+take about 1.2 to 1.8 hours to pull and 1 to 3 hours to upload, depending on the server's network.
 
-**Estimates per batch** (rehearsal with the sample; production adds the attachment time):
+**Estimates per batch** (from the sizes and the rates above; rehearsal with the sample, production adds the
+attachment time):
 
 | batch | rehearsal | production |
 |---|---|---|
-| 1: WIKI | about 1 hour | about 1 hour 15 min (4.7 GB) |
-| 2: GEOS, SIS, OAC | about 40 min | about 40 min (1.6 GB) |
-| 3: SURV, DOC, LABO | SURV 80 min plus DOC and LABO | plus 2.5 to 4 hours for SURV's attachments; DOC and LABO: see below |
-| 4: ICT, LLE, SOIL, SSPT, ROV, GSPP, FPS | never ran | never ran |
+| 1: WIKI | about 1 hour 15 min | about 1 hour 15 min (4.4 GiB, measured with all files) |
+| 2: GEOS, SIS, OAC | about 40 min (14's jira phase rereads WIKI) | about 40 min (1.5 GiB) |
+| 3: SURV, LABO, DOC | about 2 to 3 hours (SURV 80 min, LABO and DOC 30 to 70 min, 14's jira phase about 20 min) | plus 2 to 5 hours for the attachments (110 GiB) |
+| 4: GSPP, SOIL, SSPT, ROV, ICT, LLE, FPS | about 40 to 60 min (356 issues; 14's jira phase about 20 min) | about the same (0.6 GiB) |
 
 DOC, LABO and the projects of batch 4 never ran: the rehearsal measures them (the duration per step is in each
 batch report). Verify takes about 5 minutes (four projects, `--sample=25`, not in the durations above). After the
