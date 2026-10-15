@@ -1,9 +1,19 @@
 # Jira Cloud to Redmine: test migrations and script upgrade
 
-## Samenvatting voor Jan (2026-10-15, B2, bijgewerkt in de namiddag)
+## Samenvatting voor Jan (2026-10-15, B2, bijgewerkt 's avonds)
 
-**Stand.** Alles staat op `redmine70-migration`, QA groen (306 tests). Jira bleef read-only: alleen GET-calls, de
+**Stand.** Alles staat op `redmine70-migration`, QA groen (309 tests). Jira bleef read-only: alleen GET-calls, de
 schrijfprobe gaf 401 "scope does not match".
+
+**Vanavond: jouw beslissingen 37 tot 39**
+- **37, geen sporen:** E1 en E2 via de Extended API (vlag naast notify=false: geen journal bij 10's tweede pass,
+  12, 13 en de relink, een aangepast commentaar houdt zijn tijden). De plugin-sessie bouwt de vlag; zodra ik naam en
+  commit heb, sturen de scripts hem mee, met een test per script en een run op 5.1 en 7.0. Tot dan niets gewijzigd.
+- **38:** datums en % gereed van parents blijven afgeleid.
+- **39, één run met alle 14 projecten:** `docs/PRODUCTION.md` herschreven (B1 tot B3, B5 tot B11, samenvatting,
+  deel C): snapshots S1 na de structuur en reviews, S2 na 09 en 10, S3 na 11 tot 16; de relink alleen als controle;
+  de vier batches als terugval (B11). Schijf: één pull van alle bijlagen, `paths.tmp` leeg direct na 09's push
+  (116 GiB in `paths.tmp` en 116 GiB extra in `files/` op dat moment); met minder ruimte 09 in rondes.
 
 **Vanmiddag**
 - **Productie-runbook** `docs/PRODUCTION.md`: deel A (upgrade, van de coordinator), deel B (migratie, B2), deel C
@@ -364,7 +374,8 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
 15. **Confirmed** (2026-10-14): Assignable user as Developer; the Non member users group only after his
     READY; B37 (unoffered values added, then inactive); B38/B39 cross-project subtasks and relations on
     (runbook section 0, `manual_steps.rb`); the transition screen extraction stays.
-16. **B52: batches plus relink, not one run** (2026-10-14). The production procedure is in the runbook
+16. **B52: batches plus relink, not one run** (2026-10-14; for production replaced by decision 39, one run, the
+    batches kept as its fallback). The production procedure is in the runbook
     (section 1, Batches): batch order, 12 in every batch, `tools/relink_issue_links.php` after the last
     batch, and its check: the texts that still hold a Jira link to a migrated issue must be 0 (`06fd323`).
 17. **Automation rules**: Jan exports them himself once as JSON, kept outside this public repository
@@ -385,7 +396,7 @@ Jan's answers to the six open points of the summary (2026-10-14, evening, relaye
     issue with its own text reads "text (#id)"; a link to an issue outside the migration keeps its Jira link
     with the key as text; Outlook safe links become the plain link.
 22. **Production batch order: WIKI; then GEOS, SIS, OAC; then SURV, DOC, LABO; then ICT, LLE, SOIL, SSPT, ROV,
-    GSPP, FPS. TEST is not migrated** (`migration.projects.not_migrated`: 01 marks it IGNORED and does not
+    GSPP, FPS. TEST is not migrated** (the order now matters only for the fallback of decision 39; TEST stays out) (`migration.projects.not_migrated`: 01 marks it IGNORED and does not
     create it, `911e26c`). Runbook section 1, Batches.
 23. **Production environment: an existing server with PHP 8.2 or newer, plus a temporary MySQL/MariaDB for
     staging** (no port of the staging SQL to PostgreSQL). Verified on PHP 8.2.34 (QA green; nothing 8.3-only);
@@ -477,6 +488,27 @@ Jan's decisions of 2026-10-15, later in the afternoon (relayed by the coordinato
     everyone; the migration uses a local-only entry) and that the crontab is off for the window; inside the window a
     rollback costs no user work, after it only a fix forward (B10). The temporarily activated accounts and the open
     workflows reach nobody while Redmine is closed. The rehearsal measures the window's length.
+
+Jan's answers to the traces of post-processing (2026-10-15, evening, relayed by the coordinator; the options are in
+Results, "Traces of post-processing"):
+
+37. **No trace, through the Extended API: options E1 and E2.** An admin-only request flag next to `notify=false` on
+    `/extended_api`: under it no `Issue#create_journal`, no `Issue#create_parent_issue_journal` ("Subtask added") and
+    no `IssueRelation` journals (E1), and a journal update through `/extended_api` with the flag keeps the journal's
+    `updated_on` and `updated_by_id` (E2). Not R2. redmine_extended_api builds it in its own session (branch
+    `redmine70-migration`, Redmine 5.1, 6.1 and 7.0); the coordinator passes on the parameter's final name and the
+    commit. Then B2 sends the flag from 10's second pass, 12, 13 and the relink, with a test each, and proves it with
+    a run on 5.1 and 7.0 on a non-empty Redmine: 0 journals from post-processing, the updated times unchanged apart
+    from the derived parent fields (38). Until then nothing changes in the scripts for this.
+38. **Parents' dates and done ratio stay derived** (option S not taken). The few parents with a new updated time and
+    no journal (3 per run of GEOS, SIS and OAC) are accepted.
+39. **One run of all 14 projects instead of four batches** (B2's advice). Three VM snapshots at the natural pauses:
+    after the structure and its reviews, after 09 and 10, after 11 to 16; the relink stays only as the check that 0
+    links are left; the four batches stay in the runbook as the fallback. This replaces decisions 16 and 22 for
+    production: the order of 22 matters only for the fallback. Disk (B2's choice, docs/PRODUCTION.md B2): one pull of
+    every attachment, `paths.tmp` emptied right after 09's push; the server needs room for about 116 GiB twice at
+    that moment (`paths.tmp` and Redmine's `files/`); with less, 09 runs in rounds (`--download-limit`), each round
+    pushed and emptied before the next. The rehearsal (decision 30) runs it this way.
 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
@@ -1603,7 +1635,8 @@ leaves after an issue is created; "before" is the code of `690e28c`, "after" `d5
 
 Found on the way: **B75** (13's tags on 7.0 were one comma-joined tag), fixed in `5dffd71`.
 
-Options for Jan (they need a change in redmine_extended_api, which has its own session and plan, or a Redmine setting):
+Options for Jan (they need a change in redmine_extended_api, which has its own session and plan, or a Redmine setting).
+**Jan: E1 and E2, not R2 (decision 37); S not taken (decision 38).**
 - **E1, journal-free writes in the Extended API** (B2's advice). An admin-only request flag on `/extended_api`, next to
   `notify=false`, for example `journal=false`. Under it: `Issue#create_journal` (the after_save that saves the
   issue's current journal; 5.1 `issue.rb:2029`, 7.0 `:2059`) saves nothing; `Issue#create_parent_issue_journal` (the
@@ -1623,7 +1656,8 @@ Options for Jan (they need a change in redmine_extended_api, which has its own s
   (3 per run). It is a global setting: existing GEOxyz projects whose parents follow their subtasks today would stop
   doing so. Jan's choice.
 
-**One run instead of four batches** (decision 36 makes it possible; it changes decisions 16 and 22, so Jan decides):
+**One run instead of four batches** (decision 36 makes it possible; it changes decisions 16 and 22, so Jan decides;
+**Jan: one run, decision 39**; docs/PRODUCTION.md B7 to B11):
 - the relink becomes (nearly) unnecessary: in one run every issue exists before 11 pushes the comments and before 12
   creates the relations; 10's second pass rewrites the descriptions that link issues created later in the same run.
   What is left are links to issues outside the migration (TEST), which stay Jira links anyway. The relink's check

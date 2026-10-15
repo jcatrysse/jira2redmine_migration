@@ -69,7 +69,8 @@ All notable changes to this project. Steps to take before and after a migration 
   (decision 35); `migration.workflows.open_workflow_roles` (decision 33); `tools/config_value.php` prints a
   `migration.*` value as JSON for the rails runner steps.
 - docs/PRODUCTION.md: the procedure for the rehearsal and production (upgrade to 7.0, then the migration in
-  four batches, the prompt for the local session).
+  one run of all 14 projects with snapshots at its three pauses, decision 39; the four batches as the fallback;
+  the prompt for the local session).
 
 ### Changed
 - An existing Redmine (decisions 33 to 35): Jira priorities map onto existing Redmine priorities, the rest is a

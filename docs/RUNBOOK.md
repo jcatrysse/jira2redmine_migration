@@ -37,11 +37,11 @@ database, which is removed after the migration (no PostgreSQL port of the stagin
 
    In `config/config.local.php`: `database.dsn` (`mysql:host=127.0.0.1;port=3306;dbname=jira2redmine;charset=utf8mb4`),
    `database.username`, `database.password`. Room on disk: the staging database holds the Jira payloads of every
-   migrated issue and comment, and `paths.tmp` the attachments of a batch until 09 has pushed them (SURV alone
-   has 98.7 GB of attachments in Jira).
-3. **After the migration**, once the last batch, the relink (section 1) and the workflows (section 5) are
-   done and no rerun is needed: if a copy of the staging data is wanted, `mysqldump` it and keep it outside
-   this repository (it holds Jira data); then `mysql -e "DROP DATABASE jira2redmine; DROP USER
+   migrated issue and comment, and `paths.tmp` the attachments of the run until 09 has pushed them (all 14
+   projects about 116 GiB, SURV alone 98.7 GiB; docs/PRODUCTION.md B2).
+3. **After the migration**, once the run (or the last batch), the relink check (section 1) and the workflows
+   (section 5) are done and no rerun is needed: if a copy of the staging data is wanted, `mysqldump` it and keep
+   it outside this repository (it holds Jira data); then `mysql -e "DROP DATABASE jira2redmine; DROP USER
    'jira2redmine'@'localhost';"`, `apt purge mariadb-server` (if installed for this), and empty `paths.tmp`.
 
 ## 0. Before the run
@@ -176,7 +176,11 @@ links it. Every 10 run lists the issues still waiting, with the parent's key, pe
 (`Issues waiting for a parent outside the run (B38)`, `[waiting]` lines); a parent that is never
 migrated stays on that list: link it by hand or leave it.
 
-**Production procedure (Jan, 2026-10-14: batches plus relink, not one run).**
+**Production: one run of all 14 projects (Jan, decision 39, 2026-10-15)**, as in docs/PRODUCTION.md B7: every
+issue exists before 11 and 12, so the relink below is only the check that 0 links are left. The batches below are
+its fallback (docs/PRODUCTION.md B11).
+
+**Fallback procedure: batches (Jan, 2026-10-14: batches plus relink; since decision 39 the fallback).**
 
 1. Batch order for production (Jan, decision 22): (1) WIKI; (2) GEOS, SIS, OAC; (3) SURV, DOC, LABO;
    (4) ICT, LLE, SOIL, SSPT, ROV, GSPP, FPS. **TEST is not migrated**: `migration.projects.not_migrated`

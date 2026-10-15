@@ -1,25 +1,30 @@
 # Production: Redmine 5.1 to 7.0, then the Jira migration
 
 One document for the rehearsal and for production (Jan, decision 31 in docs/MIGRATION-PLAN.md). Part A
-upgrades GEOxyz's Redmine 5.1 to 7.0; part B migrates Jira Cloud into that Redmine 7.0, in four batches;
-part C is the prompt for the local Claude Code session that runs both on the server. No hostnames,
-addresses or secrets in this file: the repository is public. Placeholders are written `<like-this>`.
+upgrades GEOxyz's Redmine 5.1 to 7.0; part B migrates Jira Cloud into that Redmine 7.0, in one run of all 14
+projects (decision 39; the four batches stay as the fallback); part C is the prompt for the local Claude Code
+session that runs both on the server. No hostnames, addresses or secrets in this file: the repository is public.
+Placeholders are written `<like-this>`.
 
 ## Samenvatting (Nederlands)
 
 - **Volgorde:** eerst de bestaande Redmine 5.1 naar 7.0 (deel A) en controleren, daarna Jira rechtstreeks in die
-  7.0 (deel B), in vier batches: WIKI; GEOS, SIS, OAC; SURV, DOC, LABO; ICT, LLE, SOIL, SSPT, ROV, GSPP, FPS. TEST
-  gaat niet mee.
-- **Eerst een generale repetitie** op een kloon van de productie-VM: mail uit, bijlagen als steekproef, alle
-  projecten, met relink, workflows en restore. Daarna productie: snapshot voor elke batch, alle bijlagen.
+  7.0 (deel B), **in één run met alle 14 projecten** (beslissing 39): WIKI, GEOS, SIS, OAC, SURV, DOC, LABO, ICT,
+  LLE, SOIL, SSPT, ROV, GSPP, FPS. TEST gaat niet mee. De vier batches blijven als terugvaloptie (B11), alleen als
+  Jan dat kiest.
+- **Snapshots op de drie natuurlijke pauzes** (B7, B10): na de structuur en de reviews (S1), na 09 en 10 (S2), na
+  11 tot 16 (S3), plus S0 bij de start. Een fout kost zo hooguit één deel. De relink is alleen nog de controle dat
+  er 0 Jira-links over zijn: in één run bestaat elk issue al voor 11 en 12.
+- **Eerst een generale repetitie** op een kloon van de productie-VM: mail uit, bijlagen als steekproef, dezelfde
+  run met alle projecten, de relink-controle, workflows en restore. Daarna productie met alle bijlagen.
 - **Productie deel B in één onderhoudsvenster** (beslissing 36): vanaf de start is Jira alleen-lezen voor de
   gebruikers (Jan zet dat zelf) en is Redmine dicht (de webserver toont een onderhoudspagina, de migratie gebruikt
-  een lokale ingang); de crontab staat uit. Na de laatste batch, relink, workflows, restore en de controles gaat
+  een lokale ingang); de crontab staat uit. Na de run, de relink-controle, workflows, restore en de controles gaat
   Redmine open. Binnen het venster kost een rollback geen werk van gebruikers, daarna alleen nog vooruit fixen.
 - **Nieuw risico: de bestaande Redmine.** Tot nu toe ging elke test naar een lege Redmine. De scripts zoeken eerst
   een bestaand project, gebruiker, groep, status, prioriteit, tracker of veld, en dat op naam of identifier. Een
-  verkeerde match zet Jira-data in een bestaand object, een gemiste match maakt een dubbel. Jan bekijkt in de
-  eerste batch elke match voor de push (B6, met de queries).
+  verkeerde match zet Jira-data in een bestaand object, een gemiste match maakt een dubbel. Jan bekijkt elke
+  match voor de push (B6, met de queries).
 - **Wat bestaande objecten wijzigt:** 03 voegt Jira-leden toe aan een bestaande groep met dezelfde naam, 07 en 08
   voegen trackers en projecten toe aan bestaande trackers en velden, 04 voegt rollen toe aan bestaande
   lidmaatschappen. De `workflows`-stap opent tijdelijk alle transities op alle trackers voor de rollen die Jan
@@ -33,9 +38,14 @@ addresses or secrets in this file: the repository is public. Placeholders are wr
   vandaag ook 13 (tags op 7.0) en de relink (Jan). Stealth mode blijft als goedkoop vangnet; webhooks uit is alleen
   nodig als de checklists-instelling "issue done ratio" aan staat (15 bewaart dan het issue via de gewone API).
   Review-aanpassingen in staging verhuizen niet mee naar productie: zet ze in de config.
-- **Duur (schatting):** WIKI ongeveer 1u15, GEOS, SIS en OAC 40 minuten, SURV, LABO en DOC 2 tot 3 uur met
-  steekproef, de laatste batch 40 tot 60 minuten. In productie komen er voor batch 3 nog 2 tot 5 uur bijlagen bij
-  (110 GiB). Schijf: ongeveer 110 GiB vrij in de tijdelijke map en 110 GiB in Redmine's `files/`.
+- **Geen sporen van nabewerking (beslissingen 37 en 38):** de Extended API krijgt een vlag naast notify=false
+  waarmee 10's tweede pass, 12, 13 en de relink geen journal schrijven en een aangepast commentaar niet "Edited"
+  wordt. De plugin-sessie bouwt die vlag; daarna sturen de scripts hem mee, met een bewijs op 5.1 en 7.0. Tot dan
+  blijven die journals. Datums en % gereed van parents blijven afgeleid.
+- **Duur (schatting):** de run ongeveer 4,5 tot 5,5 uur in de repetitie (steekproef), 7 tot 10,5 uur in productie
+  (116 GiB bijlagen), plus Jans reviews en de snapshots (B8). Schijf (B2): één pull van alle bijlagen, `paths.tmp`
+  leeg direct na 09's push; op dat moment ongeveer 116 GiB in `paths.tmp` en 116 GiB extra in Redmine's `files/`.
+  Met minder ruimte draait 09 in rondes.
 - **Deel C** is de prompt voor de lokale Claude-sessie op de server: Jira alleen lezen, standaard rechten, Jans go
   voor elke schrijfstap in productie, rapport in het Nederlands.
 
@@ -48,7 +58,7 @@ addresses or secrets in this file: the repository is public. Placeholders are wr
 - **Who decides:** Jan gives the go at every review point (marked **GO**). In production he also gives the go
   before every write (`--confirm-push`, `--confirm-pull`, a `rails runner` step that changes Redmine).
 - **Where it runs:** a local Claude Code session on the server runs the commands (part C), step by step,
-  logs every step and reports in Dutch after each batch.
+  logs every step and reports in Dutch after each part of the run.
 - **Branch (decision 32):** the rehearsal runs from `redmine70-migration`; production runs from `main`, once
   the branches are on main and checked identical to what the rehearsal ran.
 
@@ -283,13 +293,14 @@ in the rehearsal report: it sets the maintenance window.
 | machine | a clone of the production VM, upgraded to 7.0 by part A | the production server, upgraded by part A and checked |
 | outgoing mail, webhooks, cron | off on the clone (A.1: crontab off, mail to files, webhooks inactive); that covers part B too | on for the users; every issue write of the migration goes through the Extended API with notify=false, stealth mode as a safety net (B5) |
 | attachments | `attachments.test_sample = true`: every file up to 512 KB plus the largest per extension up to 20 MB; the rest is noted "skipped by sample" | `test_sample = false`: every file |
-| snapshot | A.4 step 3 is the upgrade's rollback point; part B's own is a second snapshot after A.5 | the same two, and **one before every batch** (B10); no batch starts without one |
-| GO | at the review points (B6, B7 steps 2, 4 and 12, B9) | at the review points and before every write |
+| snapshot | A.4 step 3 is the upgrade's rollback point; part B's S0 is the snapshot after A.5; S1 to S3 inside the run (B7), each timed | A.4 step 3; S0 at the start of the window (B5), then **S1 to S3** at the run's pauses (B7, B10); no part of the run starts without the snapshot before it |
+| GO | at the review points (B6, B7 steps 1, 3 and 14, B9) | at the review points and before every write |
 | Jira | the live Jira, read-only for the token (B4); the data is what Jira holds that day | read-only for the token, and for the users from the start of the window (decision 36) |
 | users | none on the clone | **one maintenance window** for B5 to B9 (decision 36): Redmine closed to users, the crontab off (B5) |
+| disk for attachments | the sample: a few GB | about 116 GiB in `paths.tmp` and 116 GiB more in `files/` at the end of 09's push (B2) |
 | afterwards | the clone is thrown away; findings go to Jan | Redmine stays; staging is removed (B9) |
 
-Everything else is the same: the batches, the commands, the checks. The rehearsal is there to find what an
+Everything else is the same: the run, the commands, the checks. The rehearsal is there to find what an
 existing Redmine does to the matching (B6) and to run the nine projects that never ran (DOC, LABO, ICT, LLE,
 SOIL, SSPT, ROV, GSPP, FPS).
 
@@ -304,7 +315,7 @@ SOIL, SSPT, ROV, GSPP, FPS).
   server, in the Redmine root**, as the user Redmine runs as, with `RAILS_ENV=production`. They need a checkout
   of this repository readable by that user. `manual_steps.rb` keeps its list of opened workflow transitions in
   `<redmine-root>/tmp/j2r_added_workflows.json` until `restore`: **do not clear Redmine's tmp directory**
-  (`rake tmp:clear`) between the first batch and `restore`.
+  (`rake tmp:clear`) between the `workflows` step and `restore`.
 - **A temporary MariaDB or MySQL 8** for the staging database, on the same VM so that one VM snapshot holds
   Redmine and staging together (B10). Install and create it as in docs/RUNBOOK.md, Prerequisites 2:
 
@@ -315,12 +326,16 @@ SOIL, SSPT, ROV, GSPP, FPS).
     GRANT ALL ON jira2redmine.* TO 'jira2redmine'@'localhost';"
   mysql jira2redmine < database/schema.sql
   ```
-- **Disk.** `paths.tmp` holds the downloaded attachments; 09 does not delete them after the upload, so it grows
-  with every batch until it is emptied (B7 step 14). Redmine's `files/` grows by the same amount. Sizes in B8: the
-  third batch (SURV, LABO, DOC) holds about 110 GiB of attachments, so production needs **about 110 GiB free in
-  `paths.tmp` and 110 GiB more in Redmine's `files/`** for that batch, and all batches together add about 116 GiB to
-  `files/`. With the sample (rehearsal) SURV took 0.98 GB. The staging database stays small next to that (a few GB:
-  the Jira payloads of every issue and comment).
+- **Disk (B2's choice, decision 39): one pull of every attachment, `paths.tmp` emptied right after 09's push.**
+  `paths.tmp` holds the downloaded attachments (in `attachments/`); 09 does not delete them after the upload, and
+  Redmine's `files/` grows by the same amount. The 14 projects hold about 116 GiB (B8), so at the end of 09's push
+  production needs **about 116 GiB in `paths.tmp` and 116 GiB more in Redmine's `files/`**, plus a margin (Jira keeps
+  growing; the rehearsal's counts say how much). Right after the push `paths.tmp` is emptied (B7 step 7): nothing
+  later reads the local copies, and S2 then carries only `files/`. Why one pull: it is the simplest (one pull, one
+  push, one check) and the same as in every test run. **With less room**, 09 runs in rounds (`--download-limit`), each
+  round pulled, pushed and emptied before the next (B7 step 7): the peak in `paths.tmp` is then one round, at the cost
+  of a GO per round. With the sample (rehearsal) the whole run pulls a few GB (SURV alone 0.98 GB). The staging
+  database stays small next to that (a few GB: the Jira payloads of every issue and comment).
 - **tmux** for the long steps (B8), so a dropped SSH session does not stop a step.
 - **Redmine 7.0** after part A, with the plugins the migration uses: `redmine_extended_api` (issues, journals,
   relations without mail and with Jira's authors and dates), `redmine_project_workflows` (each project its own
@@ -392,7 +407,7 @@ The environment, in a file only the operator can read (`chmod 600`), outside the
 and tmux window: `JIRA_SITE` (`<site>.atlassian.net`), `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_CLOUD_ID` (from
 `https://<site>.atlassian.net/_edge/tenant_info`), `REDMINE_URL` (production: the local-only entry of the
 maintenance window, `http://127.0.0.1:8080`, B5), `REDMINE_API_KEY` (an admin's API key: the migration account), `J2R_STAGING_PASSWORD`, `J2R_TMP` (the attachment directory), `J2R_DEFAULT_AUTHOR_ID`,
-`J2R_PROJECTS` (per batch, lowercase, B8), `J2R_TEST_SAMPLE` (`1` in the rehearsal only). Never print them, never paste
+`J2R_PROJECTS` (the 14 projects, lowercase, B8), `J2R_TEST_SAMPLE` (`1` in the rehearsal only). Never print them, never paste
 them in a chat, never commit them.
 
 Everything else keeps the defaults of `config/config.default.php`, which hold Jan's decisions: TEST not
@@ -400,7 +415,7 @@ migrated (22), the service desk fields not migrated (20), the role mappings and 
 workflow mode `project` and the group settings (13, 14, 19), the comment attachment window 0 (27), the
 GEOxyz relation types. Check that the local file loads, without printing a secret:
 `php -r '$c = require "bootstrap.php"; echo implode(",", $c["migration"]["issues"]["projects"]), " | ", implode(",", $c["migration"]["projects"]["not_migrated"]), PHP_EOL;'`
-prints the batch's projects and `TEST`.
+prints the run's projects and `TEST`.
 
 ### B4. Jira token: prove it read-only
 
@@ -416,11 +431,11 @@ curl -s -X PUT -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H 'Content-Type: application/js
 
 After that the scripts send only GET requests to Jira (and the same 401 refuses anything else).
 
-### B5. Before the first batch
+### B5. Before the run
 
 **Production: one maintenance window (Jan, decision 36).** Part B, from this section to the end of B9, runs in one
 window; part A is its own window before it (decision 29). Why: the scripts skip an issue that is already migrated, so
-a change made in Jira after a batch's extraction would be lost, and a rollback to a snapshot would erase what users did
+a change made in Jira after the extraction would be lost, and a rollback to a snapshot would erase what users did
 in Redmine meanwhile. The rehearsal measures the window's length (B8 estimates 7 to 12 hours of run time in
 production, plus Jan's reviews and the snapshots); its report gives the real figure, which sets the window.
 
@@ -428,8 +443,7 @@ production, plus Jan's reviews and the snapshots); its report gives the real fig
    Redmine.
 2. **Jira read-only for the users** (Jan, by hand, as a Jira admin; the scripts and the session never write to Jira,
    the token cannot): for example a permission scheme with Browse projects only on the 14 migrated projects, or the
-   create, edit, transition and comment permissions taken out of the schemes in use. Jan confirms it before the first
-   batch.
+   create, edit, transition and comment permissions taken out of the schemes in use. Jan confirms it before the run.
 3. **Redmine closed to the users.** Redmine has no maintenance mode of its own; close it at the web server and give
    the migration a local-only entry. With Apache (the appendix of docs/RUNBOOK.md; the same idea with nginx):
 
@@ -461,14 +475,14 @@ production, plus Jan's reviews and the snapshots); its report gives the real fig
    step opens reach nobody: an activated former employee cannot log in or use an API key, the web server answers 503.
 4. **The crontab of the Redmine user off** for the window (`crontab -l` saved, then `crontab -r`): mail fetching,
    digests, recurring issues, scheduled reports, AI triage, LDAP sync and attachment prune all stop; nothing changes
-   Redmine or mails from it, and a rollback to a batch snapshot loses no fetched mail (it waits in the mailbox). B9
+   Redmine or mails from it, and a rollback to a snapshot loses no fetched mail (it waits in the mailbox). B9
    puts it back.
 
 Then, once, on the upgraded Redmine 7.0. Each line is a check the local session reports.
 
 | what | how | check |
 |---|---|---|
-| snapshot | the second snapshot, after A.5: part B's rollback point (A.4 step 3 is the upgrade's); production: also before every batch (B10) | the snapshot exists and its time is noted |
+| snapshot S0 | part B's rollback point (A.4 step 3 is the upgrade's). Rehearsal: the snapshot after A.5. Production: taken now, at the start of the window, after steps 1 to 4 above (users worked in Redmine since part A). B7 takes S1 to S3 (B10) | the snapshot exists and its time is noted |
 | REST API | Administration > Settings > Integrations: REST web service on (A.5 row 16; "API" on 5.1) | `curl -s -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/users/current.json"` gives the migration account, `admin: true` |
 | Extended API | the plugin is installed | `curl -sI -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/extended_api/issues.json"` has the header `X-Redmine-Extended-API` |
 | text formatting | Administration, Settings, General: CommonMark Markdown (A.5 row 16) | `Setting.text_formatting` is `common_mark` |
@@ -480,7 +494,7 @@ Then, once, on the upgraded Redmine 7.0. Each line is a check the local session 
 | roles for the open workflows (decision 33) | the inventory of the roles that take part in workflows (Add or Edit issues) and how many memberships hold them: `RAILS_ENV=production bundle exec rails runner 'Role.givable.sorted.select(&:consider_workflow?).each { \|r\| puts [r.id, r.name, r.has_permission?(:add_issues) ? "add_issues" : "-", r.has_permission?(:edit_issues) ? "edit_issues" : "-", MemberRole.where(role_id: r.id).count].join(" \| ") }'`. **GO:** Jan confirms the list in `migration.workflows.open_workflow_roles` (B3); one usable role is enough, `["Migration (temporary)"]` keeps the open workflow away from the existing projects (B6) | `php tools/config_value.php migration.workflows.open_workflow_roles` prints Jan's list |
 | staging | the empty staging database of B2 | `SHOW TABLES` lists the tables of `database/schema.sql` (81 today) |
 
-The `workflows` step of `manual_steps.rb` (B7 step 3) also sets three global settings Jan decided, which stay after
+The `workflows` step of `manual_steps.rb` (B7 step 2) also sets three global settings Jan decided, which stay after
 the migration and apply to every project: parent priority independent (B13), cross-project subtasks "With all
 projects" (B38), cross-project issue relations allowed (B39).
 
@@ -490,15 +504,15 @@ Every test run so far went into an empty Redmine. GEOxyz's Redmine has its own p
 statuses, priorities, trackers and custom fields, and each of 01 to 08 first looks for an existing one and uses it
 (`MATCH_FOUND`) instead of creating one. The match is on the identifier, the login or e-mail, or the **name only**,
 without case, and without any check that the existing object means the same thing. A wrong match puts Jira data
-into an existing object; a missed match creates a second one. This is the new risk of the rehearsal; in the first
-batch Jan reviews every match before its push (**GO**), in later batches the new rows.
+into an existing object; a missed match creates a second one. This is the new risk of the rehearsal; Jan reviews every match
+before its push (**GO**).
 
 | script | matched on | what the push changes on an existing object | Jan reviews |
 |---|---|---|---|
-| 01 projects | the Jira key, lowercased, against the identifier of the **active** projects (closed and archived projects are not in Redmine's list) | nothing on the project itself; but the batch then puts the Jira issues into it, 07 adds trackers, 08 enables fields, 04 adds memberships | every `MATCH_FOUND`: is this the project the Jira issues belong in? A key that is the identifier of a closed or archived project fails with 422 "Identifier has already been taken" (`CREATION_FAILED`) |
+| 01 projects | the Jira key, lowercased, against the identifier of the **active** projects (closed and archived projects are not in Redmine's list) | nothing on the project itself; but the run then puts the Jira issues into it, 07 adds trackers, 08 enables fields, 04 adds memberships | every `MATCH_FOUND`: is this the project the Jira issues belong in? A key that is the identifier of a closed or archived project fails with 422 "Identifier has already been taken" (`CREATION_FAILED`) |
 | 02 users | the Jira e-mail against the Redmine login, then the primary e-mail; locked and registered accounts included | nothing; the `members` step activates a matched locked account for the run and `restore` locks it again | new accounts for a person who already has one under another e-mail (a second account), an e-mail that is only an additional address of an account (create fails "Email has already been taken"), logins Redmine refuses (a `+`, more than 60 characters) |
 | 03 groups | the group name | **the Jira group's members are added to the existing group** (none removed): they get every role that group has in every project | every matched group; one that only shares a name: set its row `IGNORED` before the push |
-| 04 roles and memberships | `migration.roles.mappings`, else the Jira role's own name | no role definition changes; a membership that exists gets the proposed role added (none removed); the `<group> (workflow)` roles of decision 14 are created, or reused when one has that name | the membership proposal (B7 step 4); on a project that existed before, a Non member row set READY opens it to every logged-in user |
+| 04 roles and memberships | `migration.roles.mappings`, else the Jira role's own name | no role definition changes; a membership that exists gets the proposed role added (none removed); the `<group> (workflow)` roles of decision 14 are created, or reused when one has that name | the membership proposal (B7 step 3); on a project that existed before, a Non member row set READY opens it to every logged-in user |
 | 05 statuses | the name | nothing; open or closed is **taken from Redmine**, not from Jira's category | matched statuses whose Jira category (`done`) and Redmine's closed flag disagree (listed first by the query) |
 | 06 priorities | `migration.priorities.mappings` (Jira name => Redmine name), else the name (decision 35) | nothing: one priority scheme for every project; a Jira priority without a match is a review row (MANUAL) and 06 creates none (only with `migration.priorities.create_missing`; then after the existing ones, B73) | every MANUAL row: put the mapping in `migration.priorities.mappings` (it carries over to production) and run 06 again; 10 holds back the issues of an unmapped priority |
 | 07 trackers | the name (shortened to 30 characters) | the tracker itself is not changed; each project gets the trackers it needs **added** to its tracker list | matched trackers that mean something else in GEOxyz's Redmine; new trackers get the lowest open status as default unless `migration.trackers.default_redmine_status_id` is set |
@@ -554,7 +568,7 @@ rehearsal before relying on it in production.
 
 **Steps outside 01 to 08 that change existing Redmine objects:**
 
-- `manual_steps.rb workflows` (B7 step 3) opens every transition on **every tracker** of the Redmine, as global
+- `manual_steps.rb workflows` (B7 step 2) opens every transition on **every tracker** of the Redmine, as global
   rules, for the roles in `migration.workflows.open_workflow_roles` (decision 33; default Manager and Developer):
   until `restore`, those roles can make any status change in every project that uses the global workflow, the
   existing projects included. `restore` removes exactly what it added. It also gives those roles
@@ -565,7 +579,7 @@ rehearsal before relying on it in production.
   open workflow reaches only the migrated users in the migrated projects (the `members` step gives it to them), not
   the existing projects; `restore` deletes the role with its transitions. Jan confirms the list after the inventory
   of B5.
-- `manual_steps.rb members` (B7 step 5) activates locked users and gives the temporary role: on an existing Redmine
+- `manual_steps.rb members` (B7 step 4) activates locked users and gives the temporary role: on an existing Redmine
   only with `J2R_USER_IDS_FILE`.
 - `apply_workflows.rb` (B9 step 2) gives each migrated project its own workflow (mode `project`, through
   redmine_project_workflows). Decision 34: the cleaned union becomes the **global** workflow only of the trackers 07
@@ -583,22 +597,22 @@ is gone there. Put every choice that has a configuration key in `config/config.l
 roles: `migration.roles.mappings`; the workflow roles: decision 33; groups in workflows: decision 14), and write the
 other edits down as SQL in the rehearsal report, to replay in production at the same review point.
 
-### B7. One batch, step by step
+### B7. The run, step by step
 
-Set `J2R_PROJECTS` to **every project migrated so far plus the batch's new ones** (B8; the jira phases of 07 and 08
-read only the run's projects and replace their staging tables, so a batch with the new projects alone would narrow
-what 08 knows of the earlier ones). Migrated issues, journals and attachments are skipped on the rerun.
+All 14 projects in one run (Jan, decision 39): `J2R_PROJECTS` lists them all from the first step (B8). Three VM
+snapshots split the run at its natural pauses, so a failure costs at most one part of it (B10): **S1** after the
+structure and its reviews (step 6), **S2** after 09 and 10 (step 9), **S3** after 11 to 16 (step 11). S0 is part B's
+starting point (B5). The four batches of decision 22 stay as the fallback (B11), only when Jan chooses it.
 
 Each script: first the analysis (`php NN_x.php`: jira, redmine and transform phases), read its summary
 (`Matched / Ready / Manual`), then **`--phases=push --dry-run`** (what the push would send, without writing),
 then **`--phases=push --confirm-push`**. In the commands below the dry-run is left out for brevity; in production
 it comes before every push. Every step's output goes to a log, for example
-`php 01_migrate_projects.php 2>&1 | tee "$LOG/01.log"` with `LOG=~/j2r-runs/<batch>` outside the checkout (the logs
-hold Jira data: never in the repository).
+`php 01_migrate_projects.php 2>&1 | tee "$LOG/01.log"` with `LOG=~/j2r-runs/<rehearsal|production>` outside the
+checkout (the logs hold Jira data: never in the repository).
 
-1. **Snapshot** (production; B10).
-2. **Structure: projects, users, groups, statuses, priorities, trackers.** Review the analysis before each push
-   (B6). **GO** on the first batch: Jan reads B6's review list.
+1. **Structure: projects, users, groups, statuses, priorities, trackers.** Review the analysis before each push
+   (B6). **GO:** Jan reads B6's review list, every match of the 14 projects.
 
    ```bash
    php 01_migrate_projects.php && php 01_migrate_projects.php --phases=push --confirm-push
@@ -610,18 +624,17 @@ hold Jira data: never in the repository).
    php 06_migrate_priorities.php && php 06_migrate_priorities.php --phases=push --confirm-push
    php 07_migrate_trackers.php   && php 07_migrate_trackers.php   --phases=push --confirm-push
    ```
-3. **Open the workflows** (on the Redmine server, in the Redmine root; B6 says what this touches):
+2. **Open the workflows** (on the Redmine server, in the Redmine root; B6 says what this touches):
 
    ```bash
    J2R_WORKFLOW_ROLES="$(php <checkout>/tools/config_value.php migration.workflows.open_workflow_roles)" \
      J2R_STEP=workflows RAILS_ENV=production bundle exec rails runner <checkout>/tools/testenv/manual_steps.rb
    ```
 
-   Output: `workflow transitions created=N roles=[...] ...`; `roles` is Jan's confirmed list (decision 33, B5); on a
-   later batch N is 0 or small (new trackers only). A role the Redmine lacks or one without Add or Edit issues
-   stops the step with its name. In production Redmine is closed to users meanwhile (B5): the open workflows reach
-   nobody.
-4. **Extract issues, attachments, watchers; propose the memberships.**
+   Output: `workflow transitions created=N roles=[...] ...`; `roles` is Jan's confirmed list (decision 33, B5). A
+   role the Redmine lacks or one without Add or Edit issues stops the step with its name. In production Redmine is
+   closed to users meanwhile (B5): the open workflows reach nobody.
+3. **Extract issues, attachments, watchers; propose the memberships.**
 
    ```bash
    php 08_migrate_custom_fields.php --phases=jira
@@ -640,7 +653,7 @@ hold Jira data: never in the repository).
    ```bash
    php 04_migrate_roles.php --phases=push --confirm-push
    ```
-5. **Activate locked users and give the temporary migration role** (decision 12; Redmine server, Redmine root).
+4. **Activate locked users and give the temporary migration role** (decision 12; Redmine server, Redmine root).
    `J2R_USER_IDS_FILE` is **required** on an existing Redmine: without it the step activates every user of the
    Redmine. The step finds the projects by identifier: the lowercase `J2R_PROJECTS` (the Jira key, lowercased, is
    the Redmine identifier, B6).
@@ -652,9 +665,10 @@ hold Jira data: never in the repository).
    ```
 
    Output: `activated=N temporary memberships=N projects=N members=N`; `projects` must equal the number of projects in
-   `J2R_PROJECTS`. The activated accounts (former employees among them) stay active until `restore` (B9), which
-   comes before Redmine opens; in production nobody can log in with them meanwhile, the web server answers 503 (B5).
-6. **Custom fields.** Review the analysis (B6: fields matched to existing Redmine fields), then push.
+   `J2R_PROJECTS` that 01 created or matched. The activated accounts (former employees among them) stay active until
+   `restore` (B9), which comes before Redmine opens; in production nobody can log in with them meanwhile, the web
+   server answers 503 (B5).
+5. **Custom fields.** Review the analysis (B6: fields matched to existing Redmine fields), then push.
 
    ```bash
    php 08_migrate_custom_fields.php --phases=usage,redmine,transform
@@ -662,15 +676,28 @@ hold Jira data: never in the repository).
    ```
 
    The transform lists `[unoffered]` values (B37) to retire after the run (docs/RUNBOOK.md, section 2).
-7. **Attachments** (long; tmux):
+6. **Snapshot S1** (production; the rehearsal takes it too and notes how long it took). Everything Jan reviewed is
+   pushed; 09 to 16 only add issue data.
+7. **Attachments** (long; tmux). One pull of every attachment, then the upload, then `paths.tmp` emptied (B2):
 
    ```bash
    php 09_migrate_attachments.php --phases=pull --confirm-pull
    php 09_migrate_attachments.php --phases=transform,push --confirm-push
    ```
 
-   Check: `Jira attachment download summary — queued: N, downloaded: N, failed: 0`.
-8. **Issues** (tmux). Twice: the second run writes descriptions and parents that waited for the first.
+   Check: `Jira attachment download summary — queued: N, downloaded: N, failed: 0` and `Attachment upload summary —
+   ... failed: 0`. Then empty the attachment directory (09 makes it again when needed):
+   `rm -rf "$J2R_TMP/attachments"`. Nothing later reads the local copies; a failed upload
+   is requeued by 09's transform and downloaded again, so emptying is safe. Not enough disk for one pull (B2): rounds,
+   each pulled, pushed and emptied before the next, until the pull's queue is 0:
+
+   ```bash
+   php 09_migrate_attachments.php --phases=pull --confirm-pull --download-limit=1500
+   php 09_migrate_attachments.php --phases=transform,push --confirm-push
+   rm -rf "$J2R_TMP/attachments"
+   ```
+8. **Issues** (tmux). Twice: the second run writes the descriptions that link issues created later in the run and
+   the parents created after their child.
 
    ```bash
    php 10_migrate_issues.php --phases=transform,push --confirm-push
@@ -678,21 +705,25 @@ hold Jira data: never in the repository).
    ```
 
    Check: `[open-parent]` lines (a closed parent with an open subtask gets "Resolved", Jan's rule) and
-   `Issues waiting for a parent outside the run (B38)`: every `[waiting]` line names a project of a later batch.
-9. **History and links** (11 and 14 long; tmux):
+   `Issues waiting for a parent outside the run (B38)`: a `[waiting]` line may only name a project that is not
+   migrated (TEST). 10 sends each issue's Jira labels as tags with the create (no journal).
+9. **Snapshot S2** (production; rehearsal as at S1). The issues and their attachments are in.
+10. **History and links** (11 and 14 long; tmux):
 
-   ```bash
-   php 11_migrate_journals.php --confirm-push --use-extended-api
-   php 12_migrate_issue_relations.php --confirm-push
-   php 13_migrate_tags.php --confirm-push
-   php 14_migrate_watchers.php --confirm-push
-   php 15_migrate_checklists.php --confirm-push
-   php 16_export_workflows.php
-   ```
+    ```bash
+    php 11_migrate_journals.php --confirm-push --use-extended-api
+    php 12_migrate_issue_relations.php --confirm-push
+    php 13_migrate_tags.php --confirm-push
+    php 14_migrate_watchers.php --confirm-push
+    php 15_migrate_checklists.php --confirm-push
+    php 16_export_workflows.php
+    ```
 
-   On 7.0, 13 adds tags through the issue update, through the Extended API with notify=false: no mail, no webhook,
-   and one journal with the tag change per tagged issue, by the migration account at the time of the run (B19).
-10. **Counts** (the staging view of the batch):
+    In one run every issue exists before 11 and 12: the comments get their `#id` links directly, and 12 leaves a
+    relation MANUAL only when its other side is not migrated. 13 finds the tags 10 sent; it writes only for an
+    issue created before them (a rerun), through the Extended API with notify=false, keeping the updated time.
+11. **Snapshot S3** (production; rehearsal as at S1). The migration itself is complete; B9 follows.
+12. **Counts** (staging):
 
     ```bash
     mysql jira2redmine -e "SELECT 'issues', migration_status, COUNT(*) FROM migration_mapping_issues GROUP BY 2
@@ -702,43 +733,37 @@ hold Jira data: never in the repository).
       UNION ALL SELECT 'watchers', migration_status, COUNT(*) FROM migration_mapping_watchers GROUP BY 2"
     ```
 
-    Expected: issues CREATION_SUCCESS, plus READY_FOR_REWRITE only for a parent in a later batch; relations
-    MANUAL only for an other side in a later batch ("Missing Redmine issue mapping"); no `FAILED` anywhere
+    Expected: issues CREATION_SUCCESS, plus READY_FOR_REWRITE only for a parent that is not migrated; relations
+    MANUAL only for an other side that is not migrated ("Missing Redmine issue mapping"); no `FAILED` anywhere
     without a reason in `notes`; rehearsal: attachments PENDING_DOWNLOAD = the files skipped by the sample.
-11. **Verify** (`--projects` = every project migrated so far):
+13. **Verify:**
 
     ```bash
     php tools/verify.php --projects="${J2R_PROJECTS^^}" --sample=25 --report="$LOG/verify.md"
     ```
 
     The last line must be **PASS**. The report holds issue keys and short Jira texts: it stays in `$LOG`.
-12. **GO: Jan looks** at a few migrated issues of the batch in Redmine (description, comments, attachments,
-    watchers, status) next to Jira, and gives the go for the next batch.
-13. **Errors in the logs:** `grep -ciE '\[error\]|fatal|exception' "$LOG"/*.log` is 0 for every log, or each hit is
-    explained in the batch report.
-14. **Empty `paths.tmp`** once the batch's verify passed (09 uploaded every file; nothing later reads the local
-    copies): `rm -rf "$J2R_TMP"/*` (keep `user_ids.txt` out of it, or make it again in the next batch).
-15. **Report** (Dutch, short): counts, durations per step, failures and their reason, the review points and Jan's
-    answers.
+14. **GO: Jan looks** at a few migrated issues of every project in Redmine (description, comments, attachments,
+    watchers, status) next to Jira, and gives the go for B9.
+15. **Errors in the logs:** `grep -ciE '\[error\]|fatal|exception' "$LOG"/*.log` is 0 for every log, or each hit is
+    explained in the report.
+16. **Report** (Dutch, short): counts, durations per step and per snapshot, failures and their reason, the review
+    points and Jan's answers.
 
-### B8. The four batches: projects, sizes and durations
+### B8. The run: projects, sizes and durations
 
-The order is Jan's decision 22; `J2R_PROJECTS` grows with every batch:
+`J2R_PROJECTS` for the run (decision 39), lowercase because `manual_steps.rb` finds the projects by their Redmine
+identifier (the configuration uppercases the list for the scripts, B3):
 
-| batch | new projects | `J2R_PROJECTS` |
-|---|---|---|
-| 1 | WIKI | `wiki` |
-| 2 | GEOS, SIS, OAC | `wiki,geos,sis,oac` |
-| 3 | SURV, DOC, LABO | `wiki,geos,sis,oac,surv,doc,labo` |
-| 4 | ICT, LLE, SOIL, SSPT, ROV, GSPP, FPS | `wiki,geos,sis,oac,surv,doc,labo,ict,lle,soil,sspt,rov,gspp,fps` |
+```text
+wiki,geos,sis,oac,surv,doc,labo,ict,lle,soil,sspt,rov,gspp,fps
+```
 
-Lowercase, because `manual_steps.rb` finds the projects by their Redmine identifier; the configuration uppercases
-the list for the scripts (B3).
-
-TEST is not migrated (decision 22). The order puts first what others link to: GEOS issues hang under WIKI epics.
+TEST is not migrated (decision 22). The order inside the run does not matter: 10 creates every issue before its
+second pass, 11 and 12 run when every issue exists.
 
 **Sizes** (the coordinator's count through the gateway on 2026-10-13, GET only; attachments in GiB, 1 GiB = 1,024
-MiB; LLE, FPS and TEST had no issues that day):
+MiB; LLE, FPS and TEST had no issues that day; "batch" is the fallback's, B11):
 
 | batch | project | issues | comments | attachments | GiB | largest file MiB | links | subtasks |
 |---|---|---|---|---|---|---|---|---|
@@ -755,9 +780,9 @@ MiB; LLE, FPS and TEST had no issues that day):
 | 4 | ROV | 15 | 37 | 70 | 0.3 | 84 | 4 | 0 |
 | 4 | ICT | 2 | 4 | 0 | 0 | 0 | 1 | 0 |
 | 4 | LLE, FPS | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| | **all 14** | **4,911** | **13,677** | **10,095** | **115.9** | | | |
 
-Per batch: (1) 1,457 issues, 4.4 GiB; (2) 426 issues, 1.5 GiB; (3) 2,672 issues, 109.5 GiB; (4) 356 issues, 0.6 GiB.
-Jira keeps changing: the rehearsal's own counts (B7 step 10) are the ones to plan production with.
+Jira keeps changing: the rehearsal's own counts (B7 step 12) are the ones to plan production with.
 
 **Measured** (test instances, Redmine and staging on the same machine, `download_concurrency` 6; the logs per step
 are in `runs/` of the test environment, not in this repository):
@@ -768,53 +793,53 @@ are in `runs/` of the test environment, not in this repository):
 | WIKI, second batch after GEOS, SIS, OAC, 7.0 | 1,457 (1,883 in the run) | 837, 4.4 GiB, all | 76 min | 11 26 min, 14 13 min, 14 jira phase 8 min, 10 11 min, 09 7 min, 13 4 min |
 | SURV alone, 5.1, with the sample | 1,494 | 4,306 of 6,323 sampled: 0.98 GB of 98.7 GiB | 80 min | 11 43 min, 14 11 min, 09 12 min, 10 8 min |
 
-Those three runs took 0.5 to 1.2 s per issue plus comment (SURV the fastest per item, WIKI the slowest). Steps that
-grow with **every project migrated so far**, not only the batch's new ones: 14's jira phase reads the watchers of
-every issue in `J2R_PROJECTS` (about 0.25 s per issue: 459 s for 1,883 issues), 16 reads every Jira workflow
-(1.5 min), 08's transform (2 min). The other steps skip what is migrated.
+Those runs took 0.5 to 1.2 s per issue plus comment (SURV the fastest per item, WIKI the slowest); 11 took 0.35 to
+0.65 s per comment, 14's jira phase about 0.25 s per issue (459 s for 1,883 issues), 16 reads every Jira workflow
+(1.5 min), 08's transform 2 min. In one run those reads happen once, not once per batch.
 
 **Attachments without the sample** (production): pull measured at 18 to 27 MB/s, upload at 11 to 18 MB/s into a
-local Puma and 33 MB/s behind Apache with X-Sendfile (docs/RUNBOOK.md, appendix). The third batch's 110 GiB then
-take about 1.2 to 1.8 hours to pull and 1 to 3 hours to upload, depending on the server's network.
+local Puma and 33 MB/s behind Apache with X-Sendfile (docs/RUNBOOK.md, appendix). The 116 GiB then take about 1.3 to
+1.9 hours to pull and 1 to 3 hours to upload, depending on the server's network.
 
-**Estimates per batch** (from the sizes and the rates above; rehearsal with the sample, production adds the
+**Estimates for the run** (from the sizes and the rates above; rehearsal with the sample, production adds the
 attachment time):
 
-| batch | rehearsal | production |
+| part | rehearsal | production |
 |---|---|---|
-| 1: WIKI | about 1 hour 15 min | about 1 hour 15 min (4.4 GiB, measured with all files) |
-| 2: GEOS, SIS, OAC | about 40 min (14's jira phase rereads WIKI) | about 40 min (1.5 GiB) |
-| 3: SURV, LABO, DOC | about 2 to 3 hours (SURV 80 min, LABO and DOC 30 to 70 min, 14's jira phase about 20 min) | plus 2 to 5 hours for the attachments (110 GiB) |
-| 4: GSPP, SOIL, SSPT, ROV, ICT, LLE, FPS | about 40 to 60 min (356 issues; 14's jira phase about 20 min) | about the same (0.6 GiB) |
+| B5, S0 to S1: 01 to 08 (B7 steps 1 to 5) | under 30 min of run time, plus Jan's reviews (B6, the memberships) | the same |
+| S1 to S2: 09 and 10 | about 1 hour (09 with the sample about 30 min, 10 twice about 30 min) | plus 2.3 to 5 hours for 116 GiB |
+| S2 to S3: 11 to 16 | about 2.5 to 3.5 hours (11 1.5 to 2.5 hours for about 13,700 comments; 14 with its jira phase about 40 min; 12, 13, 15, 16 together about 20 min) | the same |
+| after S3: counts, verify, B9 (relink check, workflows, restore) | about 30 min, plus Jan's workflow review | the same |
+| run time | **about 4.5 to 5.5 hours** | **about 7 to 10.5 hours** |
 
-DOC, LABO and the projects of batch 4 never ran: the rehearsal measures them (the duration per step is in each
-batch report). Verify takes about 5 minutes (four projects, `--sample=25`, not in the durations above). After the
-last batch, on the WIKI run on 7.0: the workflow proposal and plan a few seconds, the three runner passes, `restore`
-and its proofs together under 2 minutes; the relink was not timed (13 texts on the test instance).
+DOC, LABO, ICT, LLE, SOIL, SSPT, ROV, GSPP and FPS never ran on the test instances: the rehearsal measures them (the
+duration per step is in its report).
 
-**The window** (decision 36): the four batches together take about 7 to 12 hours of run time in production
-(the table above plus verify, relink, workflows and restore), plus Jan's reviews and the snapshots. The rehearsal
-reports the real figure: the time from B5 to the end of B9, with the run time and the waiting time apart.
+**The window** (decision 36): the run time above, plus Jan's reviews (B6, the memberships, the workflow review
+tables) and the four snapshots (S0 to S3), whose duration depends on the hypervisor and the size of `files/`. The
+rehearsal reports the real figure: the time from B5 to the end of B9, with the run time, the review time and the
+snapshot time apart.
 
-**In tmux:** the whole batch, or at least 09 (pull and push), 10, 11 and 14. A step that is interrupted can be run
+**In tmux:** the whole run, or at least 09 (pull and push), 10, 11 and 14. A step that is interrupted can be run
 again (B10).
 
-### B9. After the last batch
+### B9. After the run
 
-1. **Relink** the links in text to issues a later batch migrated (B52), then the check:
+1. **The relink check** (decision 39: in one run the relink is only the check):
 
    ```bash
-   php tools/relink_issue_links.php                # preview
-   php tools/relink_issue_links.php --confirm-push # rewrite (GO in production)
-   php tools/relink_issue_links.php                # the check
+   php tools/relink_issue_links.php   # preview, writes nothing
    ```
 
-   The check's last line, `Texts that still hold a Jira link to a migrated issue after this run`, must be **0**. A
-   text listed as `[left]` was edited in Redmine since the migration: fix it by hand, run the check again. The
-   relink writes through the Extended API with notify=false: no mail, no webhook; a rewritten description adds a
-   journal by the migration account, a rewritten comment changes in place (its "updated by" is the migration
-   account). Also: 12's MANUAL relations and 10's
-   `[waiting]` parents now name only projects that are not migrated (TEST).
+   The last two lines must read `Preview (no --confirm-push): 0 relinked, ...` and `Texts that still hold a Jira
+   link to a migrated issue after this run: 0`. Why 0: 11 pushes every comment when every issue exists, and 10's
+   second pass rewrites the descriptions that link issues created later in the run. A `[would relink]` line means a
+   text pushed before its target existed (a rerun after a partial failure, or the fallback of B11): then **GO**,
+   `php tools/relink_issue_links.php --confirm-push` (through the Extended API with notify=false: no mail, no
+   webhook; a rewritten description keeps the issue's updated time, its journal and a rewritten comment's "updated
+   by" stay until decision 37's flag is in), and the preview again until it says 0. A text listed as `[left]` was
+   edited in Redmine since the migration: fix it by hand, run the check again. Also: 12's MANUAL relations and 10's
+   `[waiting]` parents name only projects that are not migrated (TEST).
 2. **Workflows** (decision 13; B6 says what the runner changes on an existing Redmine):
 
    ```bash
@@ -838,11 +863,11 @@ again (B10).
    ```
 
    Output: `workflow transitions removed=N temporary member roles removed=N members=N users locked again=N`; `users
-   locked again` equals the sum of `activated` of the four `members` steps. Then the workflow runner's preview once
-   more: still `+0 -0`. Rehearsal: also `RAILS_ENV=production bundle exec rails runner
-   <checkout>/tools/testenv/temporary_role_proof.rb` (with the batch 4 `J2R_PROJECTS`) (read-only: a rolled-back transaction) and `php
-   tools/testenv/membership_check.php` (`memberships equal 04's proposal: yes`; on a project that existed before, its
-   older memberships show as differences, B6).
+   locked again` equals `activated` of the `members` step (B7 step 4). Then the workflow runner's preview once more:
+   still `+0 -0`. Rehearsal: also `RAILS_ENV=production bundle exec rails runner
+   <checkout>/tools/testenv/temporary_role_proof.rb` (with the run's `J2R_PROJECTS`; read-only: a rolled-back
+   transaction) and `php tools/testenv/membership_check.php` (`memberships equal 04's proposal: yes`; on a project
+   that existed before, its older memberships show as differences, B6).
 4. **Settings back on and Redmine open** (production; on the clone the crontab stays off): stealth mode off for the
    migration account (`toggle=false`, answer `{"is_cloaked":false}`), the checklists setting and the webhooks as they
    were if B5 changed them, the saved crontab back (`crontab <saved file>`), then **open Redmine**: the maintenance
@@ -866,18 +891,62 @@ again (B10).
   then the steps after it. Proved on 5.1 and 7.0: a second run of 08 to 15 changes nothing in Redmine.
 - **A Jira error** (502, 503, 504, 429) is retried by the scripts (decisions 5 and B71) for reads; if a jira phase
   still stops, rerun it.
-- **Inside the window or after it** (decision 36): while Redmine is closed, a rollback to the snapshot before a batch
-  costs no user work. Once Redmine is open only a fix forward is left (a rerun, or a fix by hand), since a rollback would
-  erase what users did.
-- **Roll back** (the upgrade itself: A.7) when a batch left Redmine in a state a rerun cannot repair (a wrong match pushed, B6; data in an
-  existing project that should not be there): restore the VM snapshot taken before the batch. The snapshot must hold
-  Redmine's database, Redmine's `files/` and `tmp/j2r_added_workflows.json`, **and the staging database**: staging
-  records what was pushed, so a Redmine rolled back without its staging would make the next run skip issues that are
-  no longer there. With staging on the same VM (B2) one snapshot holds all of it. Without a VM snapshot: a
-  `pg_dump` of Redmine, a copy of `files/`, and a `mysqldump` of staging, taken at the same moment.
+- **Inside the window or after it** (decision 36): while Redmine is closed, a rollback to a snapshot costs no user
+  work. Once Redmine is open only a fix forward is left (a rerun, or a fix by hand), since a rollback would erase
+  what users did.
+- **Roll back** (the upgrade itself: A.7) when a step left Redmine in a state a rerun cannot repair (a wrong match
+  pushed, B6; data in an existing project that should not be there): restore the last snapshot before the failing
+  step, then run again from there.
+
+  | failure in | roll back to | run again from |
+  |---|---|---|
+  | B7 steps 1 to 5 (structure, workflows, memberships, members, custom fields) | S0 | B7 step 1 |
+  | B7 steps 7 and 8 (09, 10) | S1 | B7 step 7 |
+  | B7 step 10 (11 to 16) | S2 | B7 step 10 |
+  | B9 steps 1 to 3 (relink, workflows, restore) | S3 | B9 step 1 |
+
+  Each snapshot must hold Redmine's database, Redmine's `files/` and `tmp/j2r_added_workflows.json`, **and the
+  staging database**: staging records what was pushed, so a Redmine rolled back without its staging would make the
+  next run skip issues that are no longer there. With staging on the same VM (B2) one snapshot holds all of it.
+  `paths.tmp` is empty at S1 (nothing pulled yet) and at S2 (emptied after 09's push), so no snapshot carries a
+  second copy of the attachments. Without VM snapshots: a `pg_dump` of Redmine, a copy of `files/`, and a
+  `mysqldump` of staging, taken at the same moment.
 - **Do not hotfix the scripts on the server.** A defect: stop, write down the step, the log lines and the mapping
   rows, and report it (rehearsal: through Jan to the coordinator and B2; production: roll back and wait for a fixed
   `main`).
+
+### B11. Fallback: four batches
+
+Only when Jan chooses it (decision 39 keeps it as the fallback): the four batches of decision 22, each its own
+pass of B7, still inside the one window of decision 36.
+
+| batch | new projects | `J2R_PROJECTS` |
+|---|---|---|
+| 1 | WIKI | `wiki` |
+| 2 | GEOS, SIS, OAC | `wiki,geos,sis,oac` |
+| 3 | SURV, DOC, LABO | `wiki,geos,sis,oac,surv,doc,labo` |
+| 4 | ICT, LLE, SOIL, SSPT, ROV, GSPP, FPS | `wiki,geos,sis,oac,surv,doc,labo,ict,lle,soil,sspt,rov,gspp,fps` |
+
+What differs from the one run:
+
+- `J2R_PROJECTS` holds **every project migrated so far plus the batch's new ones**: the jira phases of 07 and 08 read
+  only the run's projects and replace their staging tables, so a batch with the new projects alone would narrow what
+  08 knows of the earlier ones. Migrated issues, journals and attachments are skipped on the rerun. The order puts
+  first what others link to: GEOS issues hang under WIKI epics.
+- A **snapshot before every batch** instead of S1 to S3; a failure rolls back to the snapshot of its batch.
+- B6's review: every match in the first batch, the new rows in later ones. The `members` step runs in every batch;
+  `restore`'s `users locked again` then equals the sum of `activated` of the four.
+- An issue whose parent is in a later batch waits (`[waiting]`, READY_FOR_REWRITE), and a relation whose other side
+  is in a later batch stays MANUAL ("Missing Redmine issue mapping"): the batch that migrates that side links them.
+  Check per batch: those lines name only projects of later batches.
+- `paths.tmp` is emptied after each batch's 09 push; the third batch (SURV, LABO, DOC, 109.5 GiB) needs about 110
+  GiB in `paths.tmp` and as much in `files/`.
+- After the last batch B9 step 1 is a real **relink**: preview, then `--confirm-push` (**GO**), then the check, whose
+  last line must be 0. It rewrites links to issues a later batch migrated.
+- Estimates per batch (test instances, rehearsal with the sample; production adds the attachment time): WIKI about
+  1 hour 15 min (4.4 GiB, measured with all files); GEOS, SIS, OAC about 40 min; SURV, LABO, DOC about 2 to 3 hours,
+  in production plus 2 to 5 hours for 110 GiB; the fourth batch about 40 to 60 min. 14's jira phase, 16 and 08's
+  transform read every project migrated so far in every batch: together about 30 to 60 minutes more than one run.
 
 ## Part C: Prompt for the local Claude Code session
 
@@ -897,18 +966,20 @@ Rules, without exception:
    in this session run the write probe of B4; continue only on HTTP 401 "scope does not match". Send nothing
    but GET requests to Jira.
 2. Stay in the default permission mode.
-3. Follow part A, then part B, in order, one step at a time. On the clone, check A.1 before Redmine or cron
-   starts. Before a step say what it does; after it quote its summary lines and the check the document gives.
-   Never call something green you did not see green.
+3. Follow part A, then part B, in order, one step at a time: part B is one run of all 14 projects (B7); the
+   batches of B11 only when Jan says so. On the clone, check A.1 before Redmine or cron starts. Before a step say
+   what it does; after it quote its summary lines and the check the document gives. Never call something green
+   you did not see green.
 4. Wait for Jan's explicit go at every point marked GO and at the go or rollback decision of A.7. In production
    also before every step of A.4 from step 3 on, every --confirm-push, --confirm-pull, relink --confirm-push and
    every rails runner step (manual_steps.rb workflows, members and restore; apply_workflows.rb --confirm-push),
    and run the --dry-run of every push first.
-5. Production: the upgrade does not start without the snapshot of A.4 step 3, part B not without the one after
-   A.5, no batch without a fresh one (B10), each confirmed by Jan. Part B runs in one maintenance window (B5): before
-   the first batch Jan confirms that Jira is read-only for users, check that Redmine answers 503 from outside and
-   200 on the local entry, and that the crontab is off; Redmine opens only after restore and the checks (B9). At the start of every batch check B5's "no mail"
-   row: the Extended API enabled, the checklists setting off, stealth mode on for the migration account.
+5. Production: the upgrade does not start without the snapshot of A.4 step 3, part B not without S0 (B5), and
+   no part of the run without the snapshot before it (S1 to S3, B7 and B10), each confirmed by Jan. Part B runs in
+   one maintenance window (B5): before 01 Jan confirms that Jira is read-only for users, check that Redmine answers
+   503 from outside and 200 on the local entry, and that the crontab is off; Redmine opens only after restore and
+   the checks (B9). Before 01 and after every snapshot check B5's "no mail" row: the Extended API enabled, the
+   checklists setting off, stealth mode on for the migration account.
 6. Run 09, 10, 11 and 14 in tmux. Log every step with tee into <log-dir>, outside the checkout.
 7. Change no code and no config default of the migration scripts, and nothing in Redmine beyond what the steps
    of this document say. In staging, edit only the review tables Jan asks you to (B6, 04's memberships, the
@@ -918,10 +989,10 @@ Rules, without exception:
 8. The repository is public: no commit, no push, no pull request from this server. Logs, verify reports and
    anything holding Jira data stay in <log-dir>.
 9. Never run rake redmine:watchers:prune, never clear Redmine's tmp directory before restore, never send mail.
-10. Report in Dutch, short, after part A (A.5 row by row, the duration for A.8), after every batch and at the end:
-   per step the result and its duration, the counts of B7 step 10, verify, every failure with its reason, what Jan
-   reviewed and decided, and everything unexpected, above all matches against objects the Redmine already had
-   (B6).
+10. Report in Dutch, short, after part A (A.5 row by row, the duration for A.8), at S1, S2 and S3 and at the end:
+   per step the result and its duration, each snapshot's duration, the counts of B7 step 12, verify, every
+   failure with its reason, what Jan reviewed and decided, and everything unexpected, above all matches against
+   objects the Redmine already had (B6).
 ```
 
 In the rehearsal the session's findings go to Jan, who passes them on to the sessions that maintain the scripts
