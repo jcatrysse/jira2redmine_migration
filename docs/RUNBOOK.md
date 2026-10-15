@@ -75,7 +75,10 @@ database, which is removed after the migration (no PostgreSQL port of the stagin
 3. **Watch permission**: roles need `view_watched_issues` (redmine_view_issue_description), otherwise
    Redmine drops watchers silently (14 now reports them as FAILED with the reason).
 4. Switch off for the duration: attachment prune (uploads wait for their issue; prune deletes unattached
-   uploads after 24 h), LDAP sync, stealth mode if used.
+   uploads after 24 h), LDAP sync. Switch **on** stealth mode for the migration account (redmine_stealth,
+   `POST /stealth/toggle.json` with `toggle=true`): 13 on 7.0 (tags) and `tools/relink_issue_links.php` write
+   through the plain issue update, which sends mail (the Extended API steps send none). Signing in to the web
+   interface as that account switches it off again. See docs/PRODUCTION.md, B5.
 
 ## 1. Structure
 
@@ -271,7 +274,7 @@ the sample are expected to be absent.
 
 `J2R_STEP=restore` (or by hand): remove the opened workflow transitions, remove the role
 `Migration (temporary)` and the memberships left without a role, lock the activated users again;
-check the group memberships; switch prune, LDAP sync and stealth mode back on.
+check the group memberships; switch prune and LDAP sync back on and stealth mode off.
 
 - Watchers and assignees stay as they were in Jira: removing a member role or membership prunes no
   watcher in Redmine 5.1 or 7.0, and Redmine checks an assignee only when it changes. A watcher who
@@ -340,7 +343,7 @@ bundle exec rails runner /path/tools/apply_workflows.rb /path/plan.json --confir
 | open workflows, reset after | (a) script it (done: `workflows` / `restore`); (b) Extended API import mode that skips the workflow and initial-status checks (session A) | **Jan: (a)** |
 | activate locked users, lock after | (a) script it (done: `members` / `restore`); (b) Extended API import mode that accepts locked users as author and assignee | **Jan: (a)** |
 | attachment prune off | (a) prune off during the run; (b) upload each attachment in 10 right before its issue is created, so nothing waits 24 h | **Jan: (a)**, runbook step, no code change |
-| LDAP sync and stealth mode off | runbook step | runbook step |
+| LDAP sync off, stealth mode on for the migration account | runbook step | runbook step |
 
 ## Appendix: Apache for the new server (large attachments)
 

@@ -972,6 +972,12 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
 
 ## Open questions for Jan
 
+- **For the rehearsal on an existing Redmine** (decision 30; docs/PRODUCTION.md, B6; asked through the coordinator,
+  2026-10-15): (1) are the roles that create issues in GEOxyz's Redmine called Manager and Developer
+  (`manual_steps.rb workflows` opens the transitions for those two names)? (2) the workflow runner makes the union
+  the global workflow of every tracker and role it plans, also on trackers existing projects use: write only each
+  project's own workflow there (B2's advice, a small change), or accept and review the preview? (3) B73: the fix,
+  and where new priorities go relative to the existing ones.
 - ~~Test projects (work list 2).~~ **Jan: TEST is not migrated** (decision 22).
 - ~~PHP version on the machine where the scripts will run in production.~~ **Jan: PHP 8.2 or newer** (decision 23).
 - ~~Staging database: stay on MySQL or move to PostgreSQL.~~ **Jan: a temporary MySQL/MariaDB** (decision 23).
@@ -1127,6 +1133,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B70 | Jira's renderer writes a link inside a link for an address with ">" | nested Markdown links, "](" visible (WIKI-520) | **fixed** (`bebd09b`): the inner link gives up its address |
 | B71 | The central retry (decision 5) covered 429 and 503, not a gateway error | the Atlassian gateway answered 504 to `GET issue/{id}/watchers` and 14's Jira phase stopped (7.0 WIKI batch, 2026-10-15; step 14 read the watchers again, nothing lost) | **fixed**: 502 and 504 are retried for GET and HEAD only (a write may have reached the server behind the gateway), with a test |
 | B72 | A link to a migrated issue whose label ended with a space or inside a word became "text (#461)which" or "comment f (#1015)rom" | Redmine links "#123" only when no letter follows: shown as text (WIKI-42, -594, -1291 and 4 more) | **fixed** (decision 26, `eb045e6`): a link that ends inside a word takes the rest of the word into its text, otherwise a space follows the reference |
+| B73 | 06 reads each Redmine priority's position from the REST API, which has none (`enumerations/index.api.rsb` in 5.1 and 7.0), so it proposes positions 1, 2, 3 for the new priorities | Redmine inserts them below the existing ones (position 1 is the lowest): on the 7.0 test instance "Blocker" became the lowest priority, "Medium" below "Low" (found writing docs/PRODUCTION.md, 2026-10-15) | **open**, for Jan with the review of an existing Redmine (docs/PRODUCTION.md, B6); until fixed, set `proposed_redmine_position` before 06's push |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
