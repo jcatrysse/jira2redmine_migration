@@ -15,6 +15,10 @@ declare(strict_types=1);
  *             migration_mapping_journals.proposed_notes), when the staging database has them
  * An item has "no loss" when >= 99% of Jira's words are in the rendered text and it has no fewer links
  * and images. Results are split per construct found in Jira's HTML (tables, code, panels, ...).
+ * Three measures (decision 26): "old" as before; "keys" also reads a Jira key of a migrated issue as the
+ * "#123" it becomes by design (pipeline only, the converter alone does not rewrite keys); "corrected" also
+ * leaves out visible syntax Jira's own text shows ("**" typed in a mail, "<br/>" quoted) and reads an
+ * attachment link as a word of its own, as Jira shows it. The lists of losses use the corrected measure.
  * Staging connection: config/config.local.php (STAGING_DSN). The report holds issue keys: keep it local.
  */
 
@@ -111,6 +115,17 @@ if ($limit !== null) {
 }
 fwrite(STDOUT, sprintf("Items: %d\n", count($items)));
 
+// Jira keys of migrated issues (and old keys, B54) and the Redmine issue they became.
+$keyToId = [];
+foreach ($pdo->query('SELECT jira_issue_key, redmine_issue_id FROM migration_mapping_issues WHERE redmine_issue_id IS NOT NULL') as $row) {
+    $keyToId[(string)$row['jira_issue_key']] = (int)$row['redmine_issue_id'];
+}
+foreach ($pdo->query('SELECT old_key, current_key FROM staging_jira_issue_key_aliases WHERE current_key IS NOT NULL') as $row) {
+    if (isset($keyToId[(string)$row['current_key']])) {
+        $keyToId[(string)$row['old_key']] = $keyToId[(string)$row['current_key']];
+    }
+}
+
 // Users for user#id and @login, as Redmine renders them.
 $userNames = [];
 foreach ($pdo->query('SELECT redmine_user_id, proposed_redmine_login, proposed_firstname, proposed_lastname FROM migration_mapping_users') as $row) {
@@ -172,6 +187,7 @@ $rendered = json_decode((string)file_get_contents($out), true, 512, JSON_THROW_O
 
 // Compare.
 $paths = ['html', 'adf', 'pipeline'];
+$measures = ['old' => [], 'keys' => [], 'corrected' => []];
 $totals = [];
 $perConstruct = [];
 $losses = [];
@@ -179,6 +195,10 @@ $constructKeys = [];
 $defects = [];
 foreach ($items as $id => $item) {
     $expectedWords = verifyWords(verifyHtmlToText($item['html']));
+    $jiraText = verifyHtmlToText($item['html']);
+    $keyWords = verifyWords(verifyRewriteIssueKeys($jiraText, $keyToId));
+    $chipWords = verifyWords(verifyRewriteIssueKeys(verifyHtmlToText(verifySeparateAttachmentLinks($item['html'])), $keyToId));
+    $jiraResidue = benchResidue($item['html']);
     $expectedLinks = verifyHtmlLinkCounts($item['html']);
     $constructs = [];
     foreach (BENCH_CONSTRUCTS as $construct => $pattern) {
@@ -203,8 +223,18 @@ foreach ($items as $id => $item) {
             }
         }
         $residue = benchResidue($html);
-        $lossy = $coverage['coverage'] < 0.99 || $links['links'] < $expectedLinks['links'] || $images < $expectedLinks['images']
-            || $missingElements !== [] || $residue !== [];
+        $structural = $links['links'] < $expectedLinks['links'] || $images < $expectedLinks['images'] || $missingElements !== [];
+        $oldLossy = $coverage['coverage'] < 0.99 || $structural || $residue !== [];
+        $renderedWords = verifyWords(verifyHtmlToText($html));
+        $keysCoverage = $path === 'pipeline' ? verifyWordCoverage($keyWords, $renderedWords) : $coverage;
+        $keysLossy = $keysCoverage['coverage'] < 0.99 || $structural || $residue !== [];
+        $coverage = $path === 'pipeline' ? verifyWordCoverage($chipWords, $renderedWords)
+            : verifyWordCoverage(verifyWords(verifyHtmlToText(verifySeparateAttachmentLinks($item['html']))), $renderedWords);
+        $residue = array_values(array_diff($residue, $jiraResidue));
+        $lossy = $coverage['coverage'] < 0.99 || $structural || $residue !== [];
+        $measures['old'][$path] = ($measures['old'][$path] ?? 0) + ($oldLossy ? 0 : 1);
+        $measures['keys'][$path] = ($measures['keys'][$path] ?? 0) + ($keysLossy ? 0 : 1);
+        $measures['corrected'][$path] = ($measures['corrected'][$path] ?? 0) + ($lossy ? 0 : 1);
         $totals[$path] ??= ['items' => 0, 'clean' => 0, 'coverage' => 0.0];
         $totals[$path]['items']++;
         $totals[$path]['clean'] += $lossy ? 0 : 1;
@@ -253,6 +283,15 @@ foreach ($paths as $path) {
     $lines[] = sprintf('| %s | %d | %d | %.1f%% | %.2f%% |', $path, $t['items'], $t['clean'], 100 * $t['clean'] / max(1, $t['items']), 100 * $t['coverage'] / max(1, $t['items']));
 }
 $lines[] = '';
+$lines[] = '| measure | ' . implode(' | ', array_map(static fn (string $p): string => $p . ': without loss', array_keys($totals))) . ' |';
+$lines[] = '|---|' . str_repeat('---:|', count($totals));
+foreach ($measures as $measure => $clean) {
+    $lines[] = '| ' . $measure . ' | ' . implode(' | ', array_map(
+        static fn (string $p): string => sprintf('%d of %d (%.1f%%)', $clean[$p] ?? 0, $totals[$p]['items'], 100 * ($clean[$p] ?? 0) / max(1, $totals[$p]['items'])),
+        array_keys($totals)
+    )) . ' |';
+}
+$lines[] = '';
 $lines[] = '| construct | items | html: without loss | adf: without loss | pipeline: without loss |';
 $lines[] = '|---|---:|---:|---:|---:|';
 ksort($perConstruct);
@@ -292,4 +331,4 @@ file_put_contents($reportPath, implode("\n", $lines) . "\n");
 if ($detailsPath !== null) {
     file_put_contents($detailsPath, implode("\n", $details) . "\n");
 }
-fwrite(STDOUT, implode("\n", array_slice($lines, 0, 8)) . "\nReport: " . $reportPath . "\n");
+fwrite(STDOUT, implode("\n", array_slice($lines, 0, 15)) . "\nReport: " . $reportPath . "\n");

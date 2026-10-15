@@ -231,4 +231,23 @@ final class VerifyTest extends TestCase
         self::assertTrue(verifyJiraValueIsEmpty(['labels' => [], 'colors' => [], 'labelSource' => 'global']));
         self::assertFalse(verifyJiraValueIsEmpty(['labels' => ['Vessel_A'], 'colors' => ['light-grey']]));
     }
+
+    public function testAKeyOfAMigratedIssueReadsAsItsRedmineReference(): void
+    {
+        // decision 26: "WIKI-12" becomes "#40" by design; a key outside the migration stays
+        self::assertSame('see #40 and OTHER-3', verifyRewriteIssueKeys('see WIKI-12 and OTHER-3', ['WIKI-12' => 40]));
+        $words = verifyWords(verifyRewriteIssueKeys('see WIKI-12 and OTHER-3', ['WIKI-12' => 40]));
+        self::assertSame(['see', '40', 'and', 'other', '3'], $words);
+    }
+
+    public function testAnAttachmentLinkIsAWordOfItsOwn(): void
+    {
+        // SIS-161: "day of year<a ... data-attachment-type="file">full_output.zip</a>" (anonymised)
+        $html = '<p>day of year<span class="nobr"><a href="/rest/api/3/attachment/content/1" data-attachment-type="file">'
+            . 'full_output.zip</a></span></p>';
+
+        self::assertContains('yearfull', verifyWords(verifyHtmlToText($html)));
+        $words = verifyWords(verifyHtmlToText(verifySeparateAttachmentLinks($html)));
+        self::assertSame(['day', 'of', 'year', 'full', 'output', 'zip'], $words);
+    }
 }

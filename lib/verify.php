@@ -38,6 +38,38 @@ function verifyDropTypedLinkAddresses(string $text): string
 }
 
 /**
+ * A Jira key of a migrated issue becomes "#123" by design (decision 26: no loss): the measure reads Jira's
+ * text with the same rewrite. Keys of issues outside the migration stay.
+ *
+ * @param array<string, int> $keyToId
+ */
+function verifyRewriteIssueKeys(string $text, array $keyToId): string
+{
+    if ($keyToId === []) {
+        return $text;
+    }
+
+    return preg_replace_callback(
+        '/\b([A-Z][A-Z0-9_]*-\d+)\b/',
+        static fn (array $m): string => isset($keyToId[$m[1]]) ? '#' . $keyToId[$m[1]] : $m[0],
+        $text
+    ) ?? $text;
+}
+
+/**
+ * An attachment link is a chip in Jira, like a mention: "year<a ...>full_output.zip</a>" reads as two words.
+ * Jira's text glued them; Redmine shows "year attachment" (decision 26, a measure correction).
+ */
+function verifySeparateAttachmentLinks(string $html): string
+{
+    return preg_replace(
+        '#(<a\b[^>]*(?:\bdata-attachment-type=|href="[^"]*/(?:secure/attachment|rest/api/\d+/attachment)/)[^>]*>.*?</a>)#is',
+        ' $1 ',
+        $html
+    ) ?? $html;
+}
+
+/**
  * Links to Jira issues (".../browse/ABC-12...") are rewritten to Redmine issue links (#123) by design;
  * Outlook safe-link wrappers in mailed comments are replaced by the link itself by design. Both are left
  * out of the word comparison on both sides.
