@@ -150,7 +150,9 @@ function transformChecklists(PDO $pdo, array $config): array
     }
     $issueMappings->closeCursor();
 
-    $existingStatement = $pdo->query('SELECT mapping_id, jira_issue_id, proposed_payload, automation_hash FROM migration_mapping_checklists');
+    $existingStatement = $pdo->query(
+        'SELECT mapping_id, jira_issue_id, proposed_payload, automation_hash, migration_status FROM migration_mapping_checklists'
+    );
     if ($existingStatement === false) {
         throw new RuntimeException('Failed to read checklist mappings.');
     }
@@ -165,6 +167,7 @@ function transformChecklists(PDO $pdo, array $config): array
             'mapping_id' => (int)$row['mapping_id'],
             'proposed_payload' => $row['proposed_payload'],
             'automation_hash' => $row['automation_hash'],
+            'migration_status' => $row['migration_status'],
         ];
     }
     $existingStatement->closeCursor();
@@ -293,7 +296,8 @@ function transformChecklists(PDO $pdo, array $config): array
         $current = $existing[$jiraIssueId];
         $storedHash = normalizeStoredAutomationHash($current['automation_hash'] ?? null);
 
-        if ($storedHash !== null && hash_equals($storedHash, $automationHash)) {
+        // an unchanged checklist keeps its row, but a push that failed is tried again (B83: the row stayed FAILED)
+        if ($storedHash !== null && hash_equals($storedHash, $automationHash) && $current['migration_status'] !== 'FAILED') {
             continue;
         }
 

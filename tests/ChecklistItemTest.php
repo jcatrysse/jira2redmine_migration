@@ -83,4 +83,13 @@ final class ChecklistItemTest extends TestCase
         self::assertStringContainsString('ChecklistItem::post($client, $redmineIssueId,', $fifteen);
         self::assertStringNotContainsString("\$client->post(sprintf('/issues/%d/checklists.json'", $fifteen);
     }
+
+    public function testARerunOf15TriesAFailedChecklistAgain(): void
+    {
+        // B83: the transform kept every row whose checklist had not changed, a FAILED one too, so a rerun never retried
+        $fifteen = (string)file_get_contents(__DIR__ . '/../15_migrate_checklists.php');
+        $keep = "if (\$storedHash !== null && hash_equals(\$storedHash, \$automationHash) && \$current['migration_status'] !== 'FAILED') {";
+        self::assertStringContainsString($keep, $fifteen);
+        self::assertStringContainsString('automation_hash, migration_status FROM migration_mapping_checklists', $fifteen);
+    }
 }

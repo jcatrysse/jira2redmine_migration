@@ -119,6 +119,7 @@ All notable changes to this project. Steps to take before and after a migration 
   an error with the key, counted in the summary.
 - `restore` could remove transitions Redmine had before the migration when the workflows step's list was left from
   another run (B82); the step now stops on such a list.
+- A rerun of 15 did not try a failed checklist again (B83).
 - 06 put new priorities at position 1, 2, 3, below every existing priority (B73): a new priority now goes after
   the existing ones.
 - Text conversion (decision 26, B60 to B70): ADF tables with merged cells and ADF code blocks; bold and
