@@ -113,6 +113,8 @@ All notable changes to this project. Steps to take before and after a migration 
   number fields by value.
 - A label app entry with several comma-joined labels became one value, or held the issue back (B77); each label
   counts on its own.
+- A checklist item longer than redmine_checklists allows stopped the issue's checklist there (B80); it is now cut to
+  the allowed length and the rest of the checklist follows.
 - 06 put new priorities at position 1, 2, 3, below every existing priority (B73): a new priority now goes after
   the existing ones.
 - Text conversion (decision 26, B60 to B70): ADF tables with merged cells and ADF code blocks; bold and

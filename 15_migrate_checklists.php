@@ -10,6 +10,7 @@ use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Cli\Phases;
+use Jira2Redmine\Redmine\ChecklistItem;
 
 const MIGRATE_CHECKLISTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -400,15 +401,14 @@ function runChecklistPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool
             continue;
         }
 
+        $shortened = 0;
         try {
             foreach ($items as $item) {
-                $payload = [
-                    'checklist' => [
-                        'subject' => (string)($item['text'] ?? ''),
-                        'is_done' => ($item['status'] ?? '') === 'done',
-                    ],
-                ];
-                $client->post(sprintf('/issues/%d/checklists.json', $redmineIssueId), ['json' => $payload]);
+                // an item longer than the plugin allows goes in cut to its maximum (B80)
+                $subject = (string)($item['text'] ?? '');
+                if (ChecklistItem::post($client, $redmineIssueId, $subject, ($item['status'] ?? '') === 'done')) {
+                    $shortened++;
+                }
             }
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
@@ -437,12 +437,13 @@ function runChecklistPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool
             continue;
         }
 
+        $notes = $shortened > 0 ? sprintf('%d item(s) cut to the length Redmine allows (B80).', $shortened) : null;
         $updateStatement->execute([
             'mapping_id' => $mappingId,
             'migration_status' => 'SUCCESS',
-            'notes' => null,
+            'notes' => $notes,
         ]);
-        printf("  [checklist] Redmine issue #%d replaced.%s", $redmineIssueId, PHP_EOL);
+        printf("  [checklist] Redmine issue #%d replaced.%s%s", $redmineIssueId, $notes !== null ? ' [shortened] ' . $notes : '', PHP_EOL);
     }
 }
 
