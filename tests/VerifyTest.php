@@ -290,4 +290,21 @@ final class VerifyTest extends TestCase
         self::assertSame(['svps', 'svss'], verifyWords(verifyHtmlToText('<p>SVPs/[SVS|https://x.example/s]s</p>', true)));
         self::assertSame(['svps', 'svs', 's'], verifyWords(verifyHtmlToText('<p>SVPs/[SVS|https://x.example/s]s</p>')));
     }
+
+    public function testANumberFieldIsComparedByItsValue(): void
+    {
+        // B79: 10 wrote 10 as "1" and 0 as "", and verify only checked that the field was not empty
+        self::assertFalse(verifyNumberMatches(10, '1'));
+        self::assertFalse(verifyNumberMatches(0, ''));
+        self::assertFalse(verifyNumberMatches(0, null));
+        self::assertTrue(verifyNumberMatches(10, '10'));
+        self::assertTrue(verifyNumberMatches(0, '0'));
+        self::assertTrue(verifyNumberMatches(1.125, '1.13'));
+        self::assertTrue(verifyNumberMatches(2.5, '2.5'));
+        self::assertNull(verifyNumberMatches('Geo_Ocean_IV', 'Geo_Ocean_IV'));
+        self::assertNull(verifyNumberMatches(['labels' => ['a']], ['a']));
+
+        $verify = (string)file_get_contents(__DIR__ . '/../tools/verify.php');
+        self::assertStringContainsString("\$record('custom fields: number', \$sameNumber,", $verify);
+    }
 }

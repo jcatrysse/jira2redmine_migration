@@ -456,6 +456,26 @@ function verifyJiraValueIsEmpty(mixed $value): bool
 }
 
 /**
+ * B79: a Jira number field and its Redmine value hold the same number (10 rounds to 2 decimals); null when the Jira
+ * value is not a number, so only number fields are compared. Before, verify checked that the Redmine field was not
+ * empty, and a revision number 10 that became "1" passed.
+ */
+function verifyNumberMatches(mixed $jiraValue, mixed $redmineValue): ?bool
+{
+    if (!is_int($jiraValue) && !is_float($jiraValue)) {
+        return null;
+    }
+    if (!is_string($redmineValue) && !is_int($redmineValue) && !is_float($redmineValue)) {
+        return false;
+    }
+    if (!is_numeric((string)$redmineValue)) {
+        return false;
+    }
+
+    return abs((float)$redmineValue - round((float)$jiraValue, 2)) < 0.000001;
+}
+
+/**
  * B58: two times are the same instant, to the second (Jira gives milliseconds and an offset, Redmine UTC seconds);
  * a time without an offset is UTC.
  */

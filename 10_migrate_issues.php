@@ -24,6 +24,7 @@ use Jira2Redmine\Attachments\AttachmentNames;
 use Jira2Redmine\Attachments\IssueAttachmentState;
 use Jira2Redmine\Jira\ProjectSelection;
 use Jira2Redmine\Cli\Phases;
+use Jira2Redmine\CustomFields\DecimalText;
 
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -3764,7 +3765,7 @@ function normalizeCustomFieldSingleValue(string $fieldFormat, array $enumeration
         case 'float':
         case 'decimal':
             $floatValue = normalizeDecimal($rawValue, -INF);
-            return $floatValue === null ? null : rtrim(rtrim((string)$floatValue, '0'), '.');
+            return $floatValue === null ? null : DecimalText::of($floatValue);
         case 'date':
             $stringValue = extractJiraCustomFieldString($rawValue);
             if ($stringValue === null) {

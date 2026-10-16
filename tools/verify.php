@@ -416,6 +416,11 @@ foreach ($projectKeys as $projectKey) {
             }
             $rmValue = $rmValues[$redmineFieldId] ?? null;
             $record('custom fields', $rmValue !== null && $rmValue !== '' && $rmValue !== [], $issueKey . ' ' . $jiraFieldId, 'Redmine field ' . $redmineFieldId . ' empty');
+            $sameNumber = verifyNumberMatches($value, $rmValue);
+            if ($sameNumber !== null) {
+                $detail = sprintf('Jira %s, Redmine field %s %s', json_encode($value), $redmineFieldId, json_encode($rmValue));
+                $record('custom fields: number', $sameNumber, $issueKey . ' ' . $jiraFieldId, $detail);
+            }
         }
     }
 }
