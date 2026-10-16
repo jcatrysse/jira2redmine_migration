@@ -25,6 +25,7 @@ use Jira2Redmine\Attachments\IssueAttachmentState;
 use Jira2Redmine\Jira\ProjectSelection;
 use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\CustomFields\DecimalText;
+use Jira2Redmine\CustomFields\LabelManagerLabels;
 
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -3729,15 +3730,17 @@ function extractJiraLabelsObject(mixed $rawValue): ?array
     }
 
     $out = [];
-    foreach ($labels as $label) {
-        if (!is_string($label)) {
+    foreach ($labels as $entry) {
+        if (!is_string($entry)) {
             continue;
         }
-        $label = trim($label);
-        if ($label === '' || strtolower($label) === 'none') {
-            continue;
+        // one entry can hold several labels, comma-joined (B77)
+        foreach (LabelManagerLabels::split($entry) as $label) {
+            if (strtolower($label) === 'none') {
+                continue;
+            }
+            $out[] = $label;
         }
-        $out[] = $label;
     }
 
     return array_values(array_unique($out));
@@ -3974,10 +3977,11 @@ function extractJiraCustomFieldString(mixed $value): ?string
 
         // Jira "labels with colors" (zoals customfield_10067)
         if (array_key_exists('labels', $value) && is_array($value['labels'])) {
-            $labels = array_values(array_filter(array_map(
-                fn($x) => is_scalar($x) ? trim((string)$x) : '',
-                $value['labels']
-            ), fn($s) => $s !== '' && strtolower($s) !== 'none'));
+            // one entry can hold several labels, comma-joined (B77)
+            $labels = array_values(array_filter(
+                LabelManagerLabels::all($value['labels']),
+                fn($s) => strtolower($s) !== 'none'
+            ));
 
             if (count($labels) === 0) return null;
 

@@ -20,6 +20,7 @@ use Jira2Redmine\CustomFields\DependingValueDependencies;
 use Jira2Redmine\CustomFields\UsageScopes;
 use Jira2Redmine\Jira\NotMigrated;
 use Jira2Redmine\Cli\Phases;
+use Jira2Redmine\CustomFields\LabelManagerLabels;
 
 const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -1272,13 +1273,11 @@ function decodeAppCustomLabelString(string $value): ?string
     }
 
     $labels = [];
-    foreach ($decoded['labels'] as $label) {
-        $normalized = trim((string)$label);
-        if ($normalized === '') {
-            continue;
+    // one entry can hold several labels, comma-joined (B77)
+    foreach ($decoded['labels'] as $entry) {
+        foreach (LabelManagerLabels::split($entry) as $normalized) {
+            $labels[$normalized] = $normalized;
         }
-
-        $labels[$normalized] = $normalized;
     }
 
     if ($labels === []) {
@@ -2279,11 +2278,8 @@ function deriveAllowedValuesDescriptorFromIssues(PDO $pdo, string $fieldId, stri
                 if (is_array($item) && array_key_exists('labels', $item) && is_array($item['labels'])) {
                     $seen = [];
 
-                    foreach ($item['labels'] as $label) {
-                        $labelText = trim((string)$label);
-                        if ($labelText === '') {
-                            continue;
-                        }
+                    // one entry can hold several labels, comma-joined (B77)
+                    foreach (LabelManagerLabels::all($item['labels']) as $labelText) {
 
                         // binnen één object dubbele labels negeren
                         if (isset($seen[$labelText])) {
@@ -2321,11 +2317,8 @@ function deriveAllowedValuesDescriptorFromIssues(PDO $pdo, string $fieldId, stri
             if (array_key_exists('labels', $decoded) && is_array($decoded['labels'])) {
                 $seen = [];
 
-                foreach ($decoded['labels'] as $label) {
-                    $labelText = trim((string)$label);
-                    if ($labelText === '') {
-                        continue;
-                    }
+                // one entry can hold several labels, comma-joined (B77)
+                foreach (LabelManagerLabels::all($decoded['labels']) as $labelText) {
 
                     if (isset($seen[$labelText])) {
                         continue;
