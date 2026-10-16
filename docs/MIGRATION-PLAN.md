@@ -1,14 +1,32 @@
 # Jira Cloud to Redmine: test migrations and script upgrade
 
-## Samenvatting voor Jan (2026-10-15, B2, bijgewerkt 's avonds)
+## Samenvatting voor Jan (2026-10-16, B2, 's nachts bijgewerkt)
 
-**Stand.** Alles staat op `redmine70-migration`, QA groen (309 tests). Jira bleef read-only: alleen GET-calls, de
-schrijfprobe gaf 401 "scope does not match".
+**Stand.** Alles staat op `redmine70-migration`, QA groen (336 tests). Jira bleef read-only: alleen GET-calls.
 
-**Vanavond: jouw beslissingen 37 tot 39**
+**Vannacht**
+- **Eén run met alle 14 projecten (beslissing 39), getest op 7.0** op een Redmine die al eigen data had: 4 u 28 min,
+  ongeveer 4 u zonder de dubbele watcher-lezing die er nu uit is. Productie wordt dan ongeveer 6,5 tot 9 uur met de
+  bijlagen. Alle projecten aangemaakt, DOC, LABO, ICT, LLE, SOIL, SSPT, ROV, GSPP en FPS voor het eerst. De
+  relink-controle gaf 0: in één run is de relink alleen nog een controle. Details in `docs/PRODUCTION.md` B8.
+- **Geen sporen (beslissing 37) bewezen op 5.1 en 7.0:** 0 journals van nabewerking, 0 issues met een nieuwe
+  bijgewerkt-tijd, ook na een tags- en relink-ronde. Vereist Extended API 8e7096c of later (getest: ecc7dde).
+- **Gevonden en opgelost, elk met een test:**
+  - B76: de relink zag teksten zonder Jira-link als "te herschrijven".
+  - B77: meerdere vaartuigen in één label hielden 4 SURV-issues tegen.
+  - B79: een getal in een float-veld verloor zijn nullen (10 werd 1, 0 werd leeg); verify vergelijkt nu getallen.
+  - B80: een te lang checklist-item liet de rest van de checklist vallen (alleen 5.1).
+  - B81: een mislukte lees-actie in 11 stond als waarschuwing in de log.
+  - B82: een oude lijst met geopende transities liet restore de workflow van een bestaande tracker wissen.
+  - B83: een nieuwe run van 15 probeerde een mislukte checklist niet opnieuw.
+- **Open voor jou: B78.** Het Jira-veld "Agent Sessions" (AI-agentsessies) hield SURV-1752 tegen. Advies: niet
+  migreren, zoals beslissing 20; in de testconfig staat het zo.
+- **Relatie DOC-448/449:** Jira heeft er twee, Redmine weigert de tweede als circulair; staat in B9 bij wat je na de
+  run bekijkt.
+
+**Gisteravond: jouw beslissingen 37 tot 39**
 - **37, geen sporen:** E1 en E2 via de Extended API (vlag naast notify=false: geen journal bij 10's tweede pass,
-  12, 13 en de relink, een aangepast commentaar houdt zijn tijden). De plugin-sessie bouwt de vlag; zodra ik naam en
-  commit heb, sturen de scripts hem mee, met een test per script en een run op 5.1 en 7.0. Tot dan niets gewijzigd.
+  12, 13 en de relink, een aangepast commentaar houdt zijn tijden). Gebouwd en bewezen, zie boven.
 - **38:** datums en % gereed van parents blijven afgeleid.
 - **39, één run met alle 14 projecten:** `docs/PRODUCTION.md` herschreven (B1 tot B3, B5 tot B11, samenvatting,
   deel C): snapshots S1 na de structuur en reviews, S2 na 09 en 10, S3 na 11 tot 16; de relink alleen als controle;
@@ -500,7 +518,7 @@ Results, "Traces of post-processing"):
     commit. Then B2 sends the flag from 10's second pass, 12, 13 and the relink, with a test each, and proves it with
     a run on 5.1 and 7.0 on a non-empty Redmine: 0 journals from post-processing, the updated times unchanged apart
     from the derived parent fields (38). Until then nothing changes in the scripts for this.
-    **Built** (2026-10-15, evening): the plugin's parameter is `skip_journal` (redmine_extended_api `506603c`, docs
+    **Built and proven** (2026-10-15/16; Results, "Decision 37, the proof": 0 journals, 0 updated times on 5.1 and 7.0): the plugin's parameter is `skip_journal` (redmine_extended_api `506603c`, docs
     `8e7096c`); the scripts send it with notify=false from 10's second pass (and its open-parent retry), 12, 13 and the
     relink (`ExtendedApi::NO_TRACE`, `135fa96`); 10's create sets no parent, so it needs none; 11's comments carry notes
     and go without it (the plugin refuses notes with the flag). **The scripts need redmine_extended_api `8e7096c` or
@@ -1719,3 +1737,28 @@ GSPP and FPS for the first time.
 - The refactor of B76 (`4031877`) gives the same output as before over the 69,698 staged texts of this run.
 - B77 proven on the instance: after `7f68c18`, 08 and 10 again (with the members step, then restore) created the 4
   SURV issues with their six vessels as separate values.
+
+**Decision 37, the proof (B2, 2026-10-16 night).** Code `7f68c18` (skip_journal from `135fa96`, B76, B77, B79),
+redmine_extended_api `de4ab98` (the lib of `ecc7dde`), on a Redmine that is not empty (the tracker "Task" with its own
+global workflow, an existing project), `run_all.sh` with the one-run procedure, then 13 again on 3 issues and the
+relink with work (`relink_fake.php`: keys of projects outside the run mapped onto an issue), measured by
+`traces.py` (every journal on a migrated issue that 11 did not push; every issue whose updated time lies in the run;
+the journals and issues whose times changed between a snapshot before 13 and the relink and after them):
+
+| | 5.1: GEOS, SIS, OAC, DOC (1,030 issues) | 7.0: GEOS, SIS, OAC, DOC, SURV (2,527 issues, sample) |
+|---|---|---|
+| journals of post-processing (10's second pass, 12, 13, "Subtask added") | **0** (before the flag 211 for GEOS, SIS, OAC alone) | **0** |
+| issues with an updated time in the run | **0** (before: 4, the 3 derived parents included) | **0** |
+| 13 again on 3 issues and the relink of 15 (5.1) or 24 (7.0) texts | 0 new journals, 0 journals and 0 issues with new times | the same |
+| the relink check after the run | 0 to relink of 49 texts | 0 of 262 |
+| verify | FAIL 2: DOC-351's two comments, not read during a full disk (B81, fixed; 11 again read them) | **PASS**; `custom fields: number` 7 of 7 (B79) |
+| the existing tracker "Task" | its global workflow removed by a stale list (B82, fixed) | 4 rows, sha256 6c384767d3536829, unchanged |
+
+The 918 (7.0) and 183 (5.1) journals marked "Edited" are comments edited in Jira, which keep Jira's times. With the
+flag the derived parents keep their updated time too (none in the run), so decision 38 costs nothing visible. The
+7.0 run also had B78's advice in the test configuration (`agent-sessions` in `migration.custom_fields.not_migrated`,
+open for Jan): "Agent Sessions" IGNORED, no Redmine field, SURV-1752 created; and B77 in a fresh run: "Offshore Vessel"
+holds only the single vessels, SURV-1063 to 1066 created with six each. Found on the way: B80 to B83, all fixed and
+proven on 5.1 (B80 and B83: DOC-292's checklist whole; B81: DOC-351's comments read again; B82: a stale list stops the
+workflows step, the batch case passes). The first 7.0 attempt filled the disk: the proof script left the attachment
+sample off and SURV's 98.7 GiB began to download; it ran again with the sample.
