@@ -99,7 +99,8 @@ mark S2
 step 11 11_migrate_journals.php --confirm-push --use-extended-api
 step 12 12_migrate_issue_relations.php --confirm-push
 step 13 13_migrate_tags.php --confirm-push
-step 14 14_migrate_watchers.php --confirm-push
+# the watchers were read from Jira before 04 (14-jira); reading them again took as long (29 min for 14 projects)
+step 14 14_migrate_watchers.php --phases=transform,push --confirm-push
 step 15 15_migrate_checklists.php --confirm-push
 step 16 16_export_workflows.php
 mark S3

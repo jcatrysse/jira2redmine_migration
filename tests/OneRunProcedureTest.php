@@ -70,4 +70,20 @@ final class OneRunProcedureTest extends TestCase
         // the preview only: the one run's relink writes nothing
         self::assertStringNotContainsString('relink_issue_links.php --confirm-push', $run);
     }
+
+    public function testTheWatchersAreReadFromJiraOnce(): void
+    {
+        // 14's jira phase reads the watchers of every issue of the run (29 min for the 14 projects on 7.0); it runs
+        // before 04, which proposes the watchers' memberships, and the push needs only the transform after that
+        $run = (string)file_get_contents(__DIR__ . '/../tools/testenv/run_all.sh');
+        self::assertSame(1, substr_count($run, 'step 14-jira 14_migrate_watchers.php --phases=jira'));
+        self::assertStringContainsString('step 14 14_migrate_watchers.php --phases=transform,push --confirm-push', $run);
+        // the stability pass (STABILITY=1) still reruns 14 whole, as a rerun after a failure would (PRODUCTION.md B10)
+        self::assertStringNotContainsString('step 14 14_migrate_watchers.php --confirm-push', $run);
+        foreach (['PRODUCTION.md', 'RUNBOOK.md'] as $doc) {
+            $text = (string)file_get_contents(__DIR__ . '/../docs/' . $doc);
+            self::assertStringContainsString('php 14_migrate_watchers.php --phases=transform,push --confirm-push', $text, $doc);
+            self::assertStringNotContainsString('php 14_migrate_watchers.php --confirm-push', $text, $doc);
+        }
+    }
 }

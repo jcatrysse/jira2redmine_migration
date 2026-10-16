@@ -715,15 +715,16 @@ checkout (the logs hold Jira data: never in the repository).
     php 11_migrate_journals.php --confirm-push --use-extended-api
     php 12_migrate_issue_relations.php --confirm-push
     php 13_migrate_tags.php --confirm-push
-    php 14_migrate_watchers.php --confirm-push
+    php 14_migrate_watchers.php --phases=transform,push --confirm-push
     php 15_migrate_checklists.php --confirm-push
     php 16_export_workflows.php
     ```
 
     In one run every issue exists before 11 and 12: the comments get their `#id` links directly, and 12 leaves a
-    relation MANUAL only when its other side is not migrated. 13 finds the tags 10 sent; it writes only for an
-    issue created before them (a rerun), through the Extended API with notify=false and `skip_journal`: no journal,
-    the updated time kept. 10's second pass and 12 send `skip_journal` too (decision 37): the parents get no
+    relation MANUAL only when its other side is not migrated. 13 sends the tags of every tagged issue again
+    (1,601 issues, 4 minutes in the test run of the 14 projects); for an issue 10 created with its tags that changes
+    nothing, and it goes through the Extended API with notify=false and `skip_journal`: no journal, the updated time
+    kept. 14 reads nothing from Jira here: its jira phase ran in step 3. 10's second pass and 12 send `skip_journal` too (decision 37): the parents get no
     "Subtask added", the relations no journal on either issue.
 11. **Snapshot S3** (production; rehearsal as at S1). The migration itself is complete; B9 follows.
 12. **Counts** (staging):

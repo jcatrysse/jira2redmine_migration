@@ -264,7 +264,7 @@ targets.
 php 11_migrate_journals.php --confirm-push --use-extended-api
 php 12_migrate_issue_relations.php --confirm-push
 php 13_migrate_tags.php --confirm-push
-php 14_migrate_watchers.php --confirm-push
+php 14_migrate_watchers.php --phases=transform,push --confirm-push   # its jira phase ran in section 2
 php 15_migrate_checklists.php --confirm-push
 php 16_export_workflows.php
 ```
