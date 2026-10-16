@@ -888,7 +888,20 @@ again (B10).
    **Never run `rake redmine:watchers:prune`** afterwards: it deletes the historical watchers the migration kept on
    purpose (decision 12).
 5. **After the run, by hand:** retire the `[unoffered]` select values (docs/RUNBOOK.md, section 2); rebuild what the
-   automation rules export lists (custom workflows, recurring tasks).
+   automation rules export lists (custom workflows, recurring tasks). **Jan sees** the relations Redmine refused,
+   each with Redmine's reason; the test run had one, which production will show too: DOC-449 "relates to" DOC-448
+   while DOC-448 "blocks" DOC-449, refused by Redmine as "This relation would create a circular dependency". The Jira
+   link stays in Jira; Jan decides whether anything is added by hand.
+
+   ```bash
+   mysql jira2redmine -e "SELECT r.jira_link_id, a.jira_issue_key, r.proposed_relation_type, b.jira_issue_key, r.notes
+     FROM migration_mapping_issue_relations r
+     LEFT JOIN migration_mapping_issues a ON a.redmine_issue_id = r.redmine_issue_from_id
+     LEFT JOIN migration_mapping_issues b ON b.redmine_issue_id = r.redmine_issue_to_id
+     WHERE r.migration_status IN ('CREATION_FAILED', 'MANUAL_INTERVENTION_REQUIRED')"
+   ```
+
+   MANUAL rows are links whose other issue is not migrated (2 in the test run).
 6. **Remove staging** once no rerun is needed: if a copy is wanted, `mysqldump jira2redmine` to a place outside the
    repository (it holds Jira data); then `mysql -e "DROP DATABASE jira2redmine; DROP USER 'jira2redmine'@'localhost';"`,
    `apt purge mariadb-server` if it was installed for this, empty `$J2R_TMP`, delete the environment file with the
