@@ -937,8 +937,10 @@ again (B10).
   staging database**: staging records what was pushed, so a Redmine rolled back without its staging would make the
   next run skip issues that are no longer there. With staging on the same VM (B2) one snapshot holds all of it.
   `paths.tmp` is empty at S1 (nothing pulled yet) and at S2 (emptied after 09's push), so no snapshot carries a
-  second copy of the attachments. Without VM snapshots: a `pg_dump` of Redmine, a copy of `files/`, and a
-  `mysqldump` of staging, taken at the same moment.
+  second copy of the attachments. Without VM snapshots: a `pg_dump` of Redmine, a copy of `files/`, a copy of `tmp/j2r_added_workflows.json`
+  (when it exists), and a `mysqldump` of staging, taken at the same moment and restored together: a Redmine restored
+  without its list, or with a list of another moment, makes `restore` remove the wrong transitions, those Redmine had
+  before the migration included (B82; the `workflows` step now stops on a list that does not match its Redmine).
 - **Do not hotfix the scripts on the server.** A defect: stop, write down the step, the log lines and the mapping
   rows, and report it (rehearsal: through Jan to the coordinator and B2; production: roll back and wait for a fixed
   `main`).

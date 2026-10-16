@@ -44,6 +44,14 @@ when 'workflows'
   abort "Roles without Add issues or Edit issues (Redmine ignores their workflow): #{ignored.join(', ')}" if ignored.any?
   statuses = IssueStatus.pluck(:id)
   existing = WorkflowTransition.pluck(:tracker_id, :role_id, :old_status_id, :new_status_id).to_set
+  added_file = Rails.root.join('tmp', 'j2r_added_workflows.json')
+  previous = File.exist?(added_file) ? JSON.parse(File.read(added_file)) : []
+  # B82: until restore every transition the list names exists (an earlier pass of this step added it); one this
+  # Redmine lacks means the list is left from another state of the database (a reset, a restore without the file),
+  # and restore would remove what it names, transitions Redmine had before the migration included
+  stale = previous.reject { |key| existing.include?(key) }
+  abort "#{added_file} names #{stale.size} of #{previous.size} transitions this Redmine does not have: it is left from " \
+        'another run. Restore removes what it names: delete it only if no restore of that run is pending.' if stale.any?
   rows = []
   Tracker.pluck(:id).each do |tracker_id|
     roles.each do |role|
@@ -58,8 +66,6 @@ when 'workflows'
   end
   rows.each_slice(5000) { |slice| WorkflowRule.insert_all(slice) }
   created = rows.size
-  added_file = Rails.root.join('tmp', 'j2r_added_workflows.json')
-  previous = File.exist?(added_file) ? JSON.parse(File.read(added_file)) : []
   keys = rows.map { |r| [r[:tracker_id], r[:role_id], r[:old_status_id], r[:new_status_id]] }
   File.write(added_file, JSON.generate(previous + keys))
   # Decided by Jan (B13): a parent keeps its own priority, as in Jira.
