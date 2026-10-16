@@ -19,8 +19,8 @@
   - B81: een mislukte lees-actie in 11 stond als waarschuwing in de log.
   - B82: een oude lijst met geopende transities liet restore de workflow van een bestaande tracker wissen.
   - B83: een nieuwe run van 15 probeerde een mislukte checklist niet opnieuw.
-- **Open voor jou: B78.** Het Jira-veld "Agent Sessions" (AI-agentsessies) hield SURV-1752 tegen. Advies: niet
-  migreren, zoals beslissing 20; in de testconfig staat het zo.
+- **Jouw beslissing 40 (B78):** het Jira-veld "Agent Sessions" (AI-agentsessies) gaat niet mee, zoals beslissing
+  20; staat in de standaardconfig. Daarmee is er voor de scripts niets meer open tot de repetitie op je kloon.
 - **Relatie DOC-448/449:** Jira heeft er twee, Redmine weigert de tweede als circulair; staat in B9 bij wat je na de
   run bekijkt.
 
@@ -534,6 +534,14 @@ Results, "Traces of post-processing"):
     every attachment, `paths.tmp` emptied right after 09's push; the server needs room for about 116 GiB twice at
     that moment (`paths.tmp` and Redmine's `files/`); with less, 09 runs in rounds (`--download-limit`), each round
     pushed and emptied before the next. The rehearsal (decision 30) runs it this way.
+
+Jan's answer to B78 (2026-10-16, relayed by the coordinator):
+
+40. **"Agent Sessions" is not migrated**, like "Organizations" and "Request participants" (decision 20): the Jira field
+    of its AI agent sessions (`com.atlassian.jira.plugin.system.customfieldtypes:agent-sessions`) is in
+    `migration.custom_fields.not_migrated`; 08 marks it IGNORED and creates no Redmine field, 10 migrates the issue
+    with a session (SURV-1752, held back before). Proven in the 7.0 run of decision 37 (with the same setting in the
+    test configuration then).
 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
@@ -1245,7 +1253,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B75 | 13 sent the tags of an issue on 7.0 as one comma-joined string (`add_tag_list: "a,b,c"`); redmine_tags' 7.0 branch takes a string as one tag | on 7.0 every issue with several Jira labels got one tag named "a,b,c" instead of separate tags (17 of the 46 tagged issues of GEOS, SIS and OAC, every 7.0 run since B19; verify does not compare tags); found by the trace inventory (Jan, 2026-10-15) | **fixed** (`5dffd71`): the tags go as a list; proof on 7.0: two issues untagged and tagged again by 13 have their tags apart (#16 EM712, FAU, MBES) |
 | B76 | `tools/relink_issue_links.php` rewrote with `replaceIssueLinksInText`, whose last step tidies the spacing around every reference ("#203," becomes "#203 ,"); 10's own rewrite of a description does not | a description 10 had already relinked was reported as one to relink, and the check counted it as still holding a Jira link: in a single run of GEOS, SIS and OAC on 5.1 the preview said 1 (SIS-112, whose only link 10 had rewritten), reproduced in a run of SIS alone with every Redmine request recorded (10's final update sent "#103,"; nothing wrote the text after it); with `--confirm-push` the relink only added the space. Found by the one-run check of decision 39 | **fixed**: the relink detects and rewrites the links only (`replaceIssueLinksOnly`, refactor `4031877`: the same output as before over 2,279 staged texts); the same SIS instance: 0 to relink, 0 left |
 | B77 | The label app field "Offshore Vessel" (label-manager-for-jira) stores some selections of several labels as one comma-joined entry, its colours joined the same way | 08 made a joined entry one value of the Redmine field ("Geo_Ocean_IV, Geo_Ocean_VII"), or none above Redmine's 60 characters, and 10 held 4 SURV issues back as MANUAL (six vessels in one entry); found by the 14-project run of decision 39 | **fixed** (`7f68c18`): 08 and 10 split every entry of a label list on commas (`LabelManagerLabels`); on the 7.0 instance the 4 issues were then created with their six vessels as separate values |
-| B78 | The Jira field "Agent Sessions" (`customfield_10525`, type agent-sessions: Jira's AI agent sessions, with session ids, states and the agent's account) is mapped by 08 to a list field | 10 holds back an issue with an agent session (SURV-1752, 29 journals with it); 08 tries to add the session's JSON as a value of the list | **open, for Jan**: B2's advice is not to migrate it, like decision 20 (`migration.custom_fields.not_migrated`) |
+| B78 | The Jira field "Agent Sessions" (`customfield_10525`, type agent-sessions: Jira's AI agent sessions, with session ids, states and the agent's account) is mapped by 08 to a list field | 10 holds back an issue with an agent session (SURV-1752, 29 journals with it); 08 tries to add the session's JSON as a value of the list | **decided** (Jan, decision 40): not migrated, in `migration.custom_fields.not_migrated`; the 7.0 run of decision 37 created SURV-1752 and no "Agent Sessions" field |
 | B79 | 10 wrote a float field's value with `rtrim(rtrim($text, '0'), '.')`, which strips the zeros of a whole number | 0 became empty and 10 became "1": 18 revision numbers 0 and one 10 of DOC in the 14-project run; verify only checked that the field was not empty | **fixed** (`da4f2c9`): `DecimalText` writes the number as PHP does; verify compares a Jira number with Redmine's value (`custom fields: number`) |
 | B80 | 15 posted each checklist item as it is; redmine_checklists limits an item's subject (512 characters on the 5.1 plugin, 1,000 on the 7.0 branch) | a longer Jira item was refused with 422 and 15 stopped the issue's checklist there, so the items after it were lost too (DOC-292 on 5.1: one item of 520 characters of the 977 staged); 7.0 took it | **fixed**: refused as too long, the item is posted again cut to the maximum Redmine names in its error (any language), ending in "…", and the mapping row says how many items were cut (`ChecklistItem`); production (7.0) cuts none of today's items |
 | B81 | 11 logged a failed read of an issue's comments or history as `[warn] <message>`, without the issue's key, and its summary did not count it | a full disk during the decision 37 proof on 5.1 (a test script that downloaded all of SURV's files) left DOC-351 without two comments ("The table 'staging_jira_comments' is full"); 11 went on and the B7 log check (`[error]`, fatal, exception) did not see it; verify caught it only because DOC-351 was in its sample | **fixed**: such a read is an `[error]` with the issue key and "run 11 again" (a 401, 403 or 404 stays a warning), the summary counts the issues not read, and PRODUCTION.md B7 step 12 counts the comment and history reads (FAILED: run 11 again, it reads only those) |

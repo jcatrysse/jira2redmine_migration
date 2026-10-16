@@ -9,12 +9,12 @@ namespace Jira2Redmine\Jira;
  * every run and report keeps flagging:
  * - migration.projects.not_migrated: Jira project keys 01 does not create (decision 22: TEST);
  * - migration.custom_fields.not_migrated: Jira field types 08 does not create (decision 20: the service desk fields
- *   "Organizations" and "Request participants"; their values stay in Jira only).
+ *   "Organizations" and "Request participants"; decision 40: "Agent Sessions"; their values stay in Jira only).
  */
 final class NotMigrated
 {
     public const PROJECT_NOTE = 'Not migrated (migration.projects.not_migrated, Jan, decision 22).';
-    public const FIELD_NOTE = 'Not migrated (migration.custom_fields.not_migrated, Jan, decision 20): its values stay in Jira only.';
+    public const FIELD_NOTE = 'Not migrated (migration.custom_fields.not_migrated, Jan, decisions 20 and 40): its values stay in Jira only.';
 
     public static function project(mixed $configured, ?string $projectKey): bool
     {

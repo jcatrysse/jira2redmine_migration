@@ -122,6 +122,7 @@ All notable changes to this project. Steps to take before and after a migration 
 - A rerun of 15 did not try a failed checklist again (B83).
 - The writes after an issue exists (10's second pass, 12, 13, the relink) leave no journal and keep the updated
   times: they send `skip_journal` through the Extended API, 8e7096c or later (Jan, decision 37).
+- Jira's "Agent Sessions" field is not migrated (Jan, decision 40): `migration.custom_fields.not_migrated`.
 - 06 put new priorities at position 1, 2, 3, below every existing priority (B73): a new priority now goes after
   the existing ones.
 - Text conversion (decision 26, B60 to B70): ADF tables with merged cells and ADF code blocks; bold and

@@ -29,13 +29,15 @@ final class NotMigratedTest extends TestCase
 
     public function testJansDecisionsAreTheConfiguredOutcome(): void
     {
-        // decision 20: the service desk fields are not migrated (IGNORED, not MANUAL); decision 22: TEST is not migrated
+        // decision 20: the service desk fields are not migrated (IGNORED, not MANUAL); decision 22: TEST is not migrated;
+        // decision 40: Jira's AI agent sessions are not migrated either (B78: an issue with a session was held back)
         $config = require __DIR__ . '/../config/config.default.php';
 
         self::assertSame(['TEST'], $config['migration']['projects']['not_migrated']);
         self::assertSame([
             'com.atlassian.servicedesk:sd-customer-organizations',
             'com.atlassian.servicedesk:sd-request-participants',
+            'com.atlassian.jira.plugin.system.customfieldtypes:agent-sessions',
         ], $config['migration']['custom_fields']['not_migrated']);
     }
 

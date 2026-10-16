@@ -413,7 +413,7 @@ maintenance window, `http://127.0.0.1:8080`, B5), `REDMINE_API_KEY` (an admin's 
 them in a chat, never commit them.
 
 Everything else keeps the defaults of `config/config.default.php`, which hold Jan's decisions: TEST not
-migrated (22), the service desk fields not migrated (20), the role mappings and B31 proposals (10), the
+migrated (22), the service desk fields and Jira's "Agent Sessions" not migrated (20, 40), the role mappings and B31 proposals (10), the
 workflow mode `project` and the group settings (13, 14, 19), the comment attachment window 0 (27), the
 GEOxyz relation types. Check that the local file loads, without printing a secret:
 `php -r '$c = require "bootstrap.php"; echo implode(",", $c["migration"]["issues"]["projects"]), " | ", implode(",", $c["migration"]["projects"]["not_migrated"]), PHP_EOL;'`
