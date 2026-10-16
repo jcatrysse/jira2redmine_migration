@@ -18,6 +18,7 @@ use Jira2Redmine\Journals\AttachmentWindow;
 use Jira2Redmine\Journals\JournalStatus;
 use Jira2Redmine\Text\Relink;
 use Jira2Redmine\Cli\Phases;
+use Jira2Redmine\Journals\ExtractionFailure;
 const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.1';
 const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
 const JIRA_RATE_LIMIT_BASE_DELAY_MS = 1000;
@@ -92,12 +93,13 @@ function main(array $config, array $cliOptions): void
         $jiraSummary = fetchJiraJournals($jiraClient, $pdo, $config);
         refreshIssueKeyAliases($jiraClient, $pdo);
         printf(
-            "[%s] Jira journal extraction complete. Comments: %d (updated %d), Changelog entries: %d (updated %d).%s",
+            "[%s] Jira journal extraction complete. Comments: %d (updated %d), Changelog entries: %d (updated %d), not read: %d.%s",
             formatCurrentTimestamp(),
             $jiraSummary['comments_processed'],
             $jiraSummary['comments_updated'],
             $jiraSummary['changelog_processed'],
             $jiraSummary['changelog_updated'],
+            $jiraSummary['failed'],
             PHP_EOL
         );
     } else {
@@ -173,7 +175,7 @@ function printVersion(): void
  * @param Client $client
  * @param PDO $pdo
  * @param array<string, mixed> $config
- * @return array{comments_processed: int, comments_updated: int, changelog_processed: int, changelog_updated: int}
+ * @return array{comments_processed: int, comments_updated: int, changelog_processed: int, changelog_updated: int, failed: int}
  * @throws Throwable
  */
 function fetchJiraJournals(Client $client, PDO $pdo, array $config): array
@@ -338,6 +340,7 @@ function fetchJiraJournals(Client $client, PDO $pdo, array $config): array
     $commentsUpdated = 0;
     $changelogProcessed = 0;
     $changelogUpdated = 0;
+    $failed = 0;
 
     foreach ($issues as $issue) {
         $issueId = (string)$issue['id'];
@@ -372,7 +375,8 @@ function fetchJiraJournals(Client $client, PDO $pdo, array $config): array
             } catch (RuntimeException $exception) {
                 $warningStatus = classifyJournalExtractionFailure($exception);
                 $message = $exception->getMessage();
-                printf("  [warn] %s%s", $message, PHP_EOL);
+                printf("%s%s", ExtractionFailure::line($issueKey, 'comments', $warningStatus, $message), PHP_EOL);
+                $failed += $warningStatus === 'FAILED' ? 1 : 0;
                 $stateUpsertComments->execute([
                     'issue_id' => $issueId,
                     'issue_key' => $issueKey,
@@ -399,7 +403,8 @@ function fetchJiraJournals(Client $client, PDO $pdo, array $config): array
             } catch (RuntimeException $exception) {
                 $warningStatus = classifyJournalExtractionFailure($exception);
                 $message = $exception->getMessage();
-                printf("  [warn] %s%s", $message, PHP_EOL);
+                printf("%s%s", ExtractionFailure::line($issueKey, 'history', $warningStatus, $message), PHP_EOL);
+                $failed += $warningStatus === 'FAILED' ? 1 : 0;
                 $stateUpsertChangelog->execute([
                     'issue_id' => $issueId,
                     'issue_key' => $issueKey,
@@ -416,6 +421,7 @@ function fetchJiraJournals(Client $client, PDO $pdo, array $config): array
         'comments_updated' => $commentsUpdated,
         'changelog_processed' => $changelogProcessed,
         'changelog_updated' => $changelogUpdated,
+        'failed' => $failed,
     ];
 }
 

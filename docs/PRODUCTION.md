@@ -735,10 +735,14 @@ checkout (the logs hold Jira data: never in the repository).
       UNION ALL SELECT 'journals', migration_status, COUNT(*) FROM migration_mapping_journals GROUP BY 2
       UNION ALL SELECT 'attachments', migration_status, COUNT(*) FROM migration_mapping_attachments GROUP BY 2
       UNION ALL SELECT 'relations', migration_status, COUNT(*) FROM migration_mapping_issue_relations GROUP BY 2
-      UNION ALL SELECT 'watchers', migration_status, COUNT(*) FROM migration_mapping_watchers GROUP BY 2"
+      UNION ALL SELECT 'watchers', migration_status, COUNT(*) FROM migration_mapping_watchers GROUP BY 2
+      UNION ALL SELECT 'comment reads', comments_migration_status, COUNT(*) FROM staging_jira_journal_extract_state GROUP BY 2
+      UNION ALL SELECT 'history reads', changelog_migration_status, COUNT(*) FROM staging_jira_journal_extract_state GROUP BY 2"
     ```
 
-    Expected: issues CREATION_SUCCESS, plus READY_FOR_REWRITE only for a parent that is not migrated; relations
+    Expected: comment and history reads SUCCESS (WARNING only for an issue Jira refuses, 401, 403 or 404); a FAILED
+    read left that issue without its comments or history (B81: a full disk, "The table ... is full"): fix the cause,
+    run 11 again, it reads only those issues. Issues CREATION_SUCCESS, plus READY_FOR_REWRITE only for a parent that is not migrated; relations
     CREATION_FAILED only with Redmine's reason in `notes` (the test run had one: Jira links the same two issues twice,
     "blocks" and "relates", and Redmine refuses the second as a circular dependency); relations
     MANUAL only for an other side that is not migrated ("Missing Redmine issue mapping"); no `FAILED` anywhere

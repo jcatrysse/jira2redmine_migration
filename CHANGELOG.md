@@ -115,6 +115,8 @@ All notable changes to this project. Steps to take before and after a migration 
   counts on its own.
 - A checklist item longer than redmine_checklists allows stopped the issue's checklist there (B80); it is now cut to
   the allowed length and the rest of the checklist follows.
+- 11 reported a failed read of an issue's comments or history as a warning without the issue's key (B81); it is now
+  an error with the key, counted in the summary.
 - 06 put new priorities at position 1, 2, 3, below every existing priority (B73): a new priority now goes after
   the existing ones.
 - Text conversion (decision 26, B60 to B70): ADF tables with merged cells and ADF code blocks; bold and
