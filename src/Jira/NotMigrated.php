@@ -14,7 +14,8 @@ namespace Jira2Redmine\Jira;
 final class NotMigrated
 {
     public const PROJECT_NOTE = 'Not migrated (migration.projects.not_migrated, Jan, decision 22).';
-    public const FIELD_NOTE = 'Not migrated (migration.custom_fields.not_migrated, Jan, decisions 20 and 40): its values stay in Jira only.';
+    public const FIELD_NOTE = 'Not migrated (migration.custom_fields.not_migrated, Jan, decisions 20 and 40): '
+        . 'its values stay in Jira only.';
 
     public static function project(mixed $configured, ?string $projectKey): bool
     {
