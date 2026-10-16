@@ -109,6 +109,10 @@ All notable changes to this project. Steps to take before and after a migration 
 - 13 on 7.0 sent an issue's tags as one comma-joined string, which redmine_tags 7.0 stored as one tag (B75).
 - The relink reported and counted texts without a Jira link, since its rewrite also tidied the spacing around
   references (B76); it now rewrites the links only.
+- A float custom field lost the zeros of a whole number: 0 became empty, 10 became "1" (B79); verify now compares
+  number fields by value.
+- A label app entry with several comma-joined labels became one value, or held the issue back (B77); each label
+  counts on its own.
 - 06 put new priorities at position 1, 2, 3, below every existing priority (B73): a new priority now goes after
   the existing ones.
 - Text conversion (decision 26, B60 to B70): ADF tables with merged cells and ADF code blocks; bold and

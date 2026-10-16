@@ -42,8 +42,9 @@ Placeholders are written `<like-this>`.
   `skip_journal` mee naast notify=false: geen journal, geen "Subtask added", de bijgewerkt-tijd blijft, een
   aangepast commentaar wordt niet "Edited". Daarvoor moet de Extended API versie 8e7096c of later zijn, getest is ecc7dde (B2, B5).
   Datums en % gereed van parents blijven afgeleid.
-- **Duur (schatting):** de run ongeveer 4,5 tot 5,5 uur in de repetitie (steekproef), 7 tot 10,5 uur in productie
-  (116 GiB bijlagen), plus Jans reviews en de snapshots (B8). Schijf (B2): één pull van alle bijlagen, `paths.tmp`
+- **Duur (gemeten op de testomgeving, alle 14 projecten in één run):** 4 u 28 min, ongeveer 4 uur zonder de dubbele
+  watcher-lezing die er nu uit is; productie ongeveer 6,5 tot 9 uur met de 116 GiB bijlagen, plus Jans reviews en de
+  snapshots (B8). Schijf (B2): één pull van alle bijlagen, `paths.tmp`
   leeg direct na 09's push; op dat moment ongeveer 116 GiB in `paths.tmp` en 116 GiB extra in Redmine's `files/`.
   Met minder ruimte draait 09 in rondes.
 - **Deel C** is de prompt voor de lokale Claude-sessie op de server: Jira alleen lezen, standaard rechten, Jans go
@@ -665,8 +666,8 @@ checkout (the logs hold Jira data: never in the repository).
      RAILS_ENV=production bundle exec rails runner <checkout>/tools/testenv/manual_steps.rb
    ```
 
-   Output: `activated=N temporary memberships=N projects=N members=N`; `projects` must equal the number of projects in
-   `J2R_PROJECTS` that 01 created or matched. The activated accounts (former employees among them) stay active until
+   Output: `activated=N temporary memberships=N projects=N members=N`; `projects` must be 14 (the test run:
+   `projects=14`, LLE and FPS included, which have no issues). The activated accounts (former employees among them) stay active until
    `restore` (B9), which comes before Redmine opens; in production nobody can log in with them meanwhile, the web
    server answers 503 (B5).
 5. **Custom fields.** Review the analysis (B6: fields matched to existing Redmine fields), then push.
@@ -738,6 +739,8 @@ checkout (the logs hold Jira data: never in the repository).
     ```
 
     Expected: issues CREATION_SUCCESS, plus READY_FOR_REWRITE only for a parent that is not migrated; relations
+    CREATION_FAILED only with Redmine's reason in `notes` (the test run had one: Jira links the same two issues twice,
+    "blocks" and "relates", and Redmine refuses the second as a circular dependency); relations
     MANUAL only for an other side that is not migrated ("Missing Redmine issue mapping"); no `FAILED` anywhere
     without a reason in `notes`; rehearsal: attachments PENDING_DOWNLOAD = the files skipped by the sample.
 13. **Verify:**
@@ -805,19 +808,21 @@ Those runs took 0.5 to 1.2 s per issue plus comment (SURV the fastest per item, 
 local Puma and 33 MB/s behind Apache with X-Sendfile (docs/RUNBOOK.md, appendix). The 116 GiB then take about 1.3 to
 1.9 hours to pull and 1 to 3 hours to upload, depending on the server's network.
 
-**Estimates for the run** (from the sizes and the rates above; rehearsal with the sample, production adds the
-attachment time):
+**Measured: the one run of the 14 projects** (test instance 7.0, 2026-10-15/16, on a Redmine that is not empty,
+`run_all.sh` with the procedure of B7 and B9, `test_sample`, 4,917 issues, 13,700 comments, 6,852 sampled files of
+1.1 GiB; Redmine and staging on one machine, no reviews, snapshots marked but not taken):
 
-| part | rehearsal | production |
+| part | measured | production adds |
 |---|---|---|
-| B5, S0 to S1: 01 to 08 (B7 steps 1 to 5) | under 30 min of run time, plus Jan's reviews (B6, the memberships) | the same |
-| S1 to S2: 09 and 10 | about 1 hour (09 with the sample about 30 min, 10 twice about 30 min) | plus 2.3 to 5 hours for 116 GiB |
-| S2 to S3: 11 to 16 | about 2.5 to 3.5 hours (11 1.5 to 2.5 hours for about 13,700 comments; 14 with its jira phase about 40 min; 12, 13, 15, 16 together about 20 min) | the same |
-| after S3: counts, verify, B9 (relink check, workflows, restore) | about 30 min, plus Jan's workflow review | the same |
-| run time | **about 4.5 to 5.5 hours** | **about 7 to 10.5 hours** |
+| S0 to S1: 01 to 08 (B7 steps 1 to 5) | 45 min: 14's jira phase 29 min, 08's transform 8 min, 10's jira phase 3 min, the rest under 3 min | Jan's reviews (B6, the memberships) |
+| S1 to S2: 09 and 10 | 47 min: 09 pull 13 min, push 4 min; 10 29 min (create and final update), its second run 1 s | 2.3 to 5 hours for 116 GiB |
+| S2 to S3: 11 to 16 | 2 h 41 min: 11 111 min, 14 41 min (29 of them its second jira phase, gone since `97c8a53`), 13 4 min, 12 2 min, 16 2 min, 15 1 min | |
+| after S3: counts, verify, B9 (relink check, workflows, restore and its proofs) | 16 min | Jan's workflow review |
+| run time | **4 h 28 min; about 4 hours without the second watcher read** | **about 6.5 to 9 hours** |
 
-DOC, LABO, ICT, LLE, SOIL, SSPT, ROV, GSPP and FPS never ran on the test instances: the rehearsal measures them (the
-duration per step is in its report).
+Production's figure: the measured 4 hours plus the attachments (the 116 GiB instead of the 1.1 GiB of the sample, B8
+above), on a server whose speed is not known yet: the rehearsal measures it. All 14 projects ran in that test, DOC,
+LABO, ICT, LLE, SOIL, SSPT, ROV, GSPP and FPS for the first time.
 
 **The window** (decision 36): the run time above, plus Jan's reviews (B6, the memberships, the workflow review
 tables) and the four snapshots (S0 to S3), whose duration depends on the hypervisor and the size of `files/`. The
@@ -837,7 +842,9 @@ again (B10).
 
    The last two lines must read `Preview (no --confirm-push): 0 relinked, ...` and `Texts that still hold a Jira
    link to a migrated issue after this run: 0`. Why 0: 11 pushes every comment when every issue exists, and 10's
-   second pass rewrites the descriptions that link issues created later in the run. A `[would relink]` line means a
+   second pass rewrites the descriptions that link issues created later in the run. Measured in the test run of the
+   14 projects: 570 texts with a Jira issue link, 0 to relink, 0 left (with `e1cfa33`; before it, B76 reported 53).
+   A `[would relink]` line means a
    text pushed before its target existed (a rerun after a partial failure, or the fallback of B11): then **GO**,
    `php tools/relink_issue_links.php --confirm-push` (through the Extended API with notify=false and `skip_journal`:
    no mail, no webhook, no journal, the issue keeps its updated time, a rewritten comment keeps its times and is not

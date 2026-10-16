@@ -1226,6 +1226,9 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B74 | 07 marks a tracker it matched to an existing one CREATION_SUCCESS once its push added it to the projects, like a tracker it created; decision 34's first build (`6623bd4`) read CREATION_SUCCESS as "created by 07" | proof on a Redmine that was not empty (5.1 and 7.0): the existing tracker "Task" got the union as its global workflow, 4 rows became 163; Redmine's default trackers Bug and Support were matched the same way in every earlier test run | **fixed** (`690e28c`): 07 sets `migration_mapping_trackers.created_by_migration` where it creates a tracker, the plan reads that; an older staging database needs the column |
 | B75 | 13 sent the tags of an issue on 7.0 as one comma-joined string (`add_tag_list: "a,b,c"`); redmine_tags' 7.0 branch takes a string as one tag | on 7.0 every issue with several Jira labels got one tag named "a,b,c" instead of separate tags (17 of the 46 tagged issues of GEOS, SIS and OAC, every 7.0 run since B19; verify does not compare tags); found by the trace inventory (Jan, 2026-10-15) | **fixed** (`5dffd71`): the tags go as a list; proof on 7.0: two issues untagged and tagged again by 13 have their tags apart (#16 EM712, FAU, MBES) |
 | B76 | `tools/relink_issue_links.php` rewrote with `replaceIssueLinksInText`, whose last step tidies the spacing around every reference ("#203," becomes "#203 ,"); 10's own rewrite of a description does not | a description 10 had already relinked was reported as one to relink, and the check counted it as still holding a Jira link: in a single run of GEOS, SIS and OAC on 5.1 the preview said 1 (SIS-112, whose only link 10 had rewritten), reproduced in a run of SIS alone with every Redmine request recorded (10's final update sent "#103,"; nothing wrote the text after it); with `--confirm-push` the relink only added the space. Found by the one-run check of decision 39 | **fixed**: the relink detects and rewrites the links only (`replaceIssueLinksOnly`, refactor `4031877`: the same output as before over 2,279 staged texts); the same SIS instance: 0 to relink, 0 left |
+| B77 | The label app field "Offshore Vessel" (label-manager-for-jira) stores some selections of several labels as one comma-joined entry, its colours joined the same way | 08 made a joined entry one value of the Redmine field ("Geo_Ocean_IV, Geo_Ocean_VII"), or none above Redmine's 60 characters, and 10 held 4 SURV issues back as MANUAL (six vessels in one entry); found by the 14-project run of decision 39 | **fixed** (`7f68c18`): 08 and 10 split every entry of a label list on commas (`LabelManagerLabels`); on the 7.0 instance the 4 issues were then created with their six vessels as separate values |
+| B78 | The Jira field "Agent Sessions" (`customfield_10525`, type agent-sessions: Jira's AI agent sessions, with session ids, states and the agent's account) is mapped by 08 to a list field | 10 holds back an issue with an agent session (SURV-1752, 29 journals with it); 08 tries to add the session's JSON as a value of the list | **open, for Jan**: B2's advice is not to migrate it, like decision 20 (`migration.custom_fields.not_migrated`) |
+| B79 | 10 wrote a float field's value with `rtrim(rtrim($text, '0'), '.')`, which strips the zeros of a whole number | 0 became empty and 10 became "1": 18 revision numbers 0 and one 10 of DOC in the 14-project run; verify only checked that the field was not empty | **fixed** (`da4f2c9`): `DecimalText` writes the number as PHP does; verify compares a Jira number with Redmine's value (`custom fields: number`) |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
@@ -1686,3 +1689,29 @@ After all of today's changes (7.0 rerun `b2-d33`, code `9f044e3`; 5.1 run on `d5
 13's 7.0 path): verify **PASS** on both; journals the run writes after creation: 0 tag journals, 0 marked "Edited", 142
 relation journals and 32 "Subtask added" journals left (E1); issues with an updated time in the run: 4 on both, the 3
 parents of option S and 1 issue Jira itself updated that day.
+
+**The one run of the 14 projects (decision 39), B2, 2026-10-15/16.** Test instance 7.0 on a Redmine that is not empty
+(`existing_redmine_proof.rb`: a tracker "Task" with its own global workflow, an existing project), the procedure of
+docs/PRODUCTION.md B7 and B9 through `run_all.sh` (`EMPTY_TMP`, `RELINK`, `WORKFLOWS`, `RESTORE`), code `2b7c82a`
+(before skip_journal and the fixes below), `test_sample`. Every project ran, DOC, LABO, ICT, LLE, SOIL, SSPT, ROV,
+GSPP and FPS for the first time.
+- Counts: 14 projects created (01: 14 succeeded), 417 users, 60 groups, 44 statuses, 5 priorities matched (none
+  created, decision 35), 28 trackers created and 3 updated; `members`: projects=14, 417 activated; 4,917 issues
+  extracted, 4,912 created (5 held back, B77 and B78), 102 `[open-parent]`, no `[waiting]` issue; 6,852 files
+  downloaded and uploaded, 0 failed, `paths.tmp` empty after 09 (8 KB left); 13,700 comments and 2,132 history
+  entries pushed (48,949 history entries without a journal); 1,676 relations, 1 refused by Redmine (DOC-449 relates
+  DOC-448 while DOC-448 blocks DOC-449: "circular dependency"), 2 MANUAL (the other issue not migrated); 13,595
+  watchers.
+- Durations: S0 to S1 45 min, S1 to S2 47 min, S2 to S3 2 h 41 min, after S3 16 min: 4 h 28 min (docs/PRODUCTION.md
+  B8). 14 read every watcher from Jira twice (29 min each); its push now runs transform and push only (`97c8a53`).
+- verify **FAIL** (6): the 5 held-back SURV issues (4 tracker/status and 1 total count) and DOC-516's revision number
+  0 (B79). Found: B77, B78 (open, for Jan), B79; all but B78 fixed the same night. The B79 check of verify compares
+  number fields since `da4f2c9`.
+- B9 step 1, the relink check: 53 with `2b7c82a` (B76's false positives); with `e1cfa33` 570 texts with a Jira issue
+  link, **0 to relink, 0 left**: in one run the relink is the check only, as decision 39 expects.
+- Restore: 417 locked again, memberships equal 04's proposal, the workflow preview after it `+0 -0`, the global
+  workflow of the existing tracker "Task" unchanged (4 rows, sha256 6c384767d3536829), 13 projects with their own
+  workflow.
+- The refactor of B76 (`4031877`) gives the same output as before over the 69,698 staged texts of this run.
+- B77 proven on the instance: after `7f68c18`, 08 and 10 again (with the members step, then restore) created the 4
+  SURV issues with their six vessels as separate values.
