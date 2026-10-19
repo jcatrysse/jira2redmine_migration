@@ -18,8 +18,10 @@
   journal i.p.v. die van Jira: 647 issues; nu 0).
 - **Bewezen op 5.1 en 7.0** met GEOS, SIS, OAC en LABO: 4.370 journals, 189 bestanden (185 in LABO), 0 mails,
   0 webhooks, 0 issues met andere bijgewerkt-tijd, gesloten-tijd of watchers; de cumulative flow van redmine_agile
-  toont LABO's issues nu door hun statussen heen. Duur: ongeveer 100 s extra voor deze 4 projecten; de run van
-  alle 14 projecten meet het totaal (PRODUCTION.md B8).
+  toont LABO's issues nu door hun statussen heen.
+- **De run van alle 14 projecten met geschiedenis (7.0): 3 u 45 min**; de geschiedenis (21.006 journals, 302
+  bestanden) kost ongeveer 2 minuten. verify: laatst-bijgewerkt-door en laatste status 267 van 267 goed.
+  Productie blijft ongeveer 6 tot 9 uur met de bijlagen (PRODUCTION.md B8).
 - **Staging blijft je versleutelde dump** (B9 stap 6 ongewijzigd), het archief van de rest van de geschiedenis.
 - **Jouw beslissing 42 (auteur zonder account):** een Jira-auteur zonder Redmine-account wordt Redmine's Anonymous,
   tenzij je een ander id kiest (`J2R_DEFAULT_AUTHOR_ID`; het id van Anonymous lees je met `rails runner 'puts
@@ -600,7 +602,7 @@ Jan's answers to the Jira history research (2026-10-19, relayed by the coordinat
       **C** (the coordinator for Jan, 2026-10-19: "no issue last updated by the migration user", the updated-by as in
       Jira): 11 pushes per issue in Jira's time order and writes the history series in between, so the highest id is
       the latest journal. Cost: one history request per series between two comments (7.0 test data 4,873 instead
-      of 2,402), estimated +10 to 20 minutes on the one run.
+      of 2,402); measured in the one run of the 14 projects: about 2 minutes (3 h 45 min in all, PRODUCTION.md B8).
     - **The issue's updated time**: every journal 11 pushes sends Jira's updated time of its issue, so 11 leaves it
       as 10 set it, whatever the order (it used to move to the time of the last journal pushed).
     - **Rerun**: what is pushed is kept per Jira history entry in `migration_mapping_journals` (`CHANGELOG`:
@@ -1904,4 +1906,17 @@ period, no unknown status id; the one open parent counts in Jira's "Closed" (its
 Jira" 100 of 100; it counted the history file as an unexpected attachment (fixed in `baffd9d`, then 100 of 100). The
 push took 383 to 408 s against 280 to 298 s without the history. In the test configuration the default author is user
 1, the admin and migration account: 16 files whose last transition has no Redmine account carry it; production sets
-`J2R_DEFAULT_AUTHOR_ID`.
+`J2R_DEFAULT_AUTHOR_ID` (decision 42 later the same day: Anonymous).
+
+**The one run of the 14 projects with the history (decision 41), 7.0, B2, 2026-10-19.** Code `baffd9d`,
+redmine_extended_api `b423b4c`, the procedure of the run of 2026-10-15/16 (`run_all.sh`, EMPTY_TMP, RELINK,
+WORKFLOWS, RESTORE, the sample, a Redmine with an existing tracker and project): **3 h 45 min** (S0 to S1 47 min, S1
+to S2 43 min, S2 to S3 2 h 01 min, after S3 14 min; 4 h 28 min on 2026-10-15/16, 36 minutes of it the second watcher
+read since removed). 11 took 108 minutes: Jira read 71, push 36 with 21,006 history journals and 302 files between
+13,744 comments (35 minutes on 2026-10-15/16 without the history), 0 failed requests. History: 4,423 issues, 442
+items skipped and connected, 19 dropped, 1 status mismatch (GEOS-120, changed in Jira at 13:56 between 10's read and
+11's), 102 open parents. verify (25 per project): "journals: last updated by the latest" and "history: last status as
+in Jira" 267 of 267; 5 failures, none of the history: four counts that Jira changed during the run (GEOS-120, a DOC
+issue created after the read) and one comment of SURV-921 at 94.7 % (verify's own word count joins "stable" and the
+attachment link after a line break into "stablesvs"; the comment is the same). Relink check 0, the existing tracker's
+global workflow unchanged (4 rows, sha256 6c384767d3536829), memberships equal 04's proposal after restore.

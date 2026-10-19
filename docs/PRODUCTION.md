@@ -42,8 +42,8 @@ Placeholders are written `<like-this>`.
   `skip_journal` mee naast notify=false: geen journal, geen "Subtask added", de bijgewerkt-tijd blijft, een
   aangepast commentaar wordt niet "Edited". Daarvoor moet de Extended API versie 8e7096c of later zijn, getest is ecc7dde (B2, B5).
   Datums en % gereed van parents blijven afgeleid.
-- **Duur (gemeten op de testomgeving, alle 14 projecten in één run):** 4 u 28 min, ongeveer 4 uur zonder de dubbele
-  watcher-lezing die er nu uit is; productie ongeveer 6,5 tot 9 uur met de 116 GiB bijlagen, plus Jans reviews en de
+- **Duur (gemeten op de testomgeving, alle 14 projecten in één run, met de geschiedenis):** 3 u 45 min (19-10; de
+  geschiedenis kost ongeveer 2 minuten); productie ongeveer 6 tot 9 uur met de 116 GiB bijlagen, plus Jans reviews en de
   snapshots (B8). Schijf (B2): één pull van alle bijlagen, `paths.tmp`
   leeg direct na 09's push; op dat moment ongeveer 116 GiB in `paths.tmp` en 116 GiB extra in Redmine's `files/`.
   Met minder ruimte draait 09 in rondes.
@@ -873,19 +873,27 @@ Those runs took 0.5 to 1.2 s per issue plus comment (SURV the fastest per item, 
 local Puma and 33 MB/s behind Apache with X-Sendfile (docs/RUNBOOK.md, appendix). The 116 GiB then take about 1.3 to
 1.9 hours to pull and 1 to 3 hours to upload, depending on the server's network.
 
-**Measured: the one run of the 14 projects** (test instance 7.0, 2026-10-15/16, on a Redmine that is not empty,
-`run_all.sh` with the procedure of B7 and B9, `test_sample`, 4,917 issues, 13,700 comments, 6,852 sampled files of
-1.1 GiB; Redmine and staging on one machine, no reviews, snapshots marked but not taken):
+**Measured: the one run of the 14 projects** (test instance 7.0, on a Redmine that is not empty, `run_all.sh` with
+the procedure of B7 and B9, `test_sample`; Redmine and staging on one machine, no reviews, snapshots marked but not
+taken). 2026-10-19 with Jira's history (decision 41, code `baffd9d`, redmine_extended_api `b423b4c`): 4,935 issues,
+13,744 comments, 21,006 history journals and 302 history files, 6,875 sampled files of 1.3 GiB. 2026-10-15/16 before
+the history: 4,917 issues, 13,700 comments, 6,852 sampled files of 1.1 GiB.
 
-| part | measured | production adds |
-|---|---|---|
-| S0 to S1: 01 to 08 (B7 steps 1 to 5) | 45 min: 14's jira phase 29 min, 08's transform 8 min, 10's jira phase 3 min, the rest under 3 min | Jan's reviews (B6, the memberships) |
-| S1 to S2: 09 and 10 | 47 min: 09 pull 13 min, push 4 min; 10 29 min (create and final update), its second run 1 s | 2.3 to 5 hours for 116 GiB |
-| S2 to S3: 11 to 16 | 2 h 41 min: 11 111 min, 14 41 min (29 of them its second jira phase, gone since `97c8a53`), 13 4 min, 12 2 min, 16 2 min, 15 1 min | |
-| after S3: counts, verify, B9 (relink check, workflows, restore and its proofs) | 16 min | Jan's workflow review |
-| run time | **4 h 28 min; about 4 hours without the second watcher read** | **about 6.5 to 9 hours** |
+| part | 2026-10-19, with the history | 2026-10-15/16 | production adds |
+|---|---|---|---|
+| S0 to S1: 01 to 08 (B7 steps 1 to 5) | 47 min: 14's jira phase 29 min, 08's transform 10 min, 10's jira phase 3 min, the rest under 3 min | 45 min | Jan's reviews (B6, the memberships) |
+| S1 to S2: 09 and 10 | 43 min: 09 pull 12 min, push 3 min; 10 26 min (create and final update), its second run 1 s | 47 min | 2.3 to 5 hours for 116 GiB |
+| S2 to S3: 11 to 16 | 2 h 01 min: 11 108 min (Jira read 71 min, transform 2 min, push with the history 36 min: 21,006 history journals in between the comments, 0 failed), 14 5 min, 13 3 min, 16 2 min, 12 1 min, 15 1 min | 2 h 41 min: 11 111 min (push 35 min), 14 41 min (29 of them its second jira phase, gone since `97c8a53`) | |
+| after S3: counts, verify, B9 (relink check, workflows, restore and its proofs) | 14 min | 16 min | Jan's workflow review |
+| run time | **3 h 45 min** | 4 h 28 min | **about 6 to 9 hours** |
 
-Production's figure: the measured 4 hours plus the attachments (the 116 GiB instead of the 1.1 GiB of the sample, B8
+The history costs about 2 minutes in 11's push (estimated 25 to 50 minutes before, research section 2.6): its
+requests write rows without saving the issue. History in the run: 4,423 issues, 21,006 journals, 442 items skipped
+and connected, 19 dropped, 302 files, 1 status mismatch (GEOS-120, changed in Jira during the test run; Jira is
+read-only during production, decision 36), 102 open parents. verify: "journals: last updated by the latest" and
+"history: last status as in Jira" 267 of 267.
+
+Production's figure: the measured 3.75 hours plus the attachments (the 116 GiB instead of the 1.1 GiB of the sample, B8
 above), on a server whose speed is not known yet: the rehearsal measures it. All 14 projects ran in that test, DOC,
 LABO, ICT, LLE, SOIL, SSPT, ROV, GSPP and FPS for the first time.
 
