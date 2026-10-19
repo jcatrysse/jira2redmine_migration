@@ -15,6 +15,7 @@ use Jira2Redmine\Relations\RelationState;
 use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
+use Jira2Redmine\Cli\ConfigValue;
 
 const MIGRATE_RELATIONS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -58,7 +59,7 @@ function main(array $config, array $cliOptions): void
 
     printf('[%s] Selected phases: %s%s', formatCurrentTimestamp(), implode(', ', $phasesToRun), PHP_EOL);
 
-    $databaseConfig = extractArrayConfig($config, 'database');
+    $databaseConfig = ConfigValue::section($config, 'database', 'Missing %s configuration block.');
     $pdo = createDatabaseConnection($databaseConfig);
 
     if (in_array('transform', $phasesToRun, true)) {
@@ -280,7 +281,7 @@ function runRelationPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $
 
     printf('[%s] %d issue relation(s) queued for creation.%s', formatCurrentTimestamp(), count($rows), PHP_EOL);
 
-    $redmineConfig = extractArrayConfig($config, 'redmine');
+    $redmineConfig = ConfigValue::section($config, 'redmine', 'Missing %s configuration block.');
     $useExtendedApi = ExtendedApi::enabled($redmineConfig, false);
     $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
 
@@ -752,15 +753,6 @@ function mergeNotes(?string $current, ?string $addition): ?string
     }
 
     return $current . ' ' . $addition;
-}
-
-function extractArrayConfig(array $config, string $key): array
-{
-    if (!isset($config[$key]) || !is_array($config[$key])) {
-        throw new RuntimeException(sprintf('Missing %s configuration block.', $key));
-    }
-
-    return $config[$key];
 }
 
 function createDatabaseConnection(array $databaseConfig): PDO

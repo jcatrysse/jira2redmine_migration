@@ -29,6 +29,7 @@ use Jira2Redmine\History\IssueHistory;
 use Jira2Redmine\Users\DefaultAuthor;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
+use Jira2Redmine\Cli\ConfigValue;
 const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.1';
 const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
 const JIRA_RATE_LIMIT_BASE_DELAY_MS = 1000;
@@ -71,12 +72,12 @@ function main(array $config, array $cliOptions): void
         PHP_EOL
     );
 
-    $databaseConfig = extractArrayConfig($config, 'database');
+    $databaseConfig = ConfigValue::section($config, 'database');
     $pdo = createDatabaseConnection($databaseConfig);
 
     if (in_array('jira', $phasesToRun, true)) {
         printf("[%s] Fetching Jira comments and changelog entries...%s", formatCurrentTimestamp(), PHP_EOL);
-        $jiraClient = createJiraClient(extractArrayConfig($config, 'jira'));
+        $jiraClient = createJiraClient(ConfigValue::section($config, 'jira'));
         $jiraSummary = fetchJiraJournals($jiraClient, $pdo, $config);
         refreshIssueKeyAliases($jiraClient, $pdo);
         printf(
@@ -133,7 +134,7 @@ function main(array $config, array $cliOptions): void
     if ($withJournals || $withHistory) {
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
-        $redmineConfig = extractArrayConfig($config, 'redmine');
+        $redmineConfig = ConfigValue::section($config, 'redmine');
         $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
         $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
         runJournalPushPhase($pdo, $config, $confirmPush, $isDryRun, $useExtendedApi, $extendedApiPrefix, $withJournals, $withHistory);
@@ -934,7 +935,7 @@ function runJournalPushPhase(
 {
     $candidateComments = $withJournals ? fetchPushableComments($pdo) : [];
     $candidateChangelogs = $withJournals ? fetchPushableChangelog($pdo) : [];
-    $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
+    $redmineClient = createRedmineClient(ConfigValue::section($config, 'redmine'));
     $history = null;
     if ($withHistory && !$useExtendedApi) {
         printf("  [warn] The Jira history needs the Extended API (--use-extended-api); left out.%s", PHP_EOL);
@@ -2575,20 +2576,6 @@ function calculateRateLimitDelayMs(int $attempt, ?int $retryAfterSeconds): int
     $jitter = random_int(0, (int)($base / 2));
 
     return $delay + $jitter;
-}
-
-/**
- * @param array<string, mixed> $config
- * @param string $key
- * @return array<string, mixed>
- */
-function extractArrayConfig(array $config, string $key): array
-{
-    if (!isset($config[$key]) || !is_array($config[$key])) {
-        throw new RuntimeException(sprintf('Missing configuration section: %s', $key));
-    }
-
-    return $config[$key];
 }
 
 /**

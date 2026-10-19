@@ -13,6 +13,7 @@ use Jira2Redmine\Redmine\Watchers;
 use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
+use Jira2Redmine\Cli\ConfigValue;
 
 const MIGRATE_WATCHERS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -54,12 +55,12 @@ function main(array $config, array $cliOptions): void
         PHP_EOL
     );
 
-    $databaseConfig = extractArrayConfig($config, 'database');
+    $databaseConfig = ConfigValue::section($config, 'database');
     $pdo = createDatabaseConnection($databaseConfig);
 
     if (in_array('jira', $phasesToRun, true)) {
         printf("[%s] Fetching Jira watchers...%s", formatCurrentTimestamp(), PHP_EOL);
-        $jiraClient = createJiraClient(extractArrayConfig($config, 'jira'));
+        $jiraClient = createJiraClient(ConfigValue::section($config, 'jira'));
         $summary = fetchJiraWatchers($jiraClient, $pdo);
         printf(
             "[%s] Jira watcher extraction complete. Watchers processed: %d (updated %d, warnings %d).%s",
@@ -90,7 +91,7 @@ function main(array $config, array $cliOptions): void
     if (in_array('push', $phasesToRun, true)) {
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
-        $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
+        $redmineClient = createRedmineClient(ConfigValue::section($config, 'redmine'));
         runWatcherPushPhase($pdo, $redmineClient, $confirmPush, $isDryRun);
     } else {
         printf("[%s] Skipping push phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
@@ -668,20 +669,6 @@ function encodeJson(mixed $value): ?string
     } catch (JsonException $exception) {
         throw new RuntimeException('Failed to encode JSON payload: ' . $exception->getMessage(), 0, $exception);
     }
-}
-
-/**
- * @param array<string, mixed> $config
- * @param string $key
- * @return array<string, mixed>
- */
-function extractArrayConfig(array $config, string $key): array
-{
-    if (!isset($config[$key]) || !is_array($config[$key])) {
-        throw new RuntimeException(sprintf('Missing configuration section: %s', $key));
-    }
-
-    return $config[$key];
 }
 
 /**

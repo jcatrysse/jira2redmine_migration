@@ -23,6 +23,7 @@ use Jira2Redmine\Roles\WorkflowGroupRoles;
 use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
+use Jira2Redmine\Cli\ConfigValue;
 
 const MIGRATE_ROLES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -62,14 +63,14 @@ function main(array $config, array $cliOptions): void
         PHP_EOL
     );
 
-    $databaseConfig = extractArrayConfig($config, 'database');
+    $databaseConfig = ConfigValue::section($config, 'database');
     $pdo = createDatabaseConnection($databaseConfig);
 
     /** @var array<string, mixed>|null $redmineConfig */
     $redmineConfig = null;
 
     if (in_array('jira', $phasesToRun, true)) {
-        $jiraConfig = extractArrayConfig($config, 'jira');
+        $jiraConfig = ConfigValue::section($config, 'jira');
         $jiraClient = createJiraClient($jiraConfig);
 
         printf("[%s] Starting Jira project role extraction...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -93,7 +94,7 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('redmine', $phasesToRun, true)) {
-        $redmineConfig ??= extractArrayConfig($config, 'redmine');
+        $redmineConfig ??= ConfigValue::section($config, 'redmine');
         $redmineClient = createRedmineClient($redmineConfig);
 
         printf("[%s] Starting Redmine role snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -174,7 +175,7 @@ function main(array $config, array $cliOptions): void
     if (in_array('push', $phasesToRun, true)) {
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
-        $redmineConfig ??= extractArrayConfig($config, 'redmine');
+        $redmineConfig ??= ConfigValue::section($config, 'redmine');
         $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
 
         $workflowsConfig = $config['migration']['workflows'] ?? [];
@@ -2664,20 +2665,6 @@ function printUsage(): void
 function printVersion(): void
 {
     printf('%s version %s%s', basename(__FILE__), MIGRATE_ROLES_SCRIPT_VERSION, PHP_EOL);
-}
-
-/**
- * @param array<string, mixed> $config
- * @param string $key
- * @return array<string, mixed>
- */
-function extractArrayConfig(array $config, string $key): array
-{
-    if (!isset($config[$key]) || !is_array($config[$key])) {
-        throw new RuntimeException(sprintf('Missing configuration section: %s', $key));
-    }
-
-    return $config[$key];
 }
 
 /**

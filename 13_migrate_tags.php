@@ -15,6 +15,7 @@ use Jira2Redmine\Redmine\IssueTags;
 use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
+use Jira2Redmine\Cli\ConfigValue;
 
 const MIGRATE_TAGS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -52,7 +53,7 @@ function main(array $config, array $cliOptions): void
         PHP_EOL
     );
 
-    $databaseConfig = extractArrayConfig($config, 'database');
+    $databaseConfig = ConfigValue::section($config, 'database');
     $pdo = createDatabaseConnection($databaseConfig);
 
     if (in_array('transform', $phasesToRun, true)) {
@@ -73,7 +74,7 @@ function main(array $config, array $cliOptions): void
     if (in_array('push', $phasesToRun, true)) {
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
-        $redmineConfig = extractArrayConfig($config, 'redmine');
+        $redmineConfig = ConfigValue::section($config, 'redmine');
         $redmineClient = createRedmineClient($redmineConfig);
         // Jan (2026-10-15): the issue update of 7.0 goes through the Extended API with notify=false and skip_journal
         $extendedApiPrefix = ExtendedApi::enabled($redmineConfig, false) ? ExtendedApi::prefix($redmineConfig) : null;
@@ -395,20 +396,6 @@ function extractErrorBody(ResponseInterface $response): string
 function formatCurrentTimestamp(string $format = 'Y-m-d H:i:s'): string
 {
     return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format($format);
-}
-
-/**
- * @param array<string, mixed> $config
- * @param string $key
- * @return array<string, mixed>
- */
-function extractArrayConfig(array $config, string $key): array
-{
-    if (!isset($config[$key]) || !is_array($config[$key])) {
-        throw new RuntimeException(sprintf('Missing configuration section: %s', $key));
-    }
-
-    return $config[$key];
 }
 
 function decodeJsonColumn(mixed $value): mixed

@@ -15,6 +15,7 @@ use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Priorities\PriorityProposal;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
+use Jira2Redmine\Cli\ConfigValue;
 
 const MIGRATE_PRIORITIES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -54,14 +55,14 @@ function main(array $config, array $cliOptions): void
         PHP_EOL
     );
 
-    $databaseConfig = extractArrayConfig($config, 'database');
+    $databaseConfig = ConfigValue::section($config, 'database');
     $pdo = createDatabaseConnection($databaseConfig);
 
     /** @var array<string, mixed>|null $redmineConfig */
     $redmineConfig = null;
 
     if (in_array('jira', $phasesToRun, true)) {
-        $jiraConfig = extractArrayConfig($config, 'jira');
+        $jiraConfig = ConfigValue::section($config, 'jira');
         $jiraClient = createJiraClient($jiraConfig);
 
         printf("[%s] Starting Jira priority extraction...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -83,7 +84,7 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('redmine', $phasesToRun, true)) {
-        $redmineConfig ??= extractArrayConfig($config, 'redmine');
+        $redmineConfig ??= ConfigValue::section($config, 'redmine');
         $redmineClient = createRedmineClient($redmineConfig);
 
         printf("[%s] Starting Redmine priority snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -138,7 +139,7 @@ function main(array $config, array $cliOptions): void
     if (in_array('push', $phasesToRun, true)) {
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
-        $redmineConfig ??= extractArrayConfig($config, 'redmine');
+        $redmineConfig ??= ConfigValue::section($config, 'redmine');
         $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
 
         runPriorityPushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi);
@@ -980,15 +981,6 @@ function formatIntegerForDisplay(?int $value): string
     }
 
     return (string)$value;
-}
-
-function extractArrayConfig(array $config, string $key): array
-{
-    if (!isset($config[$key]) || !is_array($config[$key])) {
-        throw new RuntimeException(sprintf('Missing configuration section: %s', $key));
-    }
-
-    return $config[$key];
 }
 
 function createDatabaseConnection(array $databaseConfig): PDO

@@ -13,6 +13,7 @@ use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
+use Jira2Redmine\Cli\ConfigValue;
 
 const MIGRATE_GROUPS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -57,11 +58,11 @@ function main(array $config, array $cliOptions): void
         PHP_EOL
     );
 
-    $databaseConfig = extractArrayConfig($config, 'database');
+    $databaseConfig = ConfigValue::section($config, 'database', 'Missing or invalid configuration section: %s');
     $pdo = createDatabaseConnection($databaseConfig);
 
     if (in_array('jira', $phasesToRun, true)) {
-        $jiraConfig = extractArrayConfig($config, 'jira');
+        $jiraConfig = ConfigValue::section($config, 'jira', 'Missing or invalid configuration section: %s');
         $jiraClient = createJiraClient($jiraConfig);
 
         printf("[%s] Starting Jira group extraction...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -83,7 +84,7 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('redmine', $phasesToRun, true)) {
-        $redmineConfig = extractArrayConfig($config, 'redmine');
+        $redmineConfig = ConfigValue::section($config, 'redmine', 'Missing or invalid configuration section: %s');
         $redmineClient = createRedmineClient($redmineConfig);
 
         printf("[%s] Starting Redmine group snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -248,7 +249,7 @@ function runGroupPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isD
         return;
     }
 
-    $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
+    $redmineClient = createRedmineClient(ConfigValue::section($config, 'redmine', 'Missing or invalid configuration section: %s'));
 
     if ($groupCount > 0) {
         printf("  Push confirmation supplied; creating Redmine groups...%s", PHP_EOL);
@@ -906,19 +907,6 @@ function printUsage(): void
 function printVersion(): void
 {
     printf('%s version %s%s', basename(__FILE__), MIGRATE_GROUPS_SCRIPT_VERSION, PHP_EOL);
-}
-
-/**
- * @param array<string, mixed> $config
- * @return array<string, mixed>
- */
-function extractArrayConfig(array $config, string $key): array
-{
-    if (!array_key_exists($key, $config) || !is_array($config[$key])) {
-        throw new RuntimeException(sprintf('Missing or invalid configuration section: %s', $key));
-    }
-
-    return $config[$key];
 }
 
 /**

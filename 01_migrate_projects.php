@@ -15,6 +15,7 @@ use Jira2Redmine\Jira\NotMigrated;
 use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
+use Jira2Redmine\Cli\ConfigValue;
 
 const MIGRATE_PROJECTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -54,11 +55,11 @@ function main(array $config, array $cliOptions): void
         PHP_EOL
     );
 
-    $databaseConfig = extractArrayConfig($config, 'database');
+    $databaseConfig = ConfigValue::section($config, 'database', 'Missing or invalid configuration section: %s');
     $pdo = createDatabaseConnection($databaseConfig);
 
     if (in_array('jira', $phasesToRun, true)) {
-        $jiraConfig = extractArrayConfig($config, 'jira');
+        $jiraConfig = ConfigValue::section($config, 'jira', 'Missing or invalid configuration section: %s');
         $jiraClient = createJiraClient($jiraConfig);
 
         printf("[%s] Starting Jira project extraction...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -81,7 +82,7 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('redmine', $phasesToRun, true)) {
-        $redmineConfig = extractArrayConfig($config, 'redmine');
+        $redmineConfig = ConfigValue::section($config, 'redmine', 'Missing or invalid configuration section: %s');
         $redmineClient = createRedmineClient($redmineConfig);
 
         printf("[%s] Starting Redmine project snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -852,7 +853,7 @@ function runProjectPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $i
         return;
     }
 
-    $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
+    $redmineClient = createRedmineClient(ConfigValue::section($config, 'redmine', 'Missing or invalid configuration section: %s'));
 
     printf("  Push confirmation supplied; creating Redmine projects...%s", PHP_EOL);
     $result = executeRedmineProjectPush($pdo, $redmineClient, $pendingCreations);
@@ -1470,19 +1471,6 @@ function printUsage(): void
 function printVersion(): void
 {
     printf('%s version %s%s', basename(__FILE__), MIGRATE_PROJECTS_SCRIPT_VERSION, PHP_EOL);
-}
-
-/**
- * @param array<string, mixed> $config
- * @return array<string, mixed>
- */
-function extractArrayConfig(array $config, string $key): array
-{
-    if (!array_key_exists($key, $config) || !is_array($config[$key])) {
-        throw new RuntimeException(sprintf('Missing or invalid configuration section: %s', $key));
-    }
-
-    return $config[$key];
 }
 
 /**

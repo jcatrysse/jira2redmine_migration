@@ -21,6 +21,7 @@ use Jira2Redmine\Attachments\CreatedAt;
 use Jira2Redmine\Users\DefaultAuthor;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
+use Jira2Redmine\Cli\ConfigValue;
 const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
     'jira' => 'Synchronise Jira attachment metadata with the migration mapping table.',
@@ -59,7 +60,7 @@ function main(array $config, array $cliOptions): void
         PHP_EOL
     );
 
-    $databaseConfig = extractArrayConfig($config, 'database');
+    $databaseConfig = ConfigValue::section($config, 'database');
     $pdo = createDatabaseConnection($databaseConfig);
 
     if (in_array('jira', $phasesToRun, true)) {
@@ -131,7 +132,7 @@ function main(array $config, array $cliOptions): void
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         $uploadLimit = $cliOptions['upload_limit'] ?? null;
-        $redmineConfig = extractArrayConfig($config, 'redmine');
+        $redmineConfig = ConfigValue::section($config, 'redmine');
         $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
         $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
         runAttachmentUploadPhase($pdo, $config, $confirmPush, $isDryRun, $uploadLimit, $useExtendedApi, $extendedApiPrefix);
@@ -184,7 +185,7 @@ function runAttachmentPullPhase(PDO $pdo, array $config, bool $confirmPull, bool
         return;
     }
 
-    $jiraClient = createJiraClient(extractArrayConfig($config, 'jira'));
+    $jiraClient = createJiraClient(ConfigValue::section($config, 'jira'));
     $passes = 0;
     do {
         $downloadSummary = downloadPendingJiraAttachments($jiraClient, $pdo, $config, $downloadLimit);
@@ -243,7 +244,7 @@ function runAttachmentUploadPhase(
         return;
     }
 
-    $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
+    $redmineClient = createRedmineClient(ConfigValue::section($config, 'redmine'));
 
     if ($useExtendedApi) {
         ExtendedApi::verifyAvailable($redmineClient, $extendedApiPrefix, 'issues.json');
@@ -1702,20 +1703,6 @@ function extractErrorBody(ResponseInterface $response): string
     }
 
     return $body;
-}
-
-/**
- * @param array<string, mixed> $config
- * @param string $key
- * @return array<string, mixed>
- */
-function extractArrayConfig(array $config, string $key): array
-{
-    if (!isset($config[$key]) || !is_array($config[$key])) {
-        throw new RuntimeException(sprintf('Missing configuration section: %s', $key));
-    }
-
-    return $config[$key];
 }
 
 function normalizeInteger(mixed $value, int $min = PHP_INT_MIN, ?int $max = null): ?int
