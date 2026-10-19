@@ -5,19 +5,23 @@
 #   J2R_PROOF=cleanup J2R_HOOK_URL=...       removes the webhook and the proof user, webhooks back as they were
 # setup makes a user who wants every mail (active, Developer in the issues' projects, watcher of each issue) and a
 # webhook for issue.updated in those projects, and switches webhooks on; mails go to files (configuration.yml).
+# Redmine 5.1 has no webhooks: there only the mails are counted.
 PROOF_LOGIN = 'j2r-mailproof'.freeze
 ids = ENV.fetch('J2R_PROOF_ISSUES', '').split(',').map(&:to_i)
 setting_file = Rails.root.join('tmp', 'j2r_webhooks_enabled_before')
+webhooks = defined?(Webhook) ? true : false
 
 case ENV.fetch('J2R_PROOF')
 when 'setup'
   issues = Issue.where(id: ids).to_a
-  File.write(setting_file, Setting.webhooks_enabled.to_s)
-  Setting.webhooks_enabled = '1'
   admin = User.where(admin: true, status: User::STATUS_ACTIVE).order(:id).first
   projects = issues.map(&:project).uniq
-  Webhook.create!(url: ENV.fetch('J2R_HOOK_URL'), user: admin, active: true, events: %w[issue.created issue.updated],
-                  projects: projects)
+  if webhooks
+    File.write(setting_file, Setting.webhooks_enabled.to_s)
+    Setting.webhooks_enabled = '1'
+    Webhook.create!(url: ENV.fetch('J2R_HOOK_URL'), user: admin, active: true, events: %w[issue.created issue.updated],
+                    projects: projects)
+  end
   user = User.new(firstname: 'Mail', lastname: 'Proof', mail: 'j2r-mailproof@example.invalid', mail_notification: 'all')
   user.login = PROOF_LOGIN
   user.password = user.password_confirmation = SecureRandom.hex(16)
@@ -44,12 +48,12 @@ when 'journals'
          "updated_by #{journal.updated_by&.login || '-'} details [#{details}] notes #{journal.notes.to_s.size} chars"
   end
 when 'cleanup'
-  Webhook.where(url: ENV.fetch('J2R_HOOK_URL')).destroy_all
+  Webhook.where(url: ENV.fetch('J2R_HOOK_URL')).destroy_all if webhooks
   User.find_by(login: PROOF_LOGIN)&.destroy
   if File.exist?(setting_file)
     Setting.webhooks_enabled = File.read(setting_file)
     File.delete(setting_file)
   end
-  puts "cleanup: webhooks #{Webhook.count}, proof user #{User.exists?(login: PROOF_LOGIN) ? 'left' : 'gone'}, " \
-       "webhooks_enabled #{Setting.webhooks_enabled}"
+  puts "cleanup: webhooks #{webhooks ? Webhook.count : 'none (5.1)'}, proof user #{User.exists?(login: PROOF_LOGIN) ? 'left' : 'gone'}, " \
+       "webhooks_enabled #{webhooks ? Setting.webhooks_enabled : '-'}"
 end
