@@ -21,6 +21,10 @@
   toont LABO's issues nu door hun statussen heen. Duur: ongeveer 100 s extra voor deze 4 projecten; de run van
   alle 14 projecten meet het totaal (PRODUCTION.md B8).
 - **Staging blijft je versleutelde dump** (B9 stap 6 ongewijzigd), het archief van de rest van de geschiedenis.
+- **Jouw beslissing 42 (auteur zonder account):** een Jira-auteur zonder Redmine-account wordt Redmine's Anonymous,
+  tenzij je een ander id kiest (`J2R_DEFAULT_AUTHOR_ID`; het id van Anonymous lees je met `rails runner 'puts
+  User.anonymous.id'`). Geldt voor issues, commentaren, geschiedenis, `jira-history.json` en bijlagen. Zonder die
+  waarde stoppen de scripts; ze schrijven niet meer stil als het migratie-account.
 
 **Vannacht**
 - **Eén run met alle 14 projecten (beslissing 39), getest op 7.0** op een Redmine die al eigen data had: 4 u 28 min,
@@ -605,6 +609,22 @@ Jan's answers to the Jira history research (2026-10-19, relayed by the coordinat
       (docs/PRODUCTION.md B9 step 6, unchanged). Jan's answers (2026-10-19): **Jan** is the owner; the dump stays on
       the production server, Jan moves and secures it himself; no fixed retention, Jan decides after the handover
       and deletes it himself.
+
+Jan's decision on the default author (2026-10-19, relayed by the coordinator):
+
+42. **A Jira author without a Redmine account becomes Redmine's Anonymous user, unless Jan picks another.** Jan: "In
+    principle every Jira user should have a Redmine user during the migration. If an account is still missing, the
+    config file of the migration scripts picks a user id: that can be the migration user, the admin or Anonymous.
+    Default: Anonymous."
+    - **Where**: the issue author (10, `migration.issues.default_redmine_author_id`), comments and changelog entries
+      (11, `migration.journals.default_redmine_author_id`), history journals and `jira-history.json` (11, the same
+      key), the attachment uploader (09, `attachments.default_redmine_author_id`). Production sets all three from
+      `J2R_DEFAULT_AUTHOR_ID` (docs/PRODUCTION.md B3, B5).
+    - **No implicit fallback any more**: with the Extended API the id must be set (`DefaultAuthor`); before, 09, 10
+      and 11's comments sent no override and 11's history read the API user, so the migration account stood in.
+    - **Anonymous has no fixed id** (`users.type = 'AnonymousUser'`, made by Redmine): the runbook reads it with
+      `rails runner 'puts User.anonymous.id'` into `J2R_DEFAULT_AUTHOR_ID`. The Extended API's user check
+      (`User.where(id:)`) takes it.
 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 

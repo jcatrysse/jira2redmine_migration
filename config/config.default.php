@@ -154,6 +154,9 @@ return [
             'default_redmine_tracker_id' => null,
             'default_redmine_status_id' => null,
             'default_redmine_priority_id' => null,
+            // The author of an issue whose Jira reporter has no Redmine account (decision 42: Redmine's Anonymous user
+            // unless Jan picks another; its id from `rails runner 'puts User.anonymous.id'`). Required with the
+            // Extended API: without it 10 stops instead of letting the API user (the migration account) stand in.
             'default_redmine_author_id' => null,
             'default_redmine_assignee_id' => null,
             // When set, overrides the privacy flag proposed during the transform phase (true/false/null).
@@ -170,8 +173,8 @@ return [
             'subtask_open_parent_status_name' => 'Resolved',
         ],
         'journals' => [
-            // Optional Redmine user identifier used when a comment/changelog author cannot be mapped from Jira.
-            // Set to null to skip author overrides when using the extended API.
+            // The author of a comment, changelog entry, history journal or jira-history.json whose Jira author has no
+            // Redmine account (decision 42: Anonymous unless Jan picks another). Required with the Extended API.
             'default_redmine_author_id' => null,
             // Seconds around a Jira comment within which uploaded attachments are listed under it as "> attachment:"
             // lines (B59). 0 lists none: images the comment shows stay inline and the issue lists every attachment.
@@ -225,8 +228,8 @@ return [
         // Test option, off by default: download and upload only every attachment up to 512 KB plus, per file
         // extension, the largest one up to 20 MB; the rest is noted "skipped by sample" (volume test runs).
         'test_sample' => false,
-        // Optional Redmine user identifier used for attachment uploads when the Jira author cannot be mapped.
-        // Set to null to avoid overriding the uploader when using the extended API.
+        // The uploader of an attachment whose Jira author has no Redmine account (decision 42: Anonymous unless Jan
+        // picks another). Required with the Extended API.
         'default_redmine_author_id' => null,
         // Optional SharePoint configuration used to offload large attachments instead of sending them to Redmine.
         'sharepoint' => [

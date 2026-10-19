@@ -76,6 +76,10 @@ All notable changes to this project. Steps to take before and after a migration 
   A value Redmine does not have is left out with the chain kept connected; such an issue gets
   `jira-history.json`. New columns `migration_mapping_journals.history_journal_id` and `history_attachment_id`.
 - verify: the last updated user is the latest journal's, the history ends in Jira's status (decision 41).
+- Default author (decision 42): Jira content whose author has no Redmine account (issue author, comments,
+  history, `jira-history.json`, attachment uploader) goes to the configured user, Redmine's Anonymous unless Jan
+  picks another (`J2R_DEFAULT_AUTHOR_ID`); with the Extended API 09, 10 and 11 stop without it instead of writing
+  as the API user.
 - `tools/testenv/run_all.sh`: `STOP_AT=S1|S2|S3` ends a test run at that mark; `compare_requests.php
   --any-order` compares two recordings as a set.
 

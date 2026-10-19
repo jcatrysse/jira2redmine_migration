@@ -56,6 +56,11 @@ Placeholders are written `<like-this>`.
   "Laatst bijgewerkt door" de laatste actor uit Jira is. Een waarde die Redmine niet kent valt weg en de keten sluit
   aan; zo'n issue krijgt `jira-history.json`. Geen mail, geen webhook, de tijden van het issue blijven. Vereist de
   Extended API `b423b4c` of later (B3).
+- **Auteur zonder Redmine-account** (beslissing 42, Jan): in principe heeft elke Jira-gebruiker een Redmine-account.
+  Ontbreekt er nog een, dan kiest de config een gebruiker; standaard Redmine's Anonymous (het id lees je met
+  `rails runner 'puts User.anonymous.id'` in `J2R_DEFAULT_AUTHOR_ID`). Dat geldt voor issues, commentaren,
+  geschiedenis, `jira-history.json` en bijlagen. Zonder die waarde stoppen de scripts in plaats van als het
+  migratie-account te schrijven.
 - **Deel C** is de prompt voor de lokale Claude-sessie op de server: Jira alleen lezen, standaard rechten, Jans go
   voor elke schrijfstap in productie, rapport in het Nederlands.
 
@@ -424,7 +429,8 @@ return [
         ],
         'issues' => [
             'projects' => $projects,
-            // content of Jira app accounts and of people without a visible e-mail (B6): an existing account
+            // content of Jira app accounts and of people without a visible e-mail (B6): Redmine's Anonymous user
+            // unless Jan picks another (decision 42); the same for journals, history and attachments
             'default_redmine_author_id' => (int)getenv('J2R_DEFAULT_AUTHOR_ID'),
         ],
         'journals' => ['default_redmine_author_id' => (int)getenv('J2R_DEFAULT_AUTHOR_ID')],
@@ -437,6 +443,8 @@ return [
     'attachments' => [
         'download_concurrency' => 6,
         'test_sample' => getenv('J2R_TEST_SAMPLE') === '1',
+        // decision 42: the uploader of a Jira file whose author has no account
+        'default_redmine_author_id' => (int)getenv('J2R_DEFAULT_AUTHOR_ID'),
     ],
 ];
 ```
@@ -444,7 +452,9 @@ return [
 The environment, in a file only the operator can read (`chmod 600`), outside the checkout, sourced in every shell
 and tmux window: `JIRA_SITE` (`<site>.atlassian.net`), `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_CLOUD_ID` (from
 `https://<site>.atlassian.net/_edge/tenant_info`), `REDMINE_URL` (production: the local-only entry of the
-maintenance window, `http://127.0.0.1:8080`, B5), `REDMINE_API_KEY` (an admin's API key: the migration account), `J2R_STAGING_PASSWORD`, `J2R_TMP` (the attachment directory), `J2R_DEFAULT_AUTHOR_ID`,
+maintenance window, `http://127.0.0.1:8080`, B5), `REDMINE_API_KEY` (an admin's API key: the migration account), `J2R_STAGING_PASSWORD`, `J2R_TMP` (the attachment directory), `J2R_DEFAULT_AUTHOR_ID` (decision 42: the Redmine user
+of Jira content whose author has no account, Redmine's Anonymous user unless Jan picks another; read it in the Redmine
+directory with `RAILS_ENV=production bundle exec rails runner 'puts User.anonymous.id'`; 09, 10 and 11 stop without it),
 `J2R_PROJECTS` (the 14 projects, lowercase, B8), `J2R_TEST_SAMPLE` (`1` in the rehearsal only). Never print them, never paste
 them in a chat, never commit them.
 
@@ -523,6 +533,7 @@ Then, once, on the upgraded Redmine 7.0. Each line is a check the local session 
 | snapshot S0 | part B's rollback point (A.4 step 3 is the upgrade's). Rehearsal: the snapshot after A.5. Production: taken now, at the start of the window, after steps 1 to 4 above (users worked in Redmine since part A). B7 takes S1 to S3 (B10) | the snapshot exists and its time is noted |
 | REST API | Administration > Settings > Integrations: REST web service on (A.5 row 17; "API" on 5.1) | `curl -s -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/users/current.json"` gives the migration account, `admin: true` |
 | Extended API | the plugin is installed, version `b423b4c` or later (tested: `b423b4c`): the scripts send `skip_journal` (decision 37, 8e7096c or later; an older version ignores it, so its journals would come back) and 11 writes Jira's history through its history endpoint (decision 41; without it 11 stops the history with one `[error]` and pushes the comments) | `curl -sI -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/extended_api/issues.json"` has the header `X-Redmine-Extended-API`; `grep -c skip_journal <redmine-root>/plugins/redmine_extended_api/lib/redmine_extended_api/patches/api_helpers.rb` is above 0; `ls <redmine-root>/plugins/redmine_extended_api/app/controllers/extended_api_issue_histories_controller.rb` exists |
+| default author (decision 42) | Jira content whose author has no Redmine account (an app, a person 02 could not match) goes to Redmine's Anonymous user, unless Jan picks another account: in the environment file `export J2R_DEFAULT_AUTHOR_ID=<id>` with the id from `cd <redmine-root> && RAILS_ENV=production bundle exec rails runner 'puts User.anonymous.id'` (it differs per Redmine). It covers the issue author (10), comments and changelog entries (11), history journals and `jira-history.json` (11) and the attachment uploader (09); without it those scripts stop instead of writing as the migration account | `php tools/config_value.php migration.issues.default_redmine_author_id` and `... migration.journals.default_redmine_author_id` print that id |
 | text formatting | Administration, Settings, General: CommonMark Markdown (A.5 row 17) | `Setting.text_formatting` is `common_mark` |
 | no mail, no webhook from the migration | `redmine.extended_api.enabled` true (B3): 10, 11, 12, 13 (tags on 7.0) and the relink write issues and journals through it with notify=false, which silences the mails and Redmine 7's webhooks of the request (Jan, 2026-10-15), and 10's second pass, 12, 13 and the relink also with `skip_journal` (no journal, decision 37); 11's history (decision 41) goes through the history endpoint, a raw insert that runs no callback at all (measured: 0 mails, 0 webhook calls on 5.1 and 7.0); 09's uploads and 14's watchers send none. The one exception: 15 saves the issue's done ratio through the plain API when redmine_checklists' setting "issue done ratio" is on (Administration, Plugins, Checklists; off by default): switch it off for the run. Safety net (production, cheap, B2's advice): stealth mode on for the migration account, `curl -s -X POST -H "X-Redmine-API-Key: $REDMINE_API_KEY" -d toggle=true "$REDMINE_URL/stealth/toggle.json"`; it silences the mails of anything the migration account writes outside the Extended API. Rehearsal: outgoing mail is off on the clone (A.1) | the checklists setting is off; production: the answer is `{"is_cloaked":true}` (signing in to the web interface as the migration account switches stealth off again: do not, or toggle it on after) |
 | relation types | the GEOxyz relation types of `migration.relations.custom_mappings` in `redmine_issue_view_columns` (`tools/testenv/redmine_issue_view_columns.local.rb` is generated from them) | after part A they exist in 7.0 (12 refuses a relation type Redmine does not know) |
