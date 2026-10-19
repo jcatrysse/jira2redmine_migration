@@ -34,6 +34,7 @@ use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
 use Jira2Redmine\Time\Clock;
+use Jira2Redmine\Cli\Fallbacks;
 
 const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.1';
 const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
@@ -153,6 +154,8 @@ function main(array $config, array $cliOptions): void
     } else {
         printf("[%s] Skipping push and history phases (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
+
+    printf("[%s] %s%s", Clock::dateTime(), Fallbacks::summary(), PHP_EOL);
 }
 
 function printUsage(): void
@@ -735,6 +738,7 @@ function populateProposedJournalNotes(PDO $pdo, int $commentWindow = 0): array
             map.mapping_id,
             map.jira_entity_id,
             map.jira_issue_id,
+            issue_map.jira_issue_key,
             map.entity_type,
             map.proposed_notes,
             map.notes,
@@ -783,6 +787,12 @@ function populateProposedJournalNotes(PDO $pdo, int $commentWindow = 0): array
         $mappingId = (int)$row['mapping_id'];
         $jiraIssueId = (string)$row['jira_issue_id'];
         $entityType = (string)$row['entity_type'];
+        $where = sprintf(
+            '%s, %s %s',
+            (string)$row['jira_issue_key'],
+            $entityType === 'COMMENT' ? 'comment' : 'changelog',
+            (string)$row['jira_entity_id']
+        );
 
         $storedProposed = $row['proposed_notes'] ?? null;
         $storedNotes = $row['notes'] ?? null;
@@ -807,13 +817,13 @@ function populateProposedJournalNotes(PDO $pdo, int $commentWindow = 0): array
             $proposedUpdatedOn = normalizeDateTimeString($updatedAt ?? $createdAt);
 
             $issueAttachments = $attachmentMetadata[$jiraIssueId] ?? [];
-            $bodyText = convertJournalBodyToMarkdown($bodyHtml, $bodyAdf, $issueAttachments, $adfConverter);
+            $bodyText = convertJournalBodyToMarkdown($bodyHtml, $bodyAdf, $issueAttachments, $adfConverter, $where);
             $bodyText = replaceJiraUserLinksWithRedmineIds($bodyText, $userLookup);
 
             $note = $bodyText;
 
             $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt, $commentWindow);
-            $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
+            $attachmentBlock = buildJournalAttachmentBlock($journalAttachments, $where);
             if ($attachmentBlock !== null) {
                 $note = trim($note) === ''
                     ? $attachmentBlock
@@ -858,12 +868,12 @@ function populateProposedJournalNotes(PDO $pdo, int $commentWindow = 0): array
 
             // B59: a changelog entry lists only the attachments its items name, never those uploaded around it
             $journalAttachments = [];
-            $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
+            $attachmentBlock = buildJournalAttachmentBlock($journalAttachments, $where);
 
             if ($attachmentBlock !== null) {
                 $note = $attachmentBlock;
             } elseif ($mentionsAttachment) {
-                $attachmentBlock = buildAttachmentBlockForChangelogItems($pdo, $jiraIssueId, $attachmentItemIds);
+                $attachmentBlock = buildAttachmentBlockForChangelogItems($pdo, $jiraIssueId, $attachmentItemIds, $where);
                 if ($attachmentBlock !== null) {
                     $note = $attachmentBlock;
                 } else {
@@ -1607,6 +1617,7 @@ function processCommentPush(
     $jiraIssueKey = (string)$comment['jira_issue_key'];
     $jiraCommentId = (string)$comment['jira_entity_id'];
     $redmineIssueId = (int)$comment['redmine_issue_id'];
+    $where = sprintf('%s, comment %s', $jiraIssueKey, $jiraCommentId);
 
     $authorId = isset($comment['author_account_id']) ? (string)$comment['author_account_id'] : null;
     $createdAt = isset($comment['created_at']) ? (string)$comment['created_at'] : null;
@@ -1622,7 +1633,7 @@ function processCommentPush(
         $note = $proposedNotes;
     } else {
         $issueAttachments = $attachmentMetadata[$jiraIssueId] ?? [];
-        $bodyText = convertJournalBodyToMarkdown($bodyHtml, $bodyAdf, $issueAttachments, $adfConverter);
+        $bodyText = convertJournalBodyToMarkdown($bodyHtml, $bodyAdf, $issueAttachments, $adfConverter, $where);
         // safety: replace any remaining profile links (ADF -> Markdown cases) to user#id
         $bodyText = replaceJiraUserLinksWithRedmineIds($bodyText, $userLookup);
 
@@ -1643,7 +1654,7 @@ function processCommentPush(
         $journalAttachments = fetchJournalAttachmentsForNote($pdo, $jiraIssueId, $createdAt, $commentWindow);
 
         // append journal attachment references (read-only, no DB modifications here)
-        $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
+        $attachmentBlock = buildJournalAttachmentBlock($journalAttachments, $where);
         if ($attachmentBlock !== null) {
             $note = trim($note) === ''
                 ? $attachmentBlock
@@ -1846,9 +1857,10 @@ function processChangelogPush(
         }
 
         // past the return above the items mention an attachment
-        $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
+        $where = sprintf('%s, changelog %s', $jiraIssueKey, $historyId);
+        $attachmentBlock = buildJournalAttachmentBlock($journalAttachments, $where);
         if ($attachmentBlock === null) {
-            $attachmentBlock = buildAttachmentBlockForChangelogItems($pdo, $jiraIssueId, $attachmentItemIds);
+            $attachmentBlock = buildAttachmentBlockForChangelogItems($pdo, $jiraIssueId, $attachmentItemIds, $where);
         }
 
         if ($attachmentBlock === null) {
@@ -2209,8 +2221,13 @@ function sanitizeAttachmentFileName(string $filename): string
  * @param array<array-key, string> $issueAttachments Jira attachment id => upload-unique name
  * @throws JsonException
  */
-function convertJournalBodyToMarkdown(?string $bodyHtml, ?string $bodyAdf, array $issueAttachments, AdfConverter $adfConverter): string
-{
+function convertJournalBodyToMarkdown(
+    ?string $bodyHtml,
+    ?string $bodyAdf,
+    array $issueAttachments,
+    AdfConverter $adfConverter,
+    string $where
+): string {
     $bodyText = null;
 
     if ($bodyHtml !== null && !str_contains($bodyHtml, "<!-- ADF macro (type = 'table') -->")) {
@@ -2231,7 +2248,7 @@ function convertJournalBodyToMarkdown(?string $bodyHtml, ?string $bodyAdf, array
     }
 
     if ($bodyText !== null && $issueAttachments !== []) {
-        $bodyText = normalizeJournalAttachmentLinks($bodyText, $issueAttachments);
+        $bodyText = normalizeJournalAttachmentLinks($bodyText, $issueAttachments, $where);
     }
 
     return $bodyText ?? '';
@@ -2241,8 +2258,9 @@ function convertJournalBodyToMarkdown(?string $bodyHtml, ?string $bodyAdf, array
  * Normalize attachment links in journal text (Markdown) using issue attachments.
  *
  * @param array<string, string> $issueAttachments [jira_attachment_id => unique_name]
+ * @param string $where the Jira issue and comment, for the warning when PCRE fails
  */
-function normalizeJournalAttachmentLinks(string $text, array $issueAttachments): string
+function normalizeJournalAttachmentLinks(string $text, array $issueAttachments, string $where): string
 {
     if (trim($text) === '' || $issueAttachments === []) {
         return $text;
@@ -2256,10 +2274,10 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
         ];
     }
 
-    // Markdown-style replacements: ![alt](URL) and [label](URL)
-    $text = preg_replace_callback(
-        '/(!?\[[^]]*])\(\s*([^)]+?)\s*\)/m',
-        function ($m) use ($attachmentsMap) {
+    // one pass per pattern, in this order; on a PCRE error (a backtrack limit) the text stays as it was (decision 43)
+    $rewritten = preg_replace_callback_array([
+        // Markdown-style replacements: ![alt](URL) and [label](URL)
+        '/(!?\[[^]]*])\(\s*([^)]+?)\s*\)/m' => function ($m) use ($attachmentsMap) {
             $label = $m[1];
             $raw   = trim($m[2]);
             if (preg_match('/^(.*?)\s+"[^"]*"$/', $raw, $parts)) {
@@ -2291,13 +2309,8 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
 
             return $label . '(' . $new . ')';
         },
-        $text
-    );
-
-    // plain "attachment:123__filename" tokens -> resolve to SharePoint if available
-    $text = preg_replace_callback(
-        '/\battachment:(\d+__[^)\s,;]+)/i',
-        function ($m) use ($attachmentsMap) {
+        // plain "attachment:123__filename" tokens -> resolve to SharePoint if available
+        '/\battachment:(\d+__[^)\s,;]+)/i' => function ($m) use ($attachmentsMap) {
             $unique = $m[1];
             $mapped = mapAttachmentUrlToTarget($unique, $attachmentsMap);
             if (preg_match('#^https?://#i', $mapped)) {
@@ -2305,13 +2318,8 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
             }
             return $m[0];
         },
-        $text
-    );
-
-    // bare unique filenames such as "10388__foo"
-    $text = preg_replace_callback(
-        '#(?<![/:])\b(\d+__[^)\s,;]+)#',
-        function ($m) use ($attachmentsMap) {
+        // bare unique filenames such as "10388__foo"
+        '#(?<![/:])\b(\d+__[^)\s,;]+)#' => function ($m) use ($attachmentsMap) {
             $unique = $m[1];
             $mapped = mapAttachmentUrlToTarget($unique, $attachmentsMap);
             if (preg_match('#^https?://#i', $mapped)) {
@@ -2319,13 +2327,8 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
             }
             return $m[0];
         },
-        $text
-    );
-
-    // leftover absolute REST API attachment URLs
-    $text = preg_replace_callback(
-        '#https?://[^\s)\]}]+/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+)[^\s)\]}]*#i',
-        function ($m) use ($attachmentsMap) {
+        // leftover absolute REST API attachment URLs
+        '#https?://[^\s)\]}]+/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+)[^\s)\]}]*#i' => function ($m) use ($attachmentsMap) {
             // the pattern's group 1 is never empty; the map holds no SharePoint links (all null above)
             $id = $m[1];
             if (!isset($attachmentsMap[$id])) {
@@ -2334,13 +2337,8 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
             $meta = $attachmentsMap[$id];
             return $meta['unique'];
         },
-        $text
-    );
-
-    // relative REST API attachment URLs
-    $text = preg_replace_callback(
-        '#/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+)[^\s)\]}]*#i',
-        function ($m) use ($attachmentsMap) {
+        // relative REST API attachment URLs
+        '#/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+)[^\s)\]}]*#i' => function ($m) use ($attachmentsMap) {
             // the pattern's group 1 is never empty; the map holds no SharePoint links (all null above)
             $id = $m[1];
             if (!isset($attachmentsMap[$id])) {
@@ -2349,13 +2347,8 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
             $meta = $attachmentsMap[$id];
             return $meta['unique'];
         },
-        $text
-    );
-
-    // patterns like "/attachment/1234" or "/secure/attachment/1234"
-    $text = preg_replace_callback(
-        '#(?:/secure/attachment/|/attachment/|/attachment/content/)(\d+)#i',
-        function ($m) use ($attachmentsMap) {
+        // patterns like "/attachment/1234" or "/secure/attachment/1234"
+        '#(?:/secure/attachment/|/attachment/|/attachment/content/)(\d+)#i' => function ($m) use ($attachmentsMap) {
             // the pattern's group 1 is never empty; the map holds no SharePoint links (all null above)
             $id = $m[1];
             if (!isset($attachmentsMap[$id])) {
@@ -2364,10 +2357,12 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
             $meta = $attachmentsMap[$id];
             return $meta['unique'];
         },
-        $text
-    );
+    ], $text);
+    if ($rewritten === null) {
+        return Fallbacks::keepText(null, $text, $where . ', attachment links');
+    }
 
-    return normalizeRedmineReferenceSpacing($text);
+    return normalizeRedmineReferenceSpacing($rewritten);
 }
 
 function encodeJson(mixed $value): ?string
@@ -2756,7 +2751,7 @@ SQL;
  * }> $attachments
  * @return string|null
  */
-function buildJournalAttachmentBlock(array $attachments): ?string
+function buildJournalAttachmentBlock(array $attachments, string $where): ?string
 {
     if ($attachments === []) {
         return null;
@@ -2779,6 +2774,15 @@ function buildJournalAttachmentBlock(array $attachments): ?string
         } else {
             // fallback sanitization (should not be needed if your lib exports buildUploadUniqueName)
             $san = preg_replace('/[^A-Za-z0-9._-]/u', '_', $filename);
+            if ($san === null) {
+                // decision 43: a name PCRE cannot read (not valid UTF-8) gets the name its token has
+                // (AttachmentNames::token), so the rewrite to the Redmine file name still finds it
+                Fallbacks::warn(
+                    sprintf('%s, attachment %s', $where, $att['jira_attachment_id']),
+                    sprintf('PCRE failed (%s) on the file name, named "attachment" as its token is', preg_last_error_msg())
+                );
+                $san = 'attachment';
+            }
             $san = trim($san, '_');
             if ($san === '') {
                 $san = 'attachment';
@@ -2797,7 +2801,7 @@ function buildJournalAttachmentBlock(array $attachments): ?string
  *
  * @param array<int,string> $attachmentIds
  */
-function buildAttachmentBlockForChangelogItems(PDO $pdo, string $jiraIssueId, array $attachmentIds): ?string
+function buildAttachmentBlockForChangelogItems(PDO $pdo, string $jiraIssueId, array $attachmentIds, string $where): ?string
 {
     if ($attachmentIds === []) {
         return null;
@@ -2846,7 +2850,7 @@ SQL;
         ];
     }
 
-    return buildJournalAttachmentBlock($attachments);
+    return buildJournalAttachmentBlock($attachments, $where);
 }
 
 function updateMigrationJournalProposedNotesWithRedmineIds(PDO $pdo): void

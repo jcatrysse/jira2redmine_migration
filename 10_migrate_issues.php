@@ -34,6 +34,7 @@ use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
 use Jira2Redmine\Time\Clock;
+use Jira2Redmine\Cli\Fallbacks;
 
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -322,6 +323,8 @@ function main(array $config, array $cliOptions): void
             PHP_EOL
         );
     }
+
+    printf("[%s] %s%s", Clock::dateTime(), Fallbacks::summary(), PHP_EOL);
 }
 /**
  * @param array<string, mixed> $config
@@ -3193,38 +3196,6 @@ function buildSharePointAttachmentIndex(PDO $pdo): array
     return $index;
 }
 
-function buildRedmineAttachmentFilename(string $jiraAttachmentId, string $originalFilename): string
-{
-    $name = trim($originalFilename);
-    if ($name === '') {
-        $name = 'attachment';
-    }
-
-    // Normalise whitespace
-    $name = preg_replace('/\s+/', ' ', $name);
-
-    // Replace filesystem and URL-hostile characters
-    $name = preg_replace('/[\/:*?"<>|\x00-\x1F]/', '_', $name);
-
-    // Prevent leading dots (hidden files)
-    $name = ltrim($name, '.');
-
-    // Prefix with Jira attachment id (guarantees uniqueness)
-    $filename = $jiraAttachmentId . '-' . $name;
-
-    // Hard cap length (safe for Redmine + SharePoint)
-    $maxLength = 180;
-    if (strlen($filename) > $maxLength) {
-        $ext = '';
-        if (preg_match('/(\.[A-Za-z0-9]{1,10})$/', $filename, $m)) {
-            $ext = $m[1];
-        }
-        $base = substr($filename, 0, $maxLength - strlen($ext));
-        $filename = $base . $ext;
-    }
-
-    return $filename;
-}
 
 /**
  * @return array<string, array{
@@ -3281,6 +3252,7 @@ function buildCascadingFieldIndex(PDO $pdo): array
         if (!is_array($allowedValues)) {
             continue;
         }
+        $where = sprintf('Jira field %s, option label', $jiraFieldId);
 
         $parentRedmineFieldId = isset($row['parent_redmine_custom_field_id']) ? (int)$row['parent_redmine_custom_field_id'] : null;
         $childRedmineFieldId = isset($row['child_redmine_custom_field_id']) ? (int)$row['child_redmine_custom_field_id'] : null;
@@ -3312,7 +3284,7 @@ function buildCascadingFieldIndex(PDO $pdo): array
                     continue;
                 }
                 $id = (string)$e['id'];
-                $childOptions[ normalizeLabelKey($name) ] = $id;
+                $childOptions[ normalizeLabelKey($name, $where) ] = $id;
             }
         }
 
@@ -3330,7 +3302,7 @@ function buildCascadingFieldIndex(PDO $pdo): array
                     continue;
                 }
                 $id = (string)$e['id'];
-                $parentOptions[ normalizeLabelKey($name) ] = $id;
+                $parentOptions[ normalizeLabelKey($name, $where) ] = $id;
             }
         }
 
@@ -3342,8 +3314,8 @@ function buildCascadingFieldIndex(PDO $pdo): array
             $parentLabel = $info['parent_label'] ?? '';
             $childLabel = $info['child_label'] ?? '';
 
-            $normParentLabel = normalizeLabelKey((string)$parentLabel);
-            $normChildLabel = normalizeLabelKey((string)$childLabel);
+            $normParentLabel = normalizeLabelKey((string)$parentLabel, $where);
+            $normChildLabel = normalizeLabelKey((string)$childLabel, $where);
 
             $parentOptionId = $parentOptions[$normParentLabel] ?? null;
             $childOptionId = $childOptions[$normChildLabel] ?? null;
@@ -3376,7 +3348,7 @@ function buildCascadingFieldIndex(PDO $pdo): array
         $descriptorParentIndex = $descriptor['parent_index'] ?? [];
         if (is_array($descriptorParentIndex)) {
             foreach ($descriptorParentIndex as $parentLabel => $jiraParentId) {
-                $normParentLabel = normalizeLabelKey((string)$parentLabel);
+                $normParentLabel = normalizeLabelKey((string)$parentLabel, $where);
                 if (isset($parentOptions[$normParentLabel])) {
                     $parentJiraOptions[(string)$jiraParentId] = (int)$parentOptions[$normParentLabel];
                 }
@@ -3466,7 +3438,10 @@ function buildCustomFieldMappingIndex(PDO $pdo): array
             'field_format' => $fieldFormat,
             'text_formatting' => normalizeBooleanFlag($row['proposed_text_formatting'] ?? null) ?? false,
             'is_multiple' => normalizeBooleanFlag($row['proposed_is_multiple'] ?? null) ?? false,
-            'enumeration_lookup' => buildEnumerationLookup(is_array($enumerations) ? $enumerations : []),
+            'enumeration_lookup' => buildEnumerationLookup(
+                is_array($enumerations) ? $enumerations : [],
+                sprintf('Jira field %s, Redmine option', $jiraFieldId)
+            ),
         ];
     }
 
@@ -3499,6 +3474,7 @@ function buildCascadingCustomFieldPayload(array $issuePayload, array $cascadingI
 
     $result = [];
     foreach ($cascadingIndex as $jiraFieldId => $meta) {
+        $where = sprintf('%s, Jira field %s', (string)($issuePayload['key'] ?? '?'), $jiraFieldId);
         $rawValue = $fields[$jiraFieldId] ?? null;
         $selection = extractJiraCascadingSelection($rawValue);
         if ($selection === null) {
@@ -3525,7 +3501,7 @@ function buildCascadingCustomFieldPayload(array $issuePayload, array $cascadingI
         } else {
             // normalise child_label if present
             $childLabel = $selChildLabel ?? null;
-            $normChildLabel = $childLabel !== null ? normalizeLabelKey($childLabel) : null;
+            $normChildLabel = $childLabel !== null ? normalizeLabelKey($childLabel, $where) : null;
 
             // 2) If child_label matches a child option, find the child option id
             if ($normChildLabel !== null && isset($meta['child_options'][$normChildLabel])) {
@@ -3558,7 +3534,7 @@ function buildCascadingCustomFieldPayload(array $issuePayload, array $cascadingI
                 // 3) Maybe Jira value is actually a parent label (child missing) — map to parent only
                 $maybeParent = $selChildLabel ?? null;
                 if ($maybeParent !== null) {
-                    $normParent = normalizeLabelKey($maybeParent);
+                    $normParent = normalizeLabelKey($maybeParent, $where);
                     if (isset($meta['parent_options'][$normParent])) {
                         $parentOptionId = (int)$meta['parent_options'][$normParent];
                         $childOptionId = null;
@@ -3642,7 +3618,8 @@ function buildMappedCustomFieldPayload(
                 $meta['field_format'],
                 $meta['is_multiple'],
                 $meta['enumeration_lookup'],
-                $raw
+                $raw,
+                sprintf('%s, Jira field %s', (string)($issuePayload['key'] ?? '?'), $jiraFieldId)
             );
         }
 
@@ -3758,7 +3735,8 @@ function appendResolutionCustomFieldPayload(
         $resolutionMeta['field_format'],
         $resolutionMeta['is_multiple'],
         $resolutionMeta['enumeration_lookup'],
-        $resolutionRaw
+        $resolutionRaw,
+        sprintf('%s, Jira field resolution', (string)($issuePayload['key'] ?? '?'))
     );
 
     if ($normalizedValue === null && normalizeJiraEmptyValue($resolutionRaw) !== null) {
@@ -3810,7 +3788,8 @@ function normalizeCustomFieldValue(
     string $fieldFormat,
     bool $isMultiple,
     array $enumerationLookup,
-    mixed $rawValue
+    mixed $rawValue,
+    string $where
 ): array|string|null {
     // Special case: Jira label-manager object { labels: [...] }
     $labelsObject = extractJiraLabelsObject($rawValue);
@@ -3824,7 +3803,7 @@ function normalizeCustomFieldValue(
     $normalizedValues = [];
 
     foreach ($values as $value) {
-        $normalized = normalizeCustomFieldSingleValue($fieldFormat, $enumerationLookup, $value);
+        $normalized = normalizeCustomFieldSingleValue($fieldFormat, $enumerationLookup, $value, $where);
         if ($normalized === null) {
             continue;
         }
@@ -3883,7 +3862,7 @@ function extractJiraLabelsObject(mixed $rawValue): ?array
  * @param mixed $rawValue
  * @return string|null
  */
-function normalizeCustomFieldSingleValue(string $fieldFormat, array $enumerationLookup, mixed $rawValue): ?string
+function normalizeCustomFieldSingleValue(string $fieldFormat, array $enumerationLookup, mixed $rawValue, string $where): ?string
 {
     $format = strtolower($fieldFormat);
 
@@ -3919,7 +3898,7 @@ function normalizeCustomFieldSingleValue(string $fieldFormat, array $enumeration
                 return null;
             }
 
-            $normKey = normalizeLabelKey($stringValue);
+            $normKey = normalizeLabelKey($stringValue, $where);
             if ($normKey !== '' && isset($enumerationLookup[$normKey])) {
                 return $enumerationLookup[$normKey];
             }
@@ -3937,7 +3916,7 @@ function normalizeCustomFieldSingleValue(string $fieldFormat, array $enumeration
                 return null;
             }
 
-            $normKey = normalizeLabelKey($stringValue);
+            $normKey = normalizeLabelKey($stringValue, $where);
             if ($normKey !== '' && isset($enumerationLookup[$normKey])) {
                 return $enumerationLookup[$normKey];
             }
@@ -3983,7 +3962,7 @@ function normalizeToList(mixed $value): array
  * @param array<mixed> $enumerations the decoded enumerations of the custom field (JSON)
  * @return array<string, string>  // normalized_jira_value => redmine_option_id_or_label
  */
-function buildEnumerationLookup(array $enumerations): array
+function buildEnumerationLookup(array $enumerations, string $where): array
 {
     $lookup = [];
 
@@ -4034,7 +4013,7 @@ function buildEnumerationLookup(array $enumerations): array
             if (!is_scalar($jiraValue)) {
                 continue;
             }
-            $normalized = normalizeLabelKey((string)$jiraValue);
+            $normalized = normalizeLabelKey((string)$jiraValue, $where);
             if ($normalized === '') {
                 continue;
             }
@@ -4049,7 +4028,7 @@ function buildEnumerationLookup(array $enumerations): array
 
         // also map normalized redmine label -> option id (helps when incoming value is label)
         if ($redmineOptionId !== null && $redmineLabel !== null) {
-            $normalizedLabel = normalizeLabelKey($redmineLabel);
+            $normalizedLabel = normalizeLabelKey($redmineLabel, $where);
             if ($normalizedLabel !== '') {
                 $lookup[$normalizedLabel] = $redmineOptionId;
             }
@@ -5512,13 +5491,15 @@ function descriptionContainsAttachmentReference(string $description, array $issu
 
 /**
  * Normaliseer label voor vergelijkingen: lowercase, NBSP->space, collapse whitespace, trim.
+ *
+ * @param string $where the Jira issue or field, for the warning when PCRE fails
  */
-function normalizeLabelKey(string $s): string
+function normalizeLabelKey(string $s, string $where): string
 {
     // NBSP -> normale spatie
     $s = str_replace("\xc2\xa0", ' ', $s);
-    // trim and collapse whitespace
-    $s = trim(preg_replace('/\s+/u', ' ', $s));
+    // trim and collapse whitespace; text PCRE cannot read (not valid UTF-8) is compared as it is (decision 43)
+    $s = trim(Fallbacks::keepText(preg_replace('/\s+/u', ' ', $s), $s, $where));
     // to lower
     if (function_exists('mb_strtolower')) {
         $s = mb_strtolower($s);

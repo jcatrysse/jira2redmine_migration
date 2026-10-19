@@ -66,8 +66,7 @@ php tools/verify.php --projects=KEY1,KEY2 --sample=25   # compare Jira and Redmi
 
 PHPStan level 8 and PSR-12 (140 characters) cover `src/`, `tests/`, the 16 scripts and `lib/cli.php`,
 `lib/jira_gateway.php`, `lib/verify.php` (PHPStan also `lib/requirements.php`); PHPStan analyses each script on its own,
-with a baseline only for what cannot be fixed without a change of behaviour (`tools/phpstan-baseline/`, each entry with
-its reason). The scripts share their start, options, configuration, database, clients and clock through `src/`
+without a baseline. The scripts share their start, options, configuration, database, clients and clock through `src/`
 (namespace `Jira2Redmine\`, [SCRIPTS.md](docs/SCRIPTS.md), "The command line and the shared code"). New code goes in
 `src/` with a test in `tests/`. `tools/testenv/` builds Redmine 5.1 and 7.0 test instances and runs the full sequence
 (`setup.sh`, `run_all.sh`; `J2R_JIRA_TAPE` replays a recorded Jira).

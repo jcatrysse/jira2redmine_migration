@@ -266,9 +266,22 @@ database (`Database/ConnectionFactory`, each script with its own PDO attributes)
 version and extensions.
 
 Checks (`tools/qa.sh`): PHPStan level 8 analyses each script on its own (`phpstan-scripts.neon`: the scripts declare
-`main()` and helpers of the same name), and PHPCS holds them to PSR-12 at 140 characters. What PHPStan reports and
-cannot be fixed without a change of behaviour is in `tools/phpstan-baseline/<script>.neon`, each entry with its reason
-(08: 2, 10: 3, 11: 7, all of them a PCRE or decode failure that ends in a TypeError or a warning, as before).
+`main()` and helpers of the same name), and PHPCS holds them to PSR-12 at 140 characters. There is no baseline:
+decision 43 fixed the 12 errors phase 6 had left in one (08, 10, 11).
+
+Where PCRE fails (a backtrack limit, text that is not valid UTF-8) or a value a field needs cannot be used, a script
+keeps the text as it was or skips the field and says so (decision 43, `src/Cli/Fallbacks.php`): one line
+`[warn] <Jira issue or field>, <field>: ... (decision 43).`, and the summary line `Fallbacks (decision 43, each a [warn]
+line above): N.` at the end of 08, 10 and 11. Before, these ended in a TypeError that stopped the script, or a PHP
+warning. Per spot:
+
+| script | where | what it does |
+|---|---|---|
+| 08 | a depending field created after its parent, Redmine's answer without the parent's enumerations | the dependencies name no parent option, as before; a warning instead of PHP's |
+| 08 | the association update of a depending field whose parent's enumerations cannot be decoded or read | the update leaves `value_dependencies` out (projects and trackers still go) |
+| 10 | a label compared with an option (custom field values, cascading fields) | the label is compared as it is |
+| 11 | the attachment links of a comment | the comment keeps its text as converted, links not rewritten |
+| 11 | the attachment block of a comment or changelog entry, a file name | the token is named `attachment`, as `AttachmentNames::token()` names it, so the Redmine name still replaces it |
 
 For test runs only, `J2R_JIRA_TAPE=DIR` with `J2R_JIRA_TAPE_MODE=record|replay` records every Jira answer of a run or
 plays one back without Jira (`src/Http/JiraTape.php`, `tools/testenv/run_all.sh`): the proof that a refactor changes no

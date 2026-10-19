@@ -28,6 +28,7 @@ use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
 use Jira2Redmine\Time\Clock;
+use Jira2Redmine\Cli\Fallbacks;
 
 const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -257,6 +258,8 @@ function main(array $config, array $cliOptions): void
             PHP_EOL
         );
     }
+
+    printf("[%s] %s%s", Clock::atom(), Fallbacks::summary(), PHP_EOL);
 }
 /**
  * @throws Throwable
@@ -6060,17 +6063,10 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                         continue;
                     }
 
-                    $parentLabelToId = [];
-                    foreach ($parentEnumerations as $parentEnum) {
-                        $parentName = trim((string)($parentEnum['name'] ?? ($parentEnum['value'] ?? '')));
-                        if ($parentName === '') {
-                            continue;
-                        }
-                        $parentId = $parentEnum['id'] ?? null;
-                        if ($parentId !== null) {
-                            $parentLabelToId[$parentName] = (int)$parentId;
-                        }
-                    }
+                    $parentLabelToId = parentEnumerationLabelToId(
+                        $parentEnumerations,
+                        sprintf('Jira field %s, value dependencies', $jiraId)
+                    );
 
                     $normalizedDependencies = [];
                     if (is_array($proposedValueDependencies)) {
@@ -7053,11 +7049,15 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
             }
 
             if (is_array($proposedValueDependencies) && $proposedValueDependencies !== []) {
-                $payload['custom_field']['value_dependencies'] = normalizeDependingValueDependencies(
+                $valueDependencies = dependingUpdateValueDependencies(
                     $proposedValueDependencies,
                     $parentEnumerations,
-                    $childEnumerations
+                    $childEnumerations,
+                    sprintf('Jira field %s, value dependencies', (string)$item['jira_field_id'])
                 );
+                if ($valueDependencies !== null) {
+                    $payload['custom_field']['value_dependencies'] = $valueDependencies;
+                }
             }
         }
 
@@ -7227,6 +7227,62 @@ function buildEnumerationLabelToIdMap(array $enumerations): array
     }
 
     return $map;
+}
+
+/**
+ * A depending field's parent options by label, for the dependencies sent when it is created. Redmine's answer for a
+ * parent created in this run may hold no enumerations (and a read of the field none either): then no label can be
+ * named, as before, now with a counted warning instead of PHP's "foreach() argument must be of type array" (decision
+ * 43).
+ *
+ * @param array<mixed>|null $parentEnumerations
+ * @return array<string, int>
+ */
+function parentEnumerationLabelToId(?array $parentEnumerations, string $where): array
+{
+    if ($parentEnumerations === null) {
+        Fallbacks::warn($where, 'Redmine gave the new parent field no enumerations, its options cannot be named');
+
+        return [];
+    }
+
+    $parentLabelToId = [];
+    foreach ($parentEnumerations as $parentEnum) {
+        $parentName = trim((string)($parentEnum['name'] ?? ($parentEnum['value'] ?? '')));
+        if ($parentName === '') {
+            continue;
+        }
+        $parentId = $parentEnum['id'] ?? null;
+        if ($parentId !== null) {
+            $parentLabelToId[$parentName] = (int)$parentId;
+        }
+    }
+
+    return $parentLabelToId;
+}
+
+/**
+ * The value dependencies of a depending field's association update, or null when the parent's enumerations cannot be
+ * used (stored but not decodable, and no Redmine id to read them): the update then leaves them out with a counted
+ * warning; before decision 43 that was a TypeError that stopped 08.
+ *
+ * @param array<mixed> $dependencies
+ * @param array<int, array<string, mixed>> $childEnumerations
+ * @return array<string, array<int|string>>|null
+ */
+function dependingUpdateValueDependencies(
+    array $dependencies,
+    mixed $parentEnumerations,
+    array $childEnumerations,
+    string $where
+): ?array {
+    if (!is_array($parentEnumerations)) {
+        Fallbacks::skipField($where, "the parent field's enumerations cannot be decoded or read");
+
+        return null;
+    }
+
+    return normalizeDependingValueDependencies($dependencies, $parentEnumerations, $childEnumerations);
 }
 
 /**

@@ -8,3 +8,4 @@ require_once __DIR__ . '/../lib/verify.php';
 require_once __DIR__ . '/../lib/description_conversion.php';
 require_once __DIR__ . '/CommandLineInputs.php';
 require_once __DIR__ . '/SourceLayout.php';
+require_once __DIR__ . '/ScriptFunctions.php';
