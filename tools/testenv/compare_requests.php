@@ -1,7 +1,8 @@
 <?php
 // Compare two request logs of tools/testenv/record_proxy.mjs (phase 6: no behaviour change).
-//   php compare_requests.php before.jsonl after.jsonl
-// Upload tokens are random and are normalised; everything else must be identical, in the same order.
+//   php compare_requests.php before.jsonl after.jsonl [--any-order]
+// Upload tokens are random and are normalised; everything else must be identical, in the same order. --any-order
+// compares the requests as a set: the same requests sent in another order (11's push per issue, decision 41).
 declare(strict_types=1);
 
 function loadRequests(string $file): array
@@ -17,6 +18,10 @@ function loadRequests(string $file): array
 }
 
 [$before, $after] = [loadRequests($argv[1]), loadRequests($argv[2])];
+if (in_array('--any-order', $argv, true)) {
+    sort($before);
+    sort($after);
+}
 printf("before: %d requests, after: %d requests\n", count($before), count($after));
 $differences = 0;
 for ($i = 0, $n = max(count($before), count($after)); $i < $n; $i++) {

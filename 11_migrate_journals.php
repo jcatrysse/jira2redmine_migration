@@ -16,6 +16,7 @@ use Jira2Redmine\Redmine\ExtendedApi;
 use Jira2Redmine\Attachments\AttachmentNames;
 use Jira2Redmine\Journals\AttachmentWindow;
 use Jira2Redmine\Journals\JournalStatus;
+use Jira2Redmine\Journals\PushOrder;
 use Jira2Redmine\Text\Relink;
 use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Journals\ExtractionFailure;
@@ -962,22 +963,17 @@ function runJournalPushPhase(
 
     printf("[%s] Journals ready for push: %d comment(s), %d changelog entr(y/ies).%s", formatCurrentTimestamp(), count($candidateComments), count($candidateChangelogs), PHP_EOL);
 
+    // per issue in Jira's time order, so the highest journal id is the latest journal ("Last updated by")
+    $timeline = PushOrder::timeline($candidateComments, $candidateChangelogs);
+
     if ($isDryRun) {
-        foreach ($candidateComments as $comment) {
+        foreach ($timeline as [$kind, $row]) {
             printf(
-                "  - Comment %s on issue %s → Redmine #%d%s",
-                $comment['jira_entity_id'],
-                $comment['jira_issue_key'],
-                $comment['redmine_issue_id'],
-                PHP_EOL
-            );
-        }
-        foreach ($candidateChangelogs as $history) {
-            printf(
-                "  - Changelog %s on issue %s → Redmine #%d%s",
-                $history['jira_entity_id'],
-                $history['jira_issue_key'],
-                $history['redmine_issue_id'],
+                "  - %s %s on issue %s → Redmine #%d%s",
+                $kind === 'comment' ? 'Comment' : 'Changelog',
+                $row['jira_entity_id'],
+                $row['jira_issue_key'],
+                $row['redmine_issue_id'],
                 PHP_EOL
             );
         }
@@ -996,26 +992,26 @@ function runJournalPushPhase(
     $attachmentMetadata = buildAttachmentMetadataIndex($pdo);
     $adfConverter = new AdfConverter();
 
-    foreach ($candidateComments as $comment) {
-        processCommentPush(
-            $redmineClient,
-            $pdo,
-            $comment,
-            $attachmentMetadata,
-            $userLookup,
-            $defaultAuthorId,
-            $useExtendedApi,
-            $extendedApiPrefix,
-            $adfConverter,
-            AttachmentWindow::seconds($config)
-        );
-    }
-
-    foreach ($candidateChangelogs as $history) {
+    foreach ($timeline as [$kind, $row]) {
+        if ($kind === 'comment') {
+            processCommentPush(
+                $redmineClient,
+                $pdo,
+                $row,
+                $attachmentMetadata,
+                $userLookup,
+                $defaultAuthorId,
+                $useExtendedApi,
+                $extendedApiPrefix,
+                $adfConverter,
+                AttachmentWindow::seconds($config)
+            );
+            continue;
+        }
         processChangelogPush(
             $redmineClient,
             $pdo,
-            $history,
+            $row,
             $userLookup,
             $defaultAuthorId,
             $useExtendedApi,

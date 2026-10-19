@@ -10,7 +10,8 @@
 # run's projects and replace their staging tables).
 # EMPTY_TMP=1 empties the attachment directory after 09's push, RELINK=1 runs the relink preview after verify
 # (the check of the one run, docs/PRODUCTION.md B7 step 7 and B9 step 1); the summary marks S0 to S3, the
-# snapshot points of the one run (decision 39), with their time.
+# snapshot points of the one run (decision 39), with their time. STOP_AT=S1|S2|S3 ends the run at that mark, to take a
+# snapshot of the test instance there (the history proof of decision 41 starts twice from S2).
 # Expects tools/testenv/setup.sh to have run, and config/config.local.php to read the environment
 # (JIRA_*, JIRA_CLOUD_ID, REDMINE_URL, REDMINE_API_KEY, STAGING_DSN, J2R_TMP, J2R_JQL, J2R_PROJECTS).
 set -u
@@ -32,6 +33,7 @@ step() { # step NAME script args...
 }
 mark() { # mark S0|S1|S2|S3|end: the one run's snapshot points (docs/PRODUCTION.md B7)
   echo "mark $1 $(date -u +%FT%TZ)" | tee -a "$logdir/summary.txt"
+  if [ "${STOP_AT:-}" = "$1" ]; then echo "stopped at $1 (STOP_AT)" | tee -a "$logdir/summary.txt"; exit 0; fi
 }
 manual() { # manual workflows|members|restore [script]
   # decision 33: the roles the workflows step opens come from the configuration

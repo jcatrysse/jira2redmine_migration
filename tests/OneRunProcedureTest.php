@@ -40,6 +40,12 @@ final class OneRunProcedureTest extends TestCase
         self::assertLessThan($issues, $empty);
     }
 
+    public function testTheTestRunnerCanStopAtASnapshotPoint(): void
+    {
+        $run = (string)file_get_contents(__DIR__ . '/../tools/testenv/run_all.sh');
+        self::assertStringContainsString('if [ "${STOP_AT:-}" = "$1" ]; then echo "stopped at $1 (STOP_AT)"', $run);
+    }
+
     public function testTheTestRunnerMarksTheSnapshotPointsAndRunsTheRelinkPreviewAfterVerify(): void
     {
         $run = (string)file_get_contents(__DIR__ . '/../tools/testenv/run_all.sh');
