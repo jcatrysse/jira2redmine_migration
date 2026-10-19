@@ -414,6 +414,65 @@ function verifyDuplicateJournals(array $journals): array
 }
 
 /**
+ * Decision 41: Redmine's "Last updated by" is the author of the journal with the highest id. 11 pushes per issue in
+ * Jira's time order, so that journal is the latest one (created_on). null when it is, else what differs.
+ *
+ * @param array<int, array<string, mixed>> $journals the "journals" of GET /issues/:id.json?include=journals
+ */
+function verifyLatestJournalLast(array $journals): ?string
+{
+    if ($journals === []) {
+        return null;
+    }
+    $byId = $journals;
+    usort($byId, static fn (array $a, array $b): int => (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0));
+    $last = $byId[count($byId) - 1];
+    $latest = (string)($last['created_on'] ?? '');
+    foreach ($journals as $journal) {
+        if ((string)($journal['created_on'] ?? '') > $latest) {
+            return sprintf(
+                'journal #%s (%s) has the highest id, #%s is later (%s)',
+                (string)($last['id'] ?? '?'),
+                $latest,
+                (string)($journal['id'] ?? '?'),
+                (string)$journal['created_on']
+            );
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Decision 41: the status the history ends in (the last status_id detail, by time) is the Redmine status of the issue's
+ * current Jira status. null when it is or when the issue has no status detail.
+ *
+ * @param array<int, array<string, mixed>> $journals
+ */
+function verifyHistoryLastStatus(array $journals, string $expectedStatusId): ?string
+{
+    $last = null;
+    $lastKey = null;
+    foreach ($journals as $journal) {
+        foreach ($journal['details'] ?? [] as $detail) {
+            if (($detail['property'] ?? '') !== 'attr' || ($detail['name'] ?? '') !== 'status_id') {
+                continue;
+            }
+            $key = [(string)($journal['created_on'] ?? ''), (int)($journal['id'] ?? 0)];
+            if ($lastKey === null || $key >= $lastKey) {
+                $lastKey = $key;
+                $last = (string)($detail['new_value'] ?? '');
+            }
+        }
+    }
+    if ($last === null || $last === $expectedStatusId) {
+        return null;
+    }
+
+    return sprintf('the history ends in status %s, Jira\'s status maps onto %s', $last, $expectedStatusId);
+}
+
+/**
  * The Redmine assignee to expect: the mapped user, or for a Jira assignee without a Redmine account what
  * the B9 rule gives (the default assignee, else none). verify expected "unmapped" and failed such issues.
  *

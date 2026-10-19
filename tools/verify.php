@@ -362,6 +362,11 @@ foreach ($projectKeys as $projectKey) {
         // Journals: none twice.
         $duplicateJournals = verifyDuplicateJournals($rm['journals'] ?? []);
         $record('journals: no duplicates', $duplicateJournals === [], $issueKey, implode(', ', array_slice($duplicateJournals, 0, 5)));
+        // Decision 41: the last updated user is the latest journal's, the history ends in Jira's status.
+        $notLast = verifyLatestJournalLast($rm['journals'] ?? []);
+        $record('journals: last updated by the latest', $notLast === null, $issueKey, (string)$notLast);
+        $historyStatus = verifyHistoryLastStatus($rm['journals'] ?? [], $maps['status'][(string)$fields['status']['id']] ?? '');
+        $record('history: last status as in Jira', $historyStatus === null, $issueKey, (string)$historyStatus);
 
         // Watchers.
         $watchers = verifyGetJson($jira, sprintf('/rest/api/3/issue/%s/watchers', $jiraId));

@@ -210,6 +210,47 @@ final class VerifyTest extends TestCase
         self::assertSame([], verifyDuplicateJournals(array_slice($journals, 0, 3)));
     }
 
+    public function testTheLastUpdatedUserMustBeTheLatestJournals(): void
+    {
+        // decision 41: Redmine's "Last updated by" is the journal with the highest id
+        $inOrder = [
+            ['id' => 10, 'created_on' => '2024-01-01T08:00:00Z'],
+            ['id' => 11, 'created_on' => '2024-01-02T08:00:00Z'],
+            ['id' => 12, 'created_on' => '2024-01-02T08:00:00Z'],
+        ];
+        self::assertNull(verifyLatestJournalLast($inOrder));
+        self::assertNull(verifyLatestJournalLast([]));
+        $commentsFirst = [['id' => 10, 'created_on' => '2024-01-03T08:00:00Z'], ['id' => 11, 'created_on' => '2024-01-02T08:00:00Z']];
+        self::assertSame(
+            'journal #11 (2024-01-02T08:00:00Z) has the highest id, #10 is later (2024-01-03T08:00:00Z)',
+            verifyLatestJournalLast($commentsFirst)
+        );
+    }
+
+    public function testTheHistoryMustEndInJirasStatus(): void
+    {
+        $status = static fn (int $id, string $created, string $from, string $to): array => [
+            'id' => $id,
+            'created_on' => $created,
+            'details' => [['property' => 'attr', 'name' => 'status_id', 'old_value' => $from, 'new_value' => $to]],
+        ];
+        $journals = [
+            $status(30, '2024-01-03T08:00:00Z', '3', '5'),
+            $status(20, '2024-01-02T08:00:00Z', '1', '3'),
+            ['id' => 31, 'created_on' => '2024-01-04T08:00:00Z', 'notes' => 'done', 'details' => []],
+        ];
+        self::assertNull(verifyHistoryLastStatus($journals, '5'));
+        self::assertSame('the history ends in status 5, Jira\'s status maps onto 3', verifyHistoryLastStatus($journals, '3'));
+        self::assertNull(verifyHistoryLastStatus([['id' => 1, 'created_on' => '2024-01-01T08:00:00Z', 'details' => []]], '3'));
+    }
+
+    public function testTheChecksRunOnEverySampledIssue(): void
+    {
+        $tool = (string)file_get_contents(__DIR__ . '/../tools/verify.php');
+        self::assertStringContainsString("\$record('journals: last updated by the latest', \$notLast === null", $tool);
+        self::assertStringContainsString("\$record('history: last status as in Jira', \$historyStatus === null", $tool);
+    }
+
     public function testAnUnmappedAssigneeIsExpectedEmptyOrTheDefault(): void
     {
         $users = ['acc-mapped' => '12'];
