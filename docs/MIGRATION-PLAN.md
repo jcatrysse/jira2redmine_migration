@@ -626,7 +626,7 @@ Jan's decision on the default author (2026-10-19, relayed by the coordinator):
       and 11's comments sent no override and 11's history read the API user, so the migration account stood in.
     - **Anonymous has no fixed id** (`users.type = 'AnonymousUser'`, made by Redmine): the runbook reads it with
       `rails runner 'puts User.anonymous.id'` into `J2R_DEFAULT_AUTHOR_ID`. The Extended API's user check
-      (`User.where(id:)`) takes it.
+      (`User.where(id:)`) takes it. Proven on 5.1 and 7.0 (Results, "Decision 42").
 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
@@ -1921,3 +1921,20 @@ in Jira" 267 of 267; 5 failures, none of the history: four counts that Jira chan
 issue created after the read) and one comment of SURV-921 at 94.7 % (verify's own word count joins "stable" and the
 attachment link after a line break into "stablesvs"; the comment is the same). Relink check 0, the existing tracker's
 global workflow unchanged (4 rows, sha256 6c384767d3536829), memberships equal 04's proposal after restore.
+
+**Decision 42, the proof (B2, 2026-10-19).** Code `6121889` (5.1) and `5c0e67f` (7.0), GEOS, SIS, OAC and LABO,
+`run_all.sh` to S3, `J2R_DEFAULT_AUTHOR_ID` = Redmine's Anonymous user (id 4 on both test instances; the API user,
+the migration account, is the admin, id 1, and no Jira account maps onto it). The same numbers on 5.1 and 7.0:
+
+| content whose Jira author has no Redmine account | by Anonymous | expected from staging | by the migration account |
+|---|---|---|---|
+| issue authors (10) | 282 | 282 (reporter without an account) | 0 |
+| comments and changelog entries with an attachment (11) | 346 | 295 comments and 51 changelog entries | 0 |
+| history journals (11) | 59 | 59 | 0 |
+| Jira attachments (09) | 727 | 727 | 0 |
+| jira-history.json (11, the author of the last transition) | 16 | | 0 |
+
+In the UI (both versions): the issue header "Added by Anonymous about 1 year ago" (7.0 with Anonymous's avatar), the
+journals "Updated by Anonymous ...", a file "Anonymous, 10/13/2025 09:38 AM", `jira-history.json` with its
+description and "Anonymous". The 5.1 run's 11 reported one history that ends in another status than the issue
+(GEOS-120: changed in Jira at 13:56, between 10's read and 11's), which is what the check is for.
