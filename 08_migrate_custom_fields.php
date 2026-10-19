@@ -154,8 +154,9 @@ function main(array $config, array $cliOptions): void
 
     if (in_array('redmine', $phasesToRun, true)) {
         $redmineConfig ??= ConfigValue::section($config, 'redmine', 'Missing configuration section "%s".');
-        $redmineUseExtendedApi ??= ExtendedApi::enabled($redmineConfig, $cliOptions['use_extended_api']);
-        $redmineExtendedApiPrefix ??= $redmineUseExtendedApi ? ExtendedApi::prefix($redmineConfig) : null;
+        // set once, here: the push phase below reuses them
+        $redmineUseExtendedApi = ExtendedApi::enabled($redmineConfig, $cliOptions['use_extended_api']);
+        $redmineExtendedApiPrefix = $redmineUseExtendedApi ? ExtendedApi::prefix($redmineConfig) : null;
         $redmineClient = ClientFactory::redmine($redmineConfig);
 
         printf("[%s] Starting Redmine custom field snapshot...%s", Clock::atom(), PHP_EOL);
@@ -207,18 +208,17 @@ function main(array $config, array $cliOptions): void
             }
         }
 
-        if (isset($transformSummary['object_field_stats'])) {
-            $objectStats = $transformSummary['object_field_stats'];
-            printf(
-                "  Object field mapping proposals: %d analysed, %d created, %d updated, %d unchanged, %d missing samples.%s",
-                $objectStats['evaluated'],
-                $objectStats['created'],
-                $objectStats['updated'],
-                $objectStats['unchanged'],
-                $objectStats['missing_samples'],
-                PHP_EOL
-            );
-        }
+        // the transform always returns the object field stats
+        $objectStats = $transformSummary['object_field_stats'];
+        printf(
+            "  Object field mapping proposals: %d analysed, %d created, %d updated, %d unchanged, %d missing samples.%s",
+            $objectStats['evaluated'],
+            $objectStats['created'],
+            $objectStats['updated'],
+            $objectStats['unchanged'],
+            $objectStats['missing_samples'],
+            PHP_EOL
+        );
 
         printValuesJiraNoLongerOffers(collectValuesJiraNoLongerOffers($pdo));
     } else {
@@ -418,7 +418,7 @@ function refreshJiraProjectIssueTypeFields(Client $client, PDO $pdo): void
     foreach ($projects as $project) {
         $projectId = $project['id'];
         $projectKey = $project['key'];
-        $projectName = trim((string)($project['name'] ?? ''));
+        $projectName = trim($project['name']);
         if ($projectName === '') {
             $projectName = null;
         }
@@ -491,7 +491,7 @@ function refreshJiraProjectIssueTypeFields(Client $client, PDO $pdo): void
                 }
 
                 $allowedValuesDescriptor = extractAllowedValuesDescriptorFromField(
-                    is_array($fieldData) ? $fieldData : [],
+                    $fieldData,
                     is_string($schemaType) ? $schemaType : null,
                     is_string($schemaCustom) ? $schemaCustom : null
                 );
@@ -534,7 +534,7 @@ function refreshJiraProjectIssueTypeFields(Client $client, PDO $pdo): void
 }
 
 /**
- * @return array<int, array{id: string, key: string}>
+ * @return array<int, array{id: string, key: string, name: string}>
  */
 function loadJiraProjectsForMetadata(PDO $pdo): array
 {
@@ -578,6 +578,9 @@ function loadJiraProjectsForMetadata(PDO $pdo): array
     return $projects;
 }
 
+/**
+ * @return array<mixed>
+ */
 function fetchJiraProjectIssueTypeFields(Client $client, string $projectKeyOrId): array
 {
     $issueTypesEndpoint = sprintf(
@@ -589,7 +592,7 @@ function fetchJiraProjectIssueTypeFields(Client $client, string $projectKeyOrId)
         $issueTypesResponse = $client->get($issueTypesEndpoint);
     } catch (BadResponseException $exception) {
         $response = $exception->getResponse();
-        $status = $response !== null ? $response->getStatusCode() : null;
+        $status = $response->getStatusCode();
         if ($status === 404) {
             printf(
                 "  [warn] Jira project %s is not accessible for create metadata (HTTP 404). Skipping.%s",
@@ -648,7 +651,7 @@ function fetchJiraProjectIssueTypeFields(Client $client, string $projectKeyOrId)
             $fieldsResponse = $client->get($fieldsEndpoint);
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
-            $status = $response !== null ? $response->getStatusCode() : null;
+            $status = $response->getStatusCode();
             if ($status === 404) {
                 printf(
                     "  [warn] Jira project %s issue type %s is not accessible for create metadata (HTTP 404). Skipping.%s",
@@ -737,6 +740,9 @@ function classifyJiraFieldCategory(string $fieldId, ?string $schemaCustom, bool 
     return 'app_custom';
 }
 
+/**
+ * @return array<mixed>
+ */
 function normalizeJiraAllowedValues(mixed $allowedValues): ?array
 {
     if (!is_array($allowedValues) || $allowedValues === []) {
@@ -780,6 +786,10 @@ function normalizeJiraAllowedValues(mixed $allowedValues): ?array
     return $normalized === [] ? null : $normalized;
 }
 
+/**
+ * @param array<mixed> $option
+ * @return array<string, mixed>|null
+ */
 function normalizeJiraOption(array $option): ?array
 {
     $value = isset($option['value']) ? trim((string)$option['value']) : '';
@@ -834,6 +844,11 @@ function normalizeJiraOption(array $option): ?array
     return $normalized;
 }
 
+/**
+ * @param array<mixed> $options
+ * @param array<mixed> $rawOptions
+ * @return array<mixed>
+ */
 function normalizeOptionsWithChildren(array $options, array $rawOptions): array
 {
     $normalized = [];
@@ -869,7 +884,7 @@ function normalizeOptionsWithChildren(array $options, array $rawOptions): array
             $parentId = isset($rawOption['optionId']) ? trim((string)$rawOption['optionId']) : '';
 
             if ($parentId === '') {
-                if (!isset($parentsById[$id]) || ($parentsById[$id]['disabled'] ?? false) !== false) {
+                if (!isset($parentsById[$id]) || $parentsById[$id]['disabled'] !== false) {
                     $parentsById[$id] = [
                         'id'       => $id !== '' ? $id : null,
                         'value'    => $value,
@@ -900,7 +915,7 @@ function normalizeOptionsWithChildren(array $options, array $rawOptions): array
 
         foreach ($parentsById as $parent) {
             $value = $parent['value'];
-            if (!isset($normalized[$value]) || ($normalized[$value]['disabled'] ?? false) !== false) {
+            if (!isset($normalized[$value]) || $normalized[$value]['disabled'] !== false) {
                 $normalized[$value] = $parent;
             }
         }
@@ -944,6 +959,10 @@ function normalizeOptionsWithChildren(array $options, array $rawOptions): array
     return $normalizedValues;
 }
 
+/**
+ * @param mixed $payload
+ * @return array<mixed>
+ */
 function normalizeAllowedValuesPayload($payload): array
 {
     if (!is_array($payload)) {
@@ -1059,6 +1078,11 @@ function normalizeAllowedValuesPayload($payload): array
     return [];
 }
 
+/**
+ * @param array<mixed> $existing
+ * @param array<mixed> $incoming
+ * @return array<mixed>
+ */
 function mergeAllowedValuesPayloads(array $existing, array $incoming): array
 {
     $base = normalizeAllowedValuesPayload($existing);
@@ -1372,7 +1396,7 @@ function flattenAllowedValuesForConcatenation(array $allowedValues): array
 }
 
 /**
- * @return array<string, array{distinct_sets: int, concatenated_values: array<int, string>}>|array
+ * @return array<string, mixed>
  */
 function summarizeAllowedValuesVariations(PDO $pdo): array
 {
@@ -1415,9 +1439,6 @@ function summarizeAllowedValuesVariations(PDO $pdo): array
             );
         }
 
-        if ($hash === false || $hash === null) {
-            continue;
-        }
 
         if (!isset($summaries[$fieldId])) {
             $summaries[$fieldId] = [
@@ -1451,6 +1472,10 @@ function summarizeAllowedValuesVariations(PDO $pdo): array
     return $results;
 }
 
+/**
+ * @param array<mixed> $fieldData
+ * @return array<string, mixed>|null
+ */
 function extractAllowedValuesDescriptorFromField(array $fieldData, ?string $schemaType, ?string $schemaCustom): ?array
 {
     $allowedValues = locateAllowedValuesArray($fieldData);
@@ -1545,6 +1570,10 @@ function extractAllowedValuesDescriptorFromField(array $fieldData, ?string $sche
     ];
 }
 
+/**
+ * @param array<mixed> $fieldData
+ * @return array<mixed>|null
+ */
 function locateAllowedValuesArray(array $fieldData): ?array
 {
     if (isset($fieldData['allowedValues']) && is_array($fieldData['allowedValues']) && $fieldData['allowedValues'] !== []) {
@@ -1629,7 +1658,7 @@ function fetchEligibleJiraFields(PDO $pdo): array
 }
 
 /**
- * @return array<string, array<int, array{project_id: string, issue_type_id: string, is_required: bool, allowed_values: array}>>
+ * @return array<string, array<int, array{project_id: string, issue_type_id: string, is_required: bool, allowed_values: array<mixed>}>>
  */
 function loadJiraProjectIssueTypeFieldDetails(PDO $pdo): array
 {
@@ -2047,6 +2076,9 @@ function printValuesJiraNoLongerOffers(array $lines): void
     }
 }
 
+/**
+ * @return array<string, array<string, mixed>>
+ */
 function loadJiraFieldMetadata(PDO $pdo): array
 {
     try {
@@ -2085,7 +2117,7 @@ function loadJiraFieldMetadata(PDO $pdo): array
 }
 
 /**
- * @return array<string, array{total_assignments: int, required_assignments: int, default_values: array<int, string>}>
+ * @return array<string, array{total_assignments: int, required_assignments: int, default_values: array<array-key, string>}>
  */
 function summarizeJiraFieldAssignments(PDO $pdo): array
 {
@@ -2210,7 +2242,7 @@ function extractDefaultValueFromJiraFieldPayload(array $rawFieldPayload): ?strin
             return null;
         }
 
-        return $encoded !== false ? $encoded : null;
+        return $encoded;
     }
 
     if (is_scalar($defaultValue)) {
@@ -2221,6 +2253,9 @@ function extractDefaultValueFromJiraFieldPayload(array $rawFieldPayload): ?strin
     return null;
 }
 
+/**
+ * @return array<string, mixed>
+ */
 function deriveAllowedValuesDescriptorFromIssues(PDO $pdo, string $fieldId, string $projectId, string $issueTypeId): array
 {
     static $statement = null;
@@ -2375,6 +2410,9 @@ function deriveAllowedValuesDescriptorFromIssues(PDO $pdo, string $fieldId, stri
     ];
 }
 
+/**
+ * @return array<string, mixed>|null
+ */
 function normalizeIssueFieldValueItem(mixed $item): ?array
 {
     if (is_array($item)) {
@@ -2491,7 +2529,7 @@ function buildJiraToRedmineTrackerLookup(PDO $pdo): array
 
 /**
  * @param array<string, mixed> $allowedValues
- * @return array|null
+ * @return array<string, mixed>|null
  */
 function parseCascadingAllowedValues(array $allowedValues): ?array
 {
@@ -3108,7 +3146,8 @@ function extractIdListFromRedmineCustomField(mixed $value): ?string
 /**
  * @return array{
  *     matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, ignored_unused: int, skipped: int, unchanged: int,
- *     status_counts: array<string, int>
+ *     status_counts: array<string, int>,
+ *     object_field_stats: array{evaluated: int, created: int, updated: int, unchanged: int, missing_samples: int}
  * }
  */
 function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): array
@@ -3438,7 +3477,7 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
         if ($proposedName === null) {
             $proposedName = $defaultName ?? $jiraFieldId;
         }
-        $proposedName = $proposedName !== null ? normalizeString($proposedName, 255) : null;
+        $proposedName = normalizeString($proposedName, 255);
 
         $proposedFormat = $currentProposedFormat;
         $proposedIsRequired = $currentProposedIsRequired ?? false;
@@ -3446,7 +3485,8 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
         $proposedIsForAll = normalizeBooleanFlag($row['proposed_is_for_all'] ?? null);
 
         if ($proposedIsForAll === null) {
-            $proposedIsForAll = empty($currentProposedProjectIds);
+            // this read $currentProposedProjectIds, a variable that is never set: empty() of it is always true (B86)
+            $proposedIsForAll = true;
         }
 
         $proposedIsMultiple = $currentProposedIsMultiple ?? false;
@@ -3816,10 +3856,10 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
                 $parentExisted = isset($existingMappings[$parentMappingKey]);
                 if ($parentExisted) {
                     $parentRow = $existingMappings[$parentMappingKey];
-                    if (isset($parentRow['redmine_custom_field_id']) && $parentRow['redmine_custom_field_id'] !== null) {
+                    if (isset($parentRow['redmine_custom_field_id'])) {
                         $parentRedmineId = (int)$parentRow['redmine_custom_field_id'];
                     }
-                    if (isset($parentRow['mapping_id']) && $parentRow['mapping_id'] !== null) {
+                    if (isset($parentRow['mapping_id'])) {
                         $parentMappingId = (int)$parentRow['mapping_id'];
                     }
                 }
@@ -3878,13 +3918,12 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
                     $parentLookupRow = $cascadingParentLookup->fetch(PDO::FETCH_ASSOC) ?: null;
                     $cascadingParentLookup->closeCursor();
 
-                    if (isset($parentLookupRow['mapping_id']) && $parentLookupRow['mapping_id'] !== null) {
+                    if (isset($parentLookupRow['mapping_id'])) {
                         $parentMappingId = (int)$parentLookupRow['mapping_id'];
                     }
 
                     if (
                         $parentRedmineId === null && isset($parentLookupRow['redmine_custom_field_id'])
-                        && $parentLookupRow['redmine_custom_field_id'] !== null
                     ) {
                         $parentRedmineId = (int)$parentLookupRow['redmine_custom_field_id'];
                     }
@@ -4054,7 +4093,7 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
             $matchedTrackerIds = decodeJsonColumn($matchedRedmine['tracker_ids'] ?? null);
             if (is_array($matchedTrackerIds)) {
                 $existingTrackerIds = array_values(array_map('intval', $matchedTrackerIds));
-                $proposedTrackerIds = array_values($existingTrackerIds);
+                $proposedTrackerIds = $existingTrackerIds;
             }
 
             $matchedRoleIds = decodeJsonColumn($matchedRedmine['role_ids'] ?? null);
@@ -4065,7 +4104,7 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
             $matchedProjectIds = decodeJsonColumn($matchedRedmine['project_ids'] ?? null);
             if (is_array($matchedProjectIds)) {
                 $existingProjectIds = array_values(array_map('intval', $matchedProjectIds));
-                $proposedProjectIds = array_values($existingProjectIds);
+                $proposedProjectIds = $existingProjectIds;
             }
         }
 
@@ -4154,11 +4193,9 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
             }
         }
 
-        $notesParts = $manualReasons !== [] ? $manualReasons : [];
-        if ($infoNotes !== []) {
-            $notesParts = array_merge($notesParts, $infoNotes);
-        }
-        $notes = $notesParts !== [] ? implode(' ', array_unique(array_map('trim', $notesParts))) : null;
+        // the usage note is always among $infoNotes: there are always notes
+        $notesParts = array_merge($manualReasons, $infoNotes);
+        $notes = implode(' ', array_unique(array_map('trim', $notesParts)));
 
         $proposedPossibleValuesJson = encodeJsonColumn($proposedPossibleValues);
         $proposedValueDependenciesJson = encodeJsonColumn($proposedValueDependencies);
@@ -4168,7 +4205,7 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
 
         if (
             $cascadingParentContext !== null
-            && ($cascadingParentContext['was_created'] ?? false)
+            && $cascadingParentContext['was_created']
             && ($cascadingParentContext['mapping_id'] ?? null) !== null
         ) {
             $parentPossibleValuesJson = encodeJsonColumn($cascadingParentContext['possible_values'] ?? null);
@@ -4178,7 +4215,7 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
             $parentAutomationHash = computeCustomFieldAutomationStateHash(
                 $cascadingParentContext['redmine_custom_field_id'] ?? null,
                 'READY_FOR_CREATION',
-                $cascadingParentContext['name'] ?? null,
+                $cascadingParentContext['name'],
                 'depending_enumeration',
                 $proposedIsRequired,
                 $proposedIsFilter,
@@ -4190,7 +4227,7 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
                 $parentTrackerIdsJson,
                 $parentRoleIdsJson,
                 $parentProjectIdsJson,
-                $cascadingParentContext['notes'] ?? null,
+                $cascadingParentContext['notes'],
                 null,
                 null
             );
@@ -4199,8 +4236,8 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
                 'redmine_custom_field_id' => $cascadingParentContext['redmine_custom_field_id'] ?? null,
                 'mapping_parent_custom_field_id' => null,
                 'migration_status' => 'READY_FOR_CREATION',
-                'notes' => $cascadingParentContext['notes'] ?? null,
-                'proposed_redmine_name' => $cascadingParentContext['name'] ?? null,
+                'notes' => $cascadingParentContext['notes'],
+                'proposed_redmine_name' => $cascadingParentContext['name'],
                 'proposed_field_format' => 'depending_enumeration',
                 'proposed_is_required' => normalizeBooleanDatabaseValue($proposedIsRequired),
                 'proposed_is_filter' => normalizeBooleanDatabaseValue($proposedIsFilter),
@@ -4283,7 +4320,7 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
             printf(
                 "  [manual] Jira custom field %s: %s%s",
                 $proposedName ?? ($defaultName ?? $jiraFieldId),
-                $notes ?? 'manual review required',
+                $notes,
                 PHP_EOL
             );
         }
@@ -4342,13 +4379,10 @@ function syncCustomFieldMappings(PDO $pdo): void
         $issueTypeIds = [];
         $aggregatedAllowedValues = [];
 
+        // loadJiraProjectIssueTypeFieldDetails() builds every entry with these four keys
         foreach ($usageEntries as $usage) {
-            if (!is_array($usage)) {
-                continue;
-            }
-
-            $projectId = isset($usage['project_id']) ? trim((string)$usage['project_id']) : '';
-            $issueTypeId = isset($usage['issue_type_id']) ? trim((string)$usage['issue_type_id']) : '';
+            $projectId = trim($usage['project_id']);
+            $issueTypeId = trim($usage['issue_type_id']);
 
             if ($projectId !== '') {
                 $projectIds[$projectId] = $projectId;
@@ -4360,7 +4394,7 @@ function syncCustomFieldMappings(PDO $pdo): void
 
             $aggregatedAllowedValues = mergeAllowedValuesPayloads(
                 $aggregatedAllowedValues,
-                isset($usage['allowed_values']) && is_array($usage['allowed_values']) ? $usage['allowed_values'] : []
+                $usage['allowed_values']
             );
         }
 
@@ -4905,7 +4939,10 @@ function normalizeRedmineFieldFormat(?string $fieldFormat): ?string
 }
 
 /**
- * @return array{field_format: ?string, is_multiple: ?bool, requires_possible_values: bool, requires_manual_review: bool, note: ?string}
+ * @return array{
+ *     field_format: ?string, is_multiple: ?bool, requires_possible_values: bool, requires_manual_review: bool, note: ?string,
+ *     is_cascading: bool
+ * }
  */
 function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): array
 {
@@ -5038,7 +5075,7 @@ function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): ar
                 break;
             default:
                 $result['requires_manual_review'] = true;
-                $result['note'] = sprintf('Unhandled Jira schema type "%s"; review manually.', $schemaType ?? 'unknown');
+                $result['note'] = sprintf('Unhandled Jira schema type "%s"; review manually.', $schemaType);
         }
     } else {
         $result['requires_manual_review'] = true;
@@ -5046,7 +5083,8 @@ function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): ar
     }
 
     $schemaTypeIsMultiple = deriveIsMultipleFromSchemaType($schemaType);
-    if ($result['is_multiple'] === null && $schemaTypeIsMultiple !== null) {
+    // every branch that sets is_multiple returns above
+    if ($schemaTypeIsMultiple !== null) {
         $result['is_multiple'] = $schemaTypeIsMultiple;
     }
 
@@ -5185,6 +5223,9 @@ function normalizeStringForHash(?string $value): ?string
     return $trimmed;
 }
 
+/**
+ * @return array<string, int>
+ */
 function fetchCustomFieldMigrationStatusCounts(PDO $pdo): array
 {
     try {
@@ -5261,7 +5302,7 @@ function loadRedmineCustomFieldAssociationSnapshot(PDO $pdo): array
 }
 
 /**
- * @return array<int, int>
+ * @return list<int>
  */
 function normalizeIntegerListColumn(mixed $value): array
 {
@@ -5642,7 +5683,7 @@ function renderCustomFieldUpdatePlan(array $plan, bool $useExtendedApi): void
             }
         }
 
-        if (isset($item['mapping_parent_custom_field_id']) && $item['mapping_parent_custom_field_id'] !== null) {
+        if (isset($item['mapping_parent_custom_field_id'])) {
             $parentProjects = $item['parent_project_ids'] === [] ? '[none]' : json_encode($item['parent_project_ids']);
             $parentTrackers = $item['parent_tracker_ids'] === [] ? '[none]' : json_encode($item['parent_tracker_ids']);
             $parentRedmineLabel = $item['parent_redmine_custom_field_id'] !== null
@@ -5660,6 +5701,9 @@ function renderCustomFieldUpdatePlan(array $plan, bool $useExtendedApi): void
         }
     }
 }
+/**
+ * @param array<string, mixed> $redmineConfig
+ */
 function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi): void
 {
     $pendingFields = fetchCustomFieldsReadyForCreation($pdo);
@@ -5897,7 +5941,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                         $parentLookup = fetchCustomFieldMappingById($pdo, $normalizedParent);
                         if ($parentLookup !== null) {
                             $parentMappingId = $normalizedParent;
-                            if (isset($parentLookup['redmine_custom_field_id']) && $parentLookup['redmine_custom_field_id'] !== null) {
+                            if (isset($parentLookup['redmine_custom_field_id'])) {
                                 $redmineParentId = (int)$parentLookup['redmine_custom_field_id'];
                             }
                             $parentEnumerationsRaw = $parentLookup['redmine_custom_field_enumerations'] ?? null;
@@ -5939,7 +5983,8 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                         }
                     }
 
-                    if ($redmineParentId === null && $parentMappingId !== null && !$isDryRun) {
+                    // the dry run returned before this loop
+                    if ($redmineParentId === null && $parentMappingId !== null) {
                         $parentRow = fetchCustomFieldMappingById($pdo, $parentMappingId);
                         if ($parentRow !== null) {
                             $parentCreation = createStandardCustomField(
@@ -6093,7 +6138,8 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                         $encodedEnumerations = encodeJsonColumn($newEnumerations);
 
                         // The child's enumeration ids exist only now: replace the labels sent at creation (B7).
-                        if ($effectiveFormat === 'depending_enumeration' && $normalizedDependencies !== []) {
+                        // $effectiveFormat is depending_enumeration in this branch
+                        if ($normalizedDependencies !== []) {
                             $translated = DependingValueDependencies::labelsToIds(
                                 $normalizedDependencies,
                                 is_array($parentEnumerations) ? $parentEnumerations : [],
@@ -6270,7 +6316,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                     $payload['custom_field']['is_for_all']   = false;
                 } else {
                     // geen expliciete projecten → laat voorstel beslissen, of default naar true
-                    $payload['custom_field']['is_for_all'] = $proposedIsForAll ?? true;
+                    $payload['custom_field']['is_for_all'] = $proposedIsForAll;
                 }
 
                 try {
@@ -6664,15 +6710,11 @@ function fetchCustomFieldMappingById(PDO $pdo, int $mappingId): ?array
     $row = $statement->fetch(PDO::FETCH_ASSOC) ?: null;
     $statement->closeCursor();
 
-    return $row !== false ? $row : null;
+    return $row;
 }
 
 /**
- * Bootstrap creation of a standard Redmine custom field via the extended API.
- *
- * @param array<string, mixed> $field
- * @param array<int, array{id: int, enumerations: array<int, mixed>|null}> $createdFieldCache
- * @return array{id: int, enumerations: array<int, mixed>|null}|null
+ * @return list<array{name: string, position: int}>
  */
 function buildEnumerationPayloadFromPossibleValues(mixed $possibleValues): array
 {
@@ -6698,6 +6740,13 @@ function buildEnumerationPayloadFromPossibleValues(mixed $possibleValues): array
     return $enumerations;
 }
 
+/**
+ * Bootstrap creation of a standard Redmine custom field via the extended API.
+ *
+ * @param array<string, mixed> $field
+ * @param array<int, array{id: int, enumerations: array<mixed>|null}> $createdFieldCache
+ * @return array{id: int, enumerations: array<mixed>|null}|null
+ */
 function createStandardCustomField(
     PDO $pdo,
     Client $redmineClient,
@@ -6918,7 +6967,7 @@ function recordFieldScopeInSnapshot(PDO $pdo, int $redmineId, array $projects, a
         throw new RuntimeException('Failed to prepare the snapshot update of a custom field scope.');
     }
     $statement->execute(
-        ['p' => encodeJsonColumn(array_values($projects)), 't' => encodeJsonColumn(array_values($trackers)), 'id' => $redmineId]
+        ['p' => encodeJsonColumn($projects), 't' => encodeJsonColumn($trackers), 'id' => $redmineId]
     );
 }
 
@@ -6950,10 +6999,10 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
     foreach ($plan as $item) {
         $mappingId = (int)$item['mapping_id'];
         $redmineId = (int)$item['redmine_custom_field_id'];
-        $parentMappingId = isset($item['mapping_parent_custom_field_id']) && $item['mapping_parent_custom_field_id'] !== null
+        $parentMappingId = isset($item['mapping_parent_custom_field_id'])
             ? (int)$item['mapping_parent_custom_field_id']
             : null;
-        $parentRedmineId = isset($item['parent_redmine_custom_field_id']) && $item['parent_redmine_custom_field_id'] !== null
+        $parentRedmineId = isset($item['parent_redmine_custom_field_id'])
             ? (int)$item['parent_redmine_custom_field_id']
             : null;
         $projects = $item['target_project_ids'] ?? [];
@@ -7066,9 +7115,8 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
                         'mapping_id' => $mappingId,
                     ]);
 
-                    $failedParentLabel = $parentRedmineId !== null
-                        ? sprintf('#%d', $parentRedmineId)
-                        : sprintf('mapping #%d', $parentMappingId);
+                    // inside "$parentRedmineId !== null" above
+                    $failedParentLabel = sprintf('#%d', $parentRedmineId);
                     printf("  [failed] Parent update for custom field %s: %s%s", $failedParentLabel, $errorMessage, PHP_EOL);
                     continue;
                 }
@@ -7233,7 +7281,7 @@ function normalizeDependingValueDependencies(array $dependencies, array $parentE
 }
 
 /**
- * @param array<int, array<string, mixed>> $plan
+ * @return array<mixed>|string|null
  */
 function decodeJsonColumn(mixed $value): array|string|null
 {
@@ -7286,9 +7334,6 @@ function decodeJsonResponse(ResponseInterface $response): mixed
         return json_decode($body, true, 512, JSON_THROW_ON_ERROR);
     } catch (JsonException $exception) {
         $preview = preg_replace('/\s+/', ' ', substr($body, 0, 300));
-        if ($preview === false) {
-            $preview = '';
-        }
         if (strlen($body) > 300) {
             $preview .= '...';
         }
@@ -7312,8 +7357,8 @@ function verifyDependingCustomFieldsApi(Client $client): void
         }
     } catch (BadResponseException $exception) {
         $response = $exception->getResponse();
-        $statusCode = $response ? $response->getStatusCode() : 0;
-        $reason = $response ? $response->getReasonPhrase() : 'unknown error';
+        $statusCode = $response->getStatusCode();
+        $reason = $response->getReasonPhrase();
         throw new RuntimeException(
             sprintf('redmine_depending_custom_fields availability check failed: HTTP %d %s', $statusCode, $reason),
             0,
@@ -7378,6 +7423,9 @@ function extractCreatedCustomFieldEnumerations(mixed $decoded): ?array
     return null;
 }
 
+/**
+ * @return array<mixed>|null
+ */
 function fetchRedmineCustomFieldEnumerations(
     Client $client,
     int $customFieldId,

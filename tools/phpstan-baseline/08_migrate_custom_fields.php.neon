@@ -1,0 +1,19 @@
+# Errors of 08_migrate_custom_fields.php PHPStan may report (tools/qa.sh): only what cannot be fixed without a change of
+# behaviour, each with its reason. Phase 6 (plan M1) keeps the behaviour; a fix is a decision for Jan.
+parameters:
+    ignoreErrors:
+        -
+            # The push of a depending field whose parent was created in this run takes the parent's enumerations from
+            # createStandardCustomField(), which gives null when Redmine's answer has none: the foreach then warns
+            # ("foreach() argument must be of type array|object") and maps no parent label, as before.
+            message: '#^Argument of an invalid type array\<mixed\>\|null supplied for foreach, only iterables are supported\.$#'
+            identifier: foreach.nonIterable
+            count: 1
+            path: ../../08_migrate_custom_fields.php
+        -
+            # synchronizeCustomFieldAssociations(): a depending field whose parent has neither stored enumerations nor
+            # a Redmine id passes the undecoded value on, a TypeError under strict_types that stops 08, as before.
+            message: '#^Parameter \#2 \$parentEnumerations of function normalizeDependingValueDependencies expects array\<int, array\<string, mixed\>\>, array\<mixed\>\|string\|null given\.$#'
+            identifier: argument.type
+            count: 1
+            path: ../../08_migrate_custom_fields.php

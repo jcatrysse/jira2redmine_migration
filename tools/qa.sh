@@ -1,5 +1,5 @@
 #!/bin/bash
-# Fast checks before a push: PHPUnit, PHPStan (level 8) and PSR-12 on the new code, php -l on all.
+# Fast checks before a push: php -l on all, PHPUnit, PHPStan (level 8) and PSR-12 on src/, the tests, lib and the 16 scripts.
 # PHPStan and PHPCS come as pinned phars in tools/bin (gitignored), downloaded on first use.
 set -e
 cd "$(dirname "$0")/.."
@@ -10,10 +10,9 @@ for f in [0-9]*.php lib/*.php src/*/*.php tools/*.php tools/testenv/*.php; do ph
 echo "php -l: ok"
 vendor/bin/phpunit
 php tools/bin/phpstan.phar analyse --no-progress --memory-limit=1G
-# The scripts, one analysis each (phpstan-scripts.neon), each with its own cache. Phase 6 adds them as they are clean.
-analysed='01 02 03 04 05 06 07 09 10 11 12 13 14 15 16'
+# The 16 scripts, one analysis each (phpstan-scripts.neon), each with its own cache and its baseline if it has one.
 mkdir -p tools/bin/phpstan
-scripts=$(for n in $analysed; do ls ${n}_*.php; done)
+scripts=$(ls [0-9][0-9]_*.php)
 for script in $scripts; do
   {
     echo "includes:"
@@ -25,5 +24,5 @@ for script in $scripts; do
 done
 [ -z "$scripts" ] || printf '%s\n' $scripts | xargs -P 4 -I{} php tools/bin/phpstan.phar analyse --no-progress --memory-limit=1G \
   --error-format=raw -c "tools/bin/phpstan/{}.neon" {}
-echo "PHPStan scripts: $(echo $scripts | wc -w) of 16 ok"
+echo "PHPStan: the $(echo $scripts | wc -w) scripts ok"
 php tools/bin/phpcs.phar
