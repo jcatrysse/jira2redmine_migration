@@ -143,25 +143,24 @@ function main(array $config, array $cliOptions): void
             }
         }
 
-        $memberSummary = $transformSummary['member_summary'] ?? null;
-        if (is_array($memberSummary) && $memberSummary !== []) {
-            printf(
-                "  Member sync -> Matched: %d, Ready: %d, Awaiting group: %d, Awaiting user: %d, Manual: %d, Overrides kept: %d,"
-                    . " Skipped: %d, Unchanged: %d.%s",
-                $memberSummary['matched'] ?? 0,
-                $memberSummary['ready_for_assignment'] ?? 0,
-                $memberSummary['awaiting_group'] ?? 0,
-                $memberSummary['awaiting_user'] ?? 0,
-                $memberSummary['manual_review'] ?? 0,
-                $memberSummary['manual_overrides'] ?? 0,
-                $memberSummary['skipped'] ?? 0,
-                $memberSummary['unchanged'] ?? 0,
-                PHP_EOL
-            );
-        }
+        // runGroupTransformationPhase() always returns the member summary with all its counts
+        $memberSummary = $transformSummary['member_summary'];
+        printf(
+            "  Member sync -> Matched: %d, Ready: %d, Awaiting group: %d, Awaiting user: %d, Manual: %d, Overrides kept: %d,"
+                . " Skipped: %d, Unchanged: %d.%s",
+            $memberSummary['matched'],
+            $memberSummary['ready_for_assignment'],
+            $memberSummary['awaiting_group'],
+            $memberSummary['awaiting_user'],
+            $memberSummary['manual_review'],
+            $memberSummary['manual_overrides'],
+            $memberSummary['skipped'],
+            $memberSummary['unchanged'],
+            PHP_EOL
+        );
 
-        $memberStatusCounts = $transformSummary['member_status_counts'] ?? [];
-        if (is_array($memberStatusCounts) && $memberStatusCounts !== []) {
+        $memberStatusCounts = $transformSummary['member_status_counts'];
+        if ($memberStatusCounts !== []) {
             printf("  Current Member migration status breakdown:%s", PHP_EOL);
             foreach ($memberStatusCounts as $status => $count) {
                 printf("  - %-26s %d%s", $status, $count, PHP_EOL);
@@ -927,7 +926,12 @@ function printVersion(): void
 /**
  * @return array{
  *     matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int,
- *     status_counts: array<string, int>
+ *     status_counts: array<string, int>,
+ *     member_summary: array{
+ *         matched: int, ready_for_assignment: int, awaiting_group: int, awaiting_user: int, manual_review: int,
+ *         manual_overrides: int, skipped: int, unchanged: int
+ *     },
+ *     member_status_counts: array<string, int>
  * }
  */
 function runGroupTransformationPhase(PDO $pdo): array
@@ -1050,9 +1054,8 @@ function runGroupTransformationPhase(PDO $pdo): array
                 PHP_EOL
             );
         } else {
-            if ($newStatus !== 'MANUAL_INTERVENTION_REQUIRED') {
-                $notes = null;
-            }
+            // without a manual reason the status is never MANUAL_INTERVENTION_REQUIRED (read from $allowedStatuses)
+            $notes = null;
         }
 
         if ($newStatus === 'READY_FOR_CREATION' && ($proposedName === null || trim($proposedName) === '')) {
@@ -1101,7 +1104,8 @@ function runGroupTransformationPhase(PDO $pdo): array
             $summary['matched']++;
         } elseif ($newStatus === 'READY_FOR_CREATION' && $newStatus !== $currentStatus) {
             $summary['ready_for_creation']++;
-        } elseif ($newStatus === 'MANUAL_INTERVENTION_REQUIRED' && $newStatus !== $currentStatus) {
+        } elseif ($newStatus === 'MANUAL_INTERVENTION_REQUIRED') {
+            // the status read is one of $allowedStatuses: MANUAL_INTERVENTION_REQUIRED is always new
             $summary['manual_review']++;
         }
     }
@@ -1526,7 +1530,8 @@ function runGroupMembershipTransformation(PDO $pdo): array
             $summary['awaiting_group']++;
         } elseif ($newStatus === 'AWAITING_USER' && $newStatus !== $currentStatus) {
             $summary['awaiting_user']++;
-        } elseif ($newStatus === 'MANUAL_INTERVENTION_REQUIRED' && $newStatus !== $currentStatus) {
+        } elseif ($newStatus === 'MANUAL_INTERVENTION_REQUIRED') {
+            // the status read is one of $allowedStatuses: MANUAL_INTERVENTION_REQUIRED is always new
             $summary['manual_review']++;
         }
     }

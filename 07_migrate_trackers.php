@@ -361,6 +361,9 @@ function fetchAndStoreJiraIssueTypes(Client $client, PDO $pdo): int
     return $totalInserted;
 }
 
+/**
+ * @return array<array-key, array<array<string, mixed>>> Jira issue type id => its projects
+ */
 function fetchJiraIssueTypeProjectUsage(Client $client): array
 {
     $startAt = 0;
@@ -443,6 +446,7 @@ function fetchJiraIssueTypeProjectUsage(Client $client): array
 }
 
 /**
+ * @param array<string, mixed> $redmineConfig
  * @throws Throwable
  */
 function fetchAndStoreRedmineTrackers(Client $client, PDO $pdo, array $redmineConfig, bool $useExtendedApi): int
@@ -516,10 +520,8 @@ function fetchAndStoreRedmineTrackers(Client $client, PDO $pdo, array $redmineCo
                 try {
                     $extendedPayload = fetchExtendedRedmineTracker($client, $extendedApiPrefix, $trackerId);
 
-                    if (is_array($extendedPayload)) {
-                        $rawPayload = $extendedPayload;
-                        $payloadForColumns = $extendedPayload['tracker'] ?? $extendedPayload;
-                    }
+                    $rawPayload = $extendedPayload;
+                    $payloadForColumns = $extendedPayload['tracker'] ?? $extendedPayload;
                 } catch (Throwable $exception) {
                     printf(
                         "  [WARN] Extended API tracker fetch failed for %d: %s%s",
@@ -577,12 +579,12 @@ function fetchAndStoreRedmineTrackers(Client $client, PDO $pdo, array $redmineCo
 }
 
 /**
+ * @param array<string, mixed> $config
  * @return array{
- *     matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int,
- *     status_counts: array<string, int>
+ *     matched: int, ready_for_creation: int, ready_for_update: int, manual_review: int, manual_overrides: int, skipped: int,
+ *     unchanged: int, status_counts: array<string, int>
  * }
  */
-
 function runTrackerTransformationPhase(PDO $pdo, array $config): array
 {
     syncTrackerMappings($pdo);
@@ -863,7 +865,8 @@ function runTrackerTransformationPhase(PDO $pdo, array $config): array
             $summary['ready_for_creation']++;
         } elseif ($newStatus === 'READY_FOR_UPDATE' && $newStatus !== $currentStatus) {
             $summary['ready_for_update']++;
-        } elseif ($newStatus === 'MANUAL_INTERVENTION_REQUIRED' && $newStatus !== $currentStatus) {
+        } elseif ($newStatus === 'MANUAL_INTERVENTION_REQUIRED') {
+            // the status read is one of $allowedStatuses: MANUAL_INTERVENTION_REQUIRED is always new
             $summary['manual_review']++;
         }
     }
@@ -917,9 +920,8 @@ function refreshTrackerMetadata(PDO $pdo): void
 
 /**
 /**
- * @return array<string, array{id: int, name: string, is_default: mixed}>
+ * @return array<string, array<string, mixed>>
  */
-
 function buildRedmineTrackerLookup(PDO $pdo): array
 {
     $lookup = [];
@@ -1081,6 +1083,9 @@ function fetchTrackerMappingsForTransform(PDO $pdo): array
     return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
 
+/**
+ * @param list<int>|null $proposedProjectIds
+ */
 function computeTrackerAutomationStateHash(
     ?int $redmineTrackerId,
     string $migrationStatus,
@@ -1111,6 +1116,9 @@ function computeTrackerAutomationStateHash(
     return hash('sha256', $json);
 }
 
+/**
+ * @return array<string, int>
+ */
 function fetchTrackerMigrationStatusCounts(PDO $pdo): array
 {
     try {
@@ -1139,15 +1147,15 @@ function fetchTrackerMigrationStatusCounts(PDO $pdo): array
     return $results;
 }
 
+/**
+ * @param list<string> $statuses
+ */
 function countTrackersInStatuses(PDO $pdo, array $statuses): int
 {
     $normalizedStatuses = [];
 
+    // the one caller passes ['READY_FOR_UPDATE']
     foreach ($statuses as $status) {
-        if (!is_string($status)) {
-            continue;
-        }
-
         $trimmed = trim($status);
         if ($trimmed === '') {
             continue;
@@ -1184,6 +1192,9 @@ function countTrackersInStatuses(PDO $pdo, array $statuses): int
     return (int)$row['total'];
 }
 
+/**
+ * @param array<string, mixed> $config
+ */
 function resolveDefaultTrackerStatusId(PDO $pdo, array $config): ?int
 {
     $configured = null;
@@ -1194,7 +1205,7 @@ function resolveDefaultTrackerStatusId(PDO $pdo, array $config): ?int
             $trackerConfig = $migrationConfig['trackers'];
             if (isset($trackerConfig['default_redmine_status_id'])) {
                 $configuredValue = $trackerConfig['default_redmine_status_id'];
-                if ($configuredValue !== null && $configuredValue !== '') {
+                if ($configuredValue !== '') {
                     $configured = normalizeInteger($configuredValue, 1);
                 }
             }
@@ -1240,6 +1251,9 @@ function resolveDefaultTrackerStatusId(PDO $pdo, array $config): ?int
     return null;
 }
 
+/**
+ * @param array<string, mixed> $redmineConfig
+ */
 function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi): void
 {
     $pendingTrackers = fetchTrackersReadyForCreation($pdo);
@@ -1536,6 +1550,9 @@ function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array 
     );
 }
 
+/**
+ * @return array<int, array<string, mixed>>
+ */
 function fetchTrackersReadyForCreation(PDO $pdo): array
 {
     $sql = <<<SQL
@@ -1573,6 +1590,9 @@ function fetchTrackersReadyForCreation(PDO $pdo): array
     return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
 
+/**
+ * @return array<int, array{name: ?string, tracker_ids: list<int>}>
+ */
 function buildRedmineProjectTrackerSnapshot(PDO $pdo): array
 {
     $sql = <<<SQL
@@ -1656,6 +1676,9 @@ function buildRedmineProjectTrackerSnapshot(PDO $pdo): array
     return $snapshot;
 }
 
+/**
+ * @return array<array-key, int> Jira project id => Redmine project id
+ */
 function buildJiraToRedmineProjectLookup(PDO $pdo): array
 {
     try {
@@ -1692,6 +1715,9 @@ function buildJiraToRedmineProjectLookup(PDO $pdo): array
     return $lookup;
 }
 
+/**
+ * @return array<array-key, list<string>> Jira issue type id => Jira project ids
+ */
 function buildJiraIssueTypeProjectUsage(PDO $pdo): array
 {
     try {
@@ -1731,6 +1757,11 @@ function buildJiraIssueTypeProjectUsage(PDO $pdo): array
     return $usage;
 }
 
+/**
+ * @param array<array-key, int> $jiraToRedmineProjectLookup
+ * @param array<int, array<string, mixed>> $projectTrackerSnapshot Redmine project id => name and tracker_ids
+ * @return array{array<mixed>, array<mixed>, array<mixed>} the plan per project, the warnings, the tracker metadata
+ */
 function collectTrackerProjectLinkPlan(PDO $pdo, array $jiraToRedmineProjectLookup, array $projectTrackerSnapshot): array
 {
     $sql = <<<SQL
@@ -1858,6 +1889,10 @@ function collectTrackerProjectLinkPlan(PDO $pdo, array $jiraToRedmineProjectLook
     return [$plan, $warnings, $trackerMetadata];
 }
 
+/**
+ * @param array<int, array{name: ?string, tracker_ids: list<int>}> $projectTrackerSnapshot
+ * @param array<array-key, int> $jiraToRedmineProjectLookup
+ */
 function synchronizeProjectTrackers(
     PDO $pdo,
     Client $redmineClient,
@@ -1959,6 +1994,10 @@ function synchronizeProjectTrackers(
     }
 }
 
+/**
+ * @param array<mixed> $trackerMetadata
+ * @param array<mixed> $results
+ */
 function finalizeTrackerProjectAssociationStatuses(PDO $pdo, array $trackerMetadata, array $results): void
 {
     if ($results === []) {
@@ -2128,6 +2167,9 @@ function normalizeInteger(mixed $value, int $min = PHP_INT_MIN, ?int $max = null
     return $intValue;
 }
 
+/**
+ * @return list<int>|null
+ */
 function normalizeProjectIdList(mixed $value): ?array
 {
     if ($value === null) {
@@ -2168,6 +2210,9 @@ function normalizeProjectIdList(mixed $value): ?array
     return $normalized;
 }
 
+/**
+ * @return list<string>|null
+ */
 function normalizeJiraProjectIdList(mixed $value): ?array
 {
     if ($value === null) {
@@ -2217,6 +2262,9 @@ function normalizeJiraProjectIdList(mixed $value): ?array
     return $normalized;
 }
 
+/**
+ * @param array<mixed>|null $projectIds
+ */
 function encodeProjectIdList(?array $projectIds): ?string
 {
     if ($projectIds === null) {
@@ -2236,6 +2284,9 @@ function encodeProjectIdList(?array $projectIds): ?string
     }
 }
 
+/**
+ * @param array<mixed>|null $projectIds
+ */
 function encodeJiraProjectIdList(?array $projectIds): ?string
 {
     if ($projectIds === null) {
@@ -2316,6 +2367,9 @@ function normalizeStoredAutomationHash(mixed $value): ?string
     return strtolower($trimmed);
 }
 
+/**
+ * @return array<mixed>
+ */
 function fetchExtendedRedmineTracker(Client $client, string $prefix, int $trackerId): array
 {
     $path = ExtendedApi::path($prefix, sprintf('trackers/%d.json', $trackerId));
@@ -2324,8 +2378,8 @@ function fetchExtendedRedmineTracker(Client $client, string $prefix, int $tracke
         $response = $client->get($path);
     } catch (BadResponseException $exception) {
         $response = $exception->getResponse();
-        $statusCode = $response ? $response->getStatusCode() : 0;
-        $reason = $response ? $response->getReasonPhrase() : 'unknown error';
+        $statusCode = $response->getStatusCode();
+        $reason = $response->getReasonPhrase();
 
         throw new RuntimeException(
             sprintf('Extended tracker fetch failed (%s): HTTP %d %s', $path, $statusCode, $reason),
