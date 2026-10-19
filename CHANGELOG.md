@@ -71,6 +71,13 @@ All notable changes to this project. Steps to take before and after a migration 
 - docs/PRODUCTION.md: the procedure for the rehearsal and production (upgrade to 7.0, then the migration in
   one run of all 14 projects with snapshots at its three pauses, decision 39; the four batches as the fallback;
   the prompt for the local session).
+- Jira's history of status, assignee and priority as Redmine journals (Jan, decision 41): 11's phase `history`
+  (a default phase) writes them with its push, through the Extended API's history endpoint (`e87ed79` or later).
+  A value Redmine does not have is left out with the chain kept connected; such an issue gets
+  `jira-history.json`. New columns `migration_mapping_journals.history_journal_id` and `history_attachment_id`.
+- verify: the last updated user is the latest journal's, the history ends in Jira's status (decision 41).
+- `tools/testenv/run_all.sh`: `STOP_AT=S1|S2|S3` ends a test run at that mark; `compare_requests.php
+  --any-order` compares two recordings as a set.
 
 ### Changed
 - An existing Redmine (decisions 33 to 35): Jira priorities map onto existing Redmine priorities, the rest is a
@@ -106,6 +113,11 @@ All notable changes to this project. Steps to take before and after a migration 
   code; Outlook safe links in mailed comments become the link itself.
 
 ### Fixed
+- Redmine's "Last updated by" is the author of the journal with the highest id: 11 pushed every comment before
+  every changelog entry, so on 222 of 1,870 issues (7.0 test run) it was not the last person who acted in Jira.
+  11 now pushes per issue in Jira's time order, the history in between (decision 41, option C).
+- After 11 an issue showed the time of its last journal instead of Jira's updated time: each journal set it to
+  its own time. Every journal now sends Jira's updated time of its issue (decision 41).
 - 13 on 7.0 sent an issue's tags as one comma-joined string, which redmine_tags 7.0 stored as one tag (B75).
 - The relink reported and counted texts without a Jira link, since its rewrite also tidied the spacing around
   references (B76); it now rewrites the links only.

@@ -548,21 +548,44 @@ Jan's answer to B78 (2026-10-16, relayed by the coordinator):
     test configuration then).
 
 Jan's answers to the Jira history research (2026-10-19, relayed by the coordinator; `docs/research/JIRA-HISTORY.md`,
-`8cc72ee`):
+`8cc72ee`), revised by Jan the same day (build it now, part of the one run, tested before the rehearsal):
 
-41. **Jira's history: a hybrid, built after production.**
-    - **Approach**: real Redmine journals for `status_id`, `assigned_to_id` and `priority_id` only, written through a
-      new admin-only raw-insert endpoint of the Extended API (`POST /extended_api/issues/:id/history.json`,
-      `insert_all`, no issue save); every other history item stays in the archive only; no JSON attachment (the
-      research's option B).
-    - **Staging is kept after production**, as an encrypted dump, as the archive and the source of the history step
-      (docs/PRODUCTION.md B9 step 6). Jan's answers (2026-10-19): **Jan** is the owner; the dump stays on the
-      production server, Jan moves and secures it himself; no fixed retention, Jan decides after the handover and
-      deletes it himself.
-    - **LABO's 7 statuses that no project uses any more** (610 history items): mapped onto existing Redmine statuses
-      through a table Jan fills in.
-    - **Timing**: built after production and run from the kept staging; not part of the rehearsal or of the production
-      run. The journals sort by their own time, so written later they give the same history (the research, section 5).
+41. **Jira's history: status, assignee and priority as Redmine journals, during the migration.**
+    - **Approach**: real Redmine journals for `status_id`, `assigned_to_id` and `priority_id` only, written through
+      the Extended API's admin-only raw-insert endpoint (`POST /extended_api/issues/:id/history.json`, `insert_all`,
+      no issue save: `updated_on`, `closed_on` and the watchers stay, no mail, no webhook); every other history item
+      stays in the staging dump only.
+    - **Timing (revised)**: built now and part of the one run: 11's phase `history`, a default phase, goes with its
+      push. Not after production.
+    - **Values Redmine does not have** (revised): no mapping table. LABO's 7 statuses that no project uses (610
+      items), an assignee without an account and an unmapped priority are skipped and the chain stays connected: A to
+      X at t1 and X to B at t2 becomes A to B at t2, so every detail's old value is the value before it; a change that
+      is no change after the mapping (A to A) is dropped. Only such an issue gets one file, `jira-history.json`: all
+      its status, assignee and priority transitions as Jira has them (time, Jira field, from and to as id and name,
+      the author as Jira account id plus Redmine login; no display names, an assignee is named by login too), with
+      the author and time of its last transition, never the migration user and never the time of the run.
+    - **Mapping and authors**: statuses through 05, priorities through 06 (decision 35), people through 02 (a Jira
+      assignee is always an account, so 03's groups do not take part), by 10's rule; authors by 11's comment rule
+      (the account, else the default author, else the API user). The last status is checked against the issue; an
+      open parent (10 gives it "Resolved", Jan's rule) is reported apart as a note.
+    - **"Last updated by" (finding, B2, 2026-10-19) and option C**: Redmine's last updated user
+      (`Issue#last_updated_by`, the issue list column "Last updated by"; 5.1 and 7.0 alike) is the author of the
+      journal with the **highest id**, not of the latest one, and an id follows the order of the requests. History
+      written after 11's comments would have made the author of the latest history entry the last updated user (7.0
+      test data, DOC, GEOS, OAC, SIS, SURV: changed on 1,522 of 2,402 issues, still not the last actor in Jira on
+      199); 11 itself pushed every comment before every changelog entry (222 of 1,870 issues already off). Choice
+      **C** (the coordinator for Jan, 2026-10-19: "no issue last updated by the migration user", the updated-by as in
+      Jira): 11 pushes per issue in Jira's time order and writes the history series in between, so the highest id is
+      the latest journal. Cost: one history request per series between two comments (7.0 test data 4,873 instead
+      of 2,402), estimated +10 to 20 minutes on the one run.
+    - **The issue's updated time**: every journal 11 pushes sends Jira's updated time of its issue, so 11 leaves it
+      as 10 set it, whatever the order (it used to move to the time of the last journal pushed).
+    - **Rerun**: what is pushed is kept per Jira history entry in `migration_mapping_journals` (`CHANGELOG`:
+      `history_journal_id`, `history_attachment_id`); a rerun sends only what is missing.
+    - **Staging is kept after production**, as Jan's encrypted dump, the archive of every other history item
+      (docs/PRODUCTION.md B9 step 6, unchanged). Jan's answers (2026-10-19): **Jan** is the owner; the dump stays on
+      the production server, Jan moves and secures it himself; no fixed retention, Jan decides after the handover
+      and deletes it himself.
 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
