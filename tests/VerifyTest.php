@@ -244,6 +244,16 @@ final class VerifyTest extends TestCase
         self::assertNull(verifyHistoryLastStatus([['id' => 1, 'created_on' => '2024-01-01T08:00:00Z', 'details' => []]], '3'));
     }
 
+    public function testTheHistoryFileIsNoJiraAttachment(): void
+    {
+        $file = ['filename' => 'jira-history.json', 'filesize' => 3345, 'description' => \Jira2Redmine\History\HistoryFile::DESCRIPTION];
+        self::assertTrue(verifyIsHistoryFile($file));
+        // a Jira attachment of the same name stays one
+        self::assertFalse(verifyIsHistoryFile(['filename' => 'jira-history.json', 'filesize' => 10, 'description' => '']));
+        $tool = (string)file_get_contents(__DIR__ . '/../tools/verify.php');
+        self::assertStringContainsString("if (verifyIsHistoryFile(\$attachment)) {", $tool);
+    }
+
     public function testTheChecksRunOnEverySampledIssue(): void
     {
         $tool = (string)file_get_contents(__DIR__ . '/../tools/verify.php');

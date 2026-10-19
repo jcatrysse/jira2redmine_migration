@@ -303,6 +303,10 @@ foreach ($projectKeys as $projectKey) {
         }
         $actualFiles = [];
         foreach ($rm['attachments'] ?? [] as $attachment) {
+            if (verifyIsHistoryFile($attachment)) {
+                // the migration's own file of decision 41, not a Jira attachment
+                continue;
+            }
             $actualFiles[] = [(string)$attachment['filename'], (int)$attachment['filesize']];
         }
         $normalise = static fn (array $file): array => [verifyNormaliseFilename($file[0]), $file[1]];

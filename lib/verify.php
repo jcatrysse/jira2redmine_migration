@@ -414,6 +414,18 @@ function verifyDuplicateJournals(array $journals): array
 }
 
 /**
+ * Decision 41: jira-history.json is the history step's own file (an issue whose history left a value out), not a
+ * Jira attachment; told apart from a Jira file of the same name by its description.
+ *
+ * @param array<string, mixed> $attachment one of the "attachments" of GET /issues/:id.json?include=attachments
+ */
+function verifyIsHistoryFile(array $attachment): bool
+{
+    return ($attachment['filename'] ?? null) === \Jira2Redmine\History\HistoryFile::FILENAME
+        && ($attachment['description'] ?? null) === \Jira2Redmine\History\HistoryFile::DESCRIPTION;
+}
+
+/**
  * Decision 41: Redmine's "Last updated by" is the author of the journal with the highest id. 11 pushes per issue in
  * Jira's time order, so that journal is the latest one (created_on). null when it is, else what differs.
  *
