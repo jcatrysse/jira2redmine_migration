@@ -984,6 +984,7 @@ function runJournalPushPhase(
         $pendingFiles = $history['files'] ?? [];
         foreach (PushOrder::steps($timeline) as [$kind, $item]) {
             if ($kind === 'history') {
+                /** @var list<array<string, mixed>> $item a history step holds the list of its journals' rows */
                 $first = $item[0];
                 printf(
                     "  - History, %d journal(s) on issue %s → Redmine #%d%s",
@@ -1033,6 +1034,7 @@ function runJournalPushPhase(
 
     foreach (PushOrder::steps($timeline) as [$kind, $item]) {
         if ($kind === 'history') {
+            /** @var list<array<string, mixed>> $item a history step holds the list of its journals' rows */
             if ($history !== null) {
                 pushHistorySeries($redmineClient, $pdo, $extendedApiPrefix, $item, $history);
             }
@@ -1080,7 +1082,7 @@ function runJournalPushPhase(
 }
 
 /**
- * @return array<int, array<string, mixed>>
+ * @return list<array<string, mixed>>
  */
 function fetchPushableComments(PDO $pdo): array
 {
@@ -1116,6 +1118,7 @@ function fetchPushableComments(PDO $pdo): array
         throw new RuntimeException('Failed to fetch pushable comments.');
     }
 
+    /** @var list<array<string, mixed>> $rows */
     $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $statement->closeCursor();
 
@@ -1123,7 +1126,7 @@ function fetchPushableComments(PDO $pdo): array
 }
 
 /**
- * @return array<int, array<string, mixed>>
+ * @return list<array<string, mixed>>
  */
 function fetchPushableChangelog(PDO $pdo): array
 {
@@ -1156,6 +1159,7 @@ function fetchPushableChangelog(PDO $pdo): array
         throw new RuntimeException('Failed to fetch pushable changelog entries.');
     }
 
+    /** @var list<array<string, mixed>> $rows */
     $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $statement->closeCursor();
 
@@ -1326,7 +1330,8 @@ function pushHistorySeries(Client $client, PDO $pdo, string $prefix, array $seri
         );
     }
     $history['pushed']['journals'] += count($series);
-    if ($token !== null && $stamp !== null) {
+    if ($token !== null) {
+        // $stamp is set with $token
         if ($answer['attachment_id'] === null) {
             printf("  [error] History of %s: the answer names no attachment for jira-history.json.%s", $issue['jira_issue_key'], PHP_EOL);
         } else {
@@ -1342,7 +1347,15 @@ function pushHistorySeries(Client $client, PDO $pdo, string $prefix, array $seri
  *
  * @param list<array<string, mixed>> $series
  * @param array{histories: array<string, IssueHistory>, lookups: HistoryLookups} $history
- * @return array<string, mixed>
+ * @return array{
+ *     journals: list<array{
+ *         user_id: int, created_on: string,
+ *         details: list<array{property: string, prop_key: string, old_value: ?string, value: ?string}>
+ *     }>,
+ *     attachments?: list<array{
+ *         token: string, filename: string, content_type: string, description: string, author_id: int, created_on: string
+ *     }>
+ * } HistoryRequest::body()
  */
 function historyRequestBody(array $series, array $history, ?string $token, ?string $fileIssueId): array
 {
@@ -1352,7 +1365,17 @@ function historyRequestBody(array $series, array $history, ?string $token, ?stri
         $file = ['token' => $token, 'author_id' => $stamp['author_id'], 'created_on' => $stamp['created_on']];
     }
 
-    return HistoryRequest::body(array_map(static fn (array $event): array => $event['journal'], $series), $file);
+    /**
+     * prepareHistory() keeps each IssueHistory journal under 'journal'
+     *
+     * @var list<array{
+     *     history_id: string, user_id: int, created_on: string,
+     *     details: list<array{property: string, prop_key: string, old_value: ?string, value: ?string}>
+     * }> $journals
+     */
+    $journals = array_map(static fn (array $event): array => $event['journal'], $series);
+
+    return HistoryRequest::body($journals, $file);
 }
 
 /**
@@ -1435,8 +1458,10 @@ function historyRows(PDO $pdo, string $sql): array
     if ($statement === false) {
         throw new RuntimeException('Failed to read the history lookups.');
     }
+    /** @var list<array<string, mixed>> $rows */
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    return $rows;
 }
 
 /**
@@ -1664,7 +1689,8 @@ function processCommentPush(
         }
     }
 
-    $payload = ['issue' => array_filter($issuePayload, static fn($v) => $v !== null && $v !== [])];
+    // the notes are a string, the overrides and updated_on are only set when there are some: nothing to filter out
+    $payload = ['issue' => $issuePayload];
 
     $endpoint = $useExtendedApi
         ? ExtendedApi::path($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
@@ -1811,26 +1837,28 @@ function processChangelogPush(
         $attachmentItemIds = array_values(array_unique($attachmentItemIds));
 
         // If neither attachments mapped nor a mention of attachments, skip (we don't want to pollute Redmine).
-        if (empty($journalAttachments) && !$mentionsAttachment) {
+        // $journalAttachments stays empty here (B59: only what the items name, below)
+        if (!$mentionsAttachment) {
             $msg = 'Skipped changelog push: no proposed note and no attachments to show.';
             markJournalPushSkipped($pdo, $mappingId, $msg);
             printf("  [skip] %s (jira history %s on %s)%s", $msg, $historyId, $jiraIssueKey, PHP_EOL);
             return;
         }
 
+        // past the return above the items mention an attachment
         $attachmentBlock = buildJournalAttachmentBlock($journalAttachments);
-        if ($attachmentBlock === null && $mentionsAttachment) {
+        if ($attachmentBlock === null) {
             $attachmentBlock = buildAttachmentBlockForChangelogItems($pdo, $jiraIssueId, $attachmentItemIds);
         }
 
-        if ($attachmentBlock === null && $mentionsAttachment) {
+        if ($attachmentBlock === null) {
             $msg = sprintf('WARN: Jira changelog %s mentions attachments but none were mapped.', $historyId);
             markJournalPushSkipped($pdo, $mappingId, $msg);
             printf("  [warn] %s (jira history %s on %s)%s", $msg, $historyId, $jiraIssueKey, PHP_EOL);
             return;
         }
 
-        $baseNote = $attachmentBlock ?? '';
+        $baseNote = $attachmentBlock;
     }
 
     // Add invisible migration token (if not using extended API)
@@ -1871,7 +1899,8 @@ function processChangelogPush(
         }
     }
 
-    $payload = ['issue' => array_filter($issuePayload, static fn($v) => $v !== null && $v !== [])];
+    // the notes are a string, the overrides and updated_on are only set when there are some: nothing to filter out
+    $payload = ['issue' => $issuePayload];
 
     $endpoint = $useExtendedApi
         ? ExtendedApi::path($extendedApiPrefix, sprintf('issues/%d.json', $redmineIssueId))
@@ -2177,6 +2206,7 @@ function sanitizeAttachmentFileName(string $filename): string
 }
 
 /**
+ * @param array<array-key, string> $issueAttachments Jira attachment id => upload-unique name
  * @throws JsonException
  */
 function convertJournalBodyToMarkdown(?string $bodyHtml, ?string $bodyAdf, array $issueAttachments, AdfConverter $adfConverter): string
@@ -2296,12 +2326,13 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
     $text = preg_replace_callback(
         '#https?://[^\s)\]}]+/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+)[^\s)\]}]*#i',
         function ($m) use ($attachmentsMap) {
-            $id = $m[1] ?? null;
-            if ($id === null || !isset($attachmentsMap[$id])) {
+            // the pattern's group 1 is never empty; the map holds no SharePoint links (all null above)
+            $id = $m[1];
+            if (!isset($attachmentsMap[$id])) {
                 return $m[0];
             }
             $meta = $attachmentsMap[$id];
-            return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
+            return $meta['unique'];
         },
         $text
     );
@@ -2310,12 +2341,13 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
     $text = preg_replace_callback(
         '#/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+)[^\s)\]}]*#i',
         function ($m) use ($attachmentsMap) {
-            $id = $m[1] ?? null;
-            if ($id === null || !isset($attachmentsMap[$id])) {
+            // the pattern's group 1 is never empty; the map holds no SharePoint links (all null above)
+            $id = $m[1];
+            if (!isset($attachmentsMap[$id])) {
                 return $m[0];
             }
             $meta = $attachmentsMap[$id];
-            return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
+            return $meta['unique'];
         },
         $text
     );
@@ -2324,12 +2356,13 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
     $text = preg_replace_callback(
         '#(?:/secure/attachment/|/attachment/|/attachment/content/)(\d+)#i',
         function ($m) use ($attachmentsMap) {
-            $id = $m[1] ?? null;
-            if ($id === null || !isset($attachmentsMap[$id])) {
+            // the pattern's group 1 is never empty; the map holds no SharePoint links (all null above)
+            $id = $m[1];
+            if (!isset($attachmentsMap[$id])) {
                 return $m[0];
             }
             $meta = $attachmentsMap[$id];
-            return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
+            return $meta['unique'];
         },
         $text
     );
@@ -2404,7 +2437,7 @@ function buildRedmineUserLookup(PDO $pdo): array
             continue;
         }
 
-        if (!isset($row['jira_account_id'], $row['redmine_user_id']) || $row['redmine_user_id'] === null) {
+        if (!isset($row['jira_account_id'], $row['redmine_user_id'])) {
             continue;
         }
 
@@ -2507,6 +2540,9 @@ function buildIssueUpdatedOnOverride(?string $updatedAt): ?string
     return normalizeJiraTimestamp($updatedAt);
 }
 
+/**
+ * @param array<string, mixed> $config
+ */
 function extractDefaultJournalAuthorId(array $config): ?int
 {
     $migrationConfig = $config['migration'] ?? [];
@@ -2582,6 +2618,7 @@ function extractErrorBody(ResponseInterface $response): string
 }
 
 /**
+ * @param array<string, mixed> $options
  * @throws BadResponseException
  * @throws GuzzleException
  * @throws \Random\RandomException
@@ -2682,6 +2719,7 @@ SQL;
         throw new RuntimeException('Failed to prepare journal attachments query.');
     }
     $stmt->execute(['issue_id' => $jiraIssueId]);
+    /** @var list<array<string, mixed>> $rows */
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $stmt->closeCursor();
 
@@ -2696,7 +2734,7 @@ SQL;
             'sharepoint_url' => isset($r['sharepoint_url']) && trim((string)$r['sharepoint_url']) !== ''
                 ? trim((string)$r['sharepoint_url'])
                 : null,
-            'redmine_attachment_id' => isset($r['redmine_attachment_id']) && $r['redmine_attachment_id'] !== null
+            'redmine_attachment_id' => isset($r['redmine_attachment_id'])
                 ? (int)$r['redmine_attachment_id']
                 : null,
             'created_at' => isset($r['created_at']) ? (string)$r['created_at'] : null,
@@ -2727,7 +2765,7 @@ function buildJournalAttachmentBlock(array $attachments): ?string
     $lines = [];
 
     foreach ($attachments as $att) {
-        $filename = $att['filename'] ?? ($att['jira_attachment_id'] ?? '');
+        $filename = $att['filename'];
         $sp = $att['sharepoint_url'] ?? null;
 
         if ($sp !== null && trim($sp) !== '') {
@@ -2801,7 +2839,7 @@ SQL;
             'sharepoint_url' => isset($r['sharepoint_url']) && trim((string)$r['sharepoint_url']) !== ''
                 ? trim((string)$r['sharepoint_url'])
                 : null,
-            'redmine_attachment_id' => isset($r['redmine_attachment_id']) && $r['redmine_attachment_id'] !== null
+            'redmine_attachment_id' => isset($r['redmine_attachment_id'])
                 ? (int)$r['redmine_attachment_id']
                 : null,
             'created_at' => isset($r['created_at']) ? (string)$r['created_at'] : null,
