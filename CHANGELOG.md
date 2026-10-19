@@ -86,6 +86,10 @@ All notable changes to this project. Steps to take before and after a migration 
   --any-order` compares two recordings as a set.
 
 ### Changed
+- One command line rule for all 16 scripts (decision 43): `-h`/`--help`, `-V`/`--version`, `--phases=LIST`,
+  `--skip=LIST` and the script's own options; an unknown option, an option without its value (`--phases LIST`), a
+  positional or empty argument and an empty `--phases=` or `--skip=` stop the script, also next to `--help`. Before,
+  each script kept the rule of its own copy (SCRIPTS.md lists what changed).
 - Phase 6 (plan M1), no change of behaviour: the 16 scripts share their start, option parsing (each script's own
   rule kept, `src/Cli/ScriptCommandLines.php`), phases, configuration sections, database, clients and clock through
   `src/`; about 2,300 lines of copies are gone. All 16 are under PHPStan level 8 (one analysis per script, a baseline
@@ -124,6 +128,12 @@ All notable changes to this project. Steps to take before and after a migration 
   code; Outlook safe links in mailed comments become the link itself.
 
 ### Fixed
+- A PCRE error (a backtrack limit, text that is not valid UTF-8) or a value a field needs that cannot be used no
+  longer stops 08, 10 or 11 with a TypeError or a PHP warning: the text stays as it was or the field is skipped, with
+  a counted `[warn] ... (decision 43).` line and a summary line (`src/Cli/Fallbacks.php`). PHPStan runs without a
+  baseline (decision 43).
+- 08 proposed every custom field without a stored choice as "for all projects", reading a variable that was never
+  set; now only a field without proposed projects (B86, decision 43).
 - Redmine's "Last updated by" is the author of the journal with the highest id: 11 pushed every comment before
   every changelog entry, so on 222 of 1,870 issues (7.0 test run) it was not the last person who acted in Jira.
   11 now pushes per issue in Jira's time order, the history in between (decision 41, option C).

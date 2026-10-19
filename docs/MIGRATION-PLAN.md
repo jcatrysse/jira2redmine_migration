@@ -645,6 +645,34 @@ Jan's decision on the default author (2026-10-19, relayed by the coordinator):
       `rails runner 'puts User.anonymous.id'` into `J2R_DEFAULT_AUTHOR_ID`. The Extended API's user check
       (`User.where(id:)`) takes it. Proven on 5.1 and 7.0 (Results, "Decision 42").
 
+Jan's decisions on what phase 6 left (2026-10-19 evening, multiple choice, relayed by the coordinator):
+
+43. **The three open points of phase 6, each a change of behaviour, made.**
+    - **One command line rule for all 16 scripts** (Jan: yes). `-h`/`--help`, `-V`/`--version`, `--phases=LIST`,
+      `--skip=LIST` and the script's own options; anything else stops the script with an error, also next to `--help`:
+      an unknown option (`--` too), an option without its value, a positional or an empty argument, an empty `--phases=`
+      or `--skip=` (`src/Cli/CommandLine.php`, SCRIPTS.md "The command line and the shared code"). What changed per
+      script is listed in `tests/CommandLineCompatibilityTest.php` against the recorded copies: 09 and 11 to 16 take
+      `-h` and `-V`; 01 to 03 no longer take `--phases LIST` (space), "--" no longer ends the options in 01 to 07, 10
+      and 12 no longer leave out an empty argument, 10 no longer runs every phase on an empty `--phases=`. Within the
+      rule one choice was mine: `--phases LIST` is an error everywhere, since every usage text and the runbook give
+      `--phases=LIST` only. Commit `613f240`.
+    - **The 12 PHPStan baseline errors fixed** (Jan: fix them). A PCRE error keeps the text as it was, a value a field
+      needs that cannot be used skips the field; each time one line `[warn] <Jira issue or field>, <field>: ...
+      (decision 43).`, counted in the summary line `Fallbacks (decision 43, ...): N.` of 08, 10 and 11
+      (`src/Cli/Fallbacks.php`). Per spot: 08, a parent created in the run whose Redmine answer has no enumerations: its
+      options cannot be named, as before, now with the warning instead of PHP's; 08, the association update of a
+      depending field whose parent's enumerations cannot be decoded or read: `value_dependencies` left out of that
+      update (projects and trackers still go); 10, a label compared with an option: compared as it is (10's copy of
+      `buildRedmineAttachmentFilename`, two of the three entries, was never called and is gone); 11, the attachment
+      links of a comment: the text stays as converted; 11, a file name in an attachment block: named `attachment`, the
+      name `AttachmentNames::token()` gives such a file, so the rewrite to the Redmine name still finds it (keeping the
+      bytes would have broken the request's JSON). No baseline is left. Commit `fa2bec8`.
+    - **B86 fixed** (Jan: fix it): the stored choice, else "for all projects" only for a field without proposed projects
+      (`FieldScope::isForAll`). Commit `62e0271`.
+    - **F6 stays out**: production runs Redmine on `http://127.0.0.1:8080`, without a sub-path.
+    Proof: Results, "Decision 43, the proof" (the proxy runs follow).
+
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
 Taken by B2 on the coordinator's instruction (recommended option, no waiting); each can be reversed.
