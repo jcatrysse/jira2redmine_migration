@@ -1,7 +1,10 @@
 <?php
-/** @noinspection PhpArrayIndexImmediatelyRewrittenInspection */
-/** @noinspection DuplicatedCode */
-/** @noinspection SpellCheckingInspection */
+
+/**
+ * @noinspection PhpArrayIndexImmediatelyRewrittenInspection
+ * @noinspection DuplicatedCode
+ * @noinspection SpellCheckingInspection
+ */
 
 declare(strict_types=1);
 
@@ -23,6 +26,7 @@ use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
 use Jira2Redmine\Time\Clock;
+
 const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
     'jira' => 'Synchronise Jira attachment metadata with the migration mapping table.',
@@ -221,8 +225,7 @@ function runAttachmentUploadPhase(
     ?int $uploadLimit,
     bool $useExtendedApi,
     string $extendedApiPrefix
-): void
-{
+): void {
     $statusBreakdown = summariseAttachmentStatuses($pdo);
     $enabledPendingUpload = countEnabledPendingUpload($pdo);
 
@@ -817,7 +820,10 @@ function downloadPendingJiraAttachments(Client $client, PDO $pdo, array $config,
             }
         })->call($client), [
             'concurrency' => $downloadConcurrency,
-            'fulfilled' => function ($response, int $index) use (
+            'fulfilled' => function (
+                $response,
+                int $index
+            ) use (
                 &$downloaded,
                 &$processed,
                 $rows,
@@ -841,7 +847,10 @@ function downloadPendingJiraAttachments(Client $client, PDO $pdo, array $config,
                 $processed++;
                 printAttachmentProgress($processed, $queued);
             },
-            'rejected' => function ($reason, int $index) use (
+            'rejected' => function (
+                $reason,
+                int $index
+            ) use (
                 &$failed,
                 &$processed,
                 $rows,
@@ -904,8 +913,7 @@ function uploadPendingAttachmentsToRedmine(
     string $extendedApiPrefix = '',
     array $userLookup = [],
     ?int $defaultAuthorId = null
-): array
-{
+): array {
     $sql = <<<SQL
         SELECT
             map.mapping_id,
@@ -1795,4 +1803,3 @@ function extractRedmineAttachmentIdFromToken(string $token): ?int
     $id = (int)$prefix;
     return $id > 0 ? $id : null;
 }
-

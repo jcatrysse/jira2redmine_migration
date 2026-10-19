@@ -1,5 +1,9 @@
 <?php
-/** @noinspection DuplicatedCode */
+
+/**
+ * @noinspection DuplicatedCode
+ */
+
 /** @noinspection SpellCheckingInspection */
 
 declare(strict_types=1);
@@ -2710,4 +2714,3 @@ function normalizeString(mixed $value, int $maxLength): ?string
 
     return substr($trimmed, 0, $maxLength);
 }
-

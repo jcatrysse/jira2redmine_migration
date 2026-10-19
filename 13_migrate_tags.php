@@ -1,5 +1,8 @@
 <?php
-/** @noinspection DuplicatedCode */
+
+/**
+ * @noinspection DuplicatedCode
+ */
 
 declare(strict_types=1);
 

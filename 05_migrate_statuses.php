@@ -1,6 +1,10 @@
-<?php /** @noinspection PhpArrayIndexImmediatelyRewrittenInspection */
-/** @noinspection DuplicatedCode */
-/** @noinspection SpellCheckingInspection */
+<?php
+
+/**
+ * @noinspection PhpArrayIndexImmediatelyRewrittenInspection
+ * @noinspection DuplicatedCode
+ * @noinspection SpellCheckingInspection
+ */
 
 declare(strict_types=1);
 

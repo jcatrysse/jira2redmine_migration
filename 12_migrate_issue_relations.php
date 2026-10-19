@@ -1,6 +1,9 @@
 <?php
-/** @noinspection PhpArrayIndexImmediatelyRewrittenInspection */
-/** @noinspection DuplicatedCode */
+
+/**
+ * @noinspection PhpArrayIndexImmediatelyRewrittenInspection
+ * @noinspection DuplicatedCode
+ */
 
 declare(strict_types=1);
 
@@ -551,8 +554,7 @@ function mapJiraRelationToRedmineType(
     ?string $inward,
     array $customMappings,
     array $supportedRelationTypes
-): array
-{
+): array {
     $relationType = null;
     $note = null;
 

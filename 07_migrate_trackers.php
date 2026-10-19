@@ -1,6 +1,10 @@
-<?php /** @noinspection PhpArrayIndexImmediatelyRewrittenInspection */
-/** @noinspection DuplicatedCode */
-/** @noinspection SpellCheckingInspection */
+<?php
+
+/**
+ * @noinspection PhpArrayIndexImmediatelyRewrittenInspection
+ * @noinspection DuplicatedCode
+ * @noinspection SpellCheckingInspection
+ */
 
 declare(strict_types=1);
 
@@ -1011,11 +1015,13 @@ function buildRedmineTrackerLookup(PDO $pdo): array
             'default_status_id' => $defaultStatusId,
         ];
 
-        foreach ([
+        foreach (
+            [
             $row['staging_name'] ?? null,
             $row['proposed_redmine_name'] ?? null,
             $row['jira_issue_type_name'] ?? null,
-        ] as $candidateName) {
+            ] as $candidateName
+        ) {
             $registerTracker($candidateName, $payload);
         }
     }
@@ -1071,8 +1077,7 @@ function computeTrackerAutomationStateHash(
     ?string $proposedDescription,
     ?int $proposedDefaultStatusId,
     ?string $notes
-): string
-{
+): string {
     $normalizedProjectIds = normalizeProjectIdList($proposedProjectIds);
 
     $payload = [
@@ -1583,11 +1588,13 @@ function buildRedmineProjectTrackerSnapshot(PDO $pdo): array
         }
 
         $projectName = null;
-        foreach ([
+        foreach (
+            [
             $row['staging_name'] ?? null,
             $row['proposed_name'] ?? null,
             $row['jira_project_id'] ?? null,
-        ] as $candidate) {
+            ] as $candidate
+        ) {
             $projectName = $candidate !== null ? normalizeString((string)$candidate, 255) : null;
             if ($projectName !== null) {
                 break;

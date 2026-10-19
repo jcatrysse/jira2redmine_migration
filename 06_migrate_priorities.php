@@ -1,6 +1,10 @@
-<?php /** @noinspection PhpArrayIndexImmediatelyRewrittenInspection */
-/** @noinspection DuplicatedCode */
-/** @noinspection SpellCheckingInspection */
+<?php
+
+/**
+ * @noinspection PhpArrayIndexImmediatelyRewrittenInspection
+ * @noinspection DuplicatedCode
+ * @noinspection SpellCheckingInspection
+ */
 
 declare(strict_types=1);
 
@@ -617,8 +621,7 @@ function computePriorityAutomationStateHash(
     ?bool $proposedIsDefault,
     ?int $proposedPosition,
     ?string $notes
-): string
-{
+): string {
     $payload = [
         'redmine_priority_id' => $redminePriorityId,
         'migration_status' => $migrationStatus,

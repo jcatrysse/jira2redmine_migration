@@ -1,5 +1,9 @@
 <?php
-/** @noinspection DuplicatedCode */
+
+/**
+ * @noinspection DuplicatedCode
+ */
+
 /** @noinspection SpellCheckingInspection */
 
 declare(strict_types=1);

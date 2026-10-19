@@ -1,5 +1,9 @@
 <?php
-/** @noinspection DuplicatedCode */
+
+/**
+ * @noinspection DuplicatedCode
+ */
+
 /** @noinspection SpellCheckingInspection */
 
 declare(strict_types=1);
@@ -348,8 +352,7 @@ function executeRedmineUserPush(
     array $pendingOperations,
     string $defaultStatus,
     ?int $authSourceId
-): array
-{
+): array {
     $updateStatement = $pdo->prepare(<<<SQL
         UPDATE migration_mapping_users
         SET

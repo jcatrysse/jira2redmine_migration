@@ -1,7 +1,10 @@
 <?php
-/** @noinspection PhpArrayIndexImmediatelyRewrittenInspection */
-/** @noinspection DuplicatedCode */
-/** @noinspection SpellCheckingInspection */
+
+/**
+ * @noinspection PhpArrayIndexImmediatelyRewrittenInspection
+ * @noinspection DuplicatedCode
+ * @noinspection SpellCheckingInspection
+ */
 
 declare(strict_types=1);
 
@@ -31,6 +34,7 @@ use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
 use Jira2Redmine\Time\Clock;
+
 const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.1';
 const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
 const JIRA_RATE_LIMIT_BASE_DELAY_MS = 1000;
@@ -851,12 +855,12 @@ function populateProposedJournalNotes(PDO $pdo, int $commentWindow = 0): array
                 if ($attachmentBlock !== null) {
                     $note = $attachmentBlock;
                 } else {
-                $note = '';
-                $warningNote = sprintf(
-                    'WARN: Jira changelog %s%s mentions attachments but none were mapped.',
-                    $row['jira_entity_id'],
-                    $createdAt !== null ? ' at ' . $createdAt : ''
-                );
+                    $note = '';
+                    $warningNote = sprintf(
+                        'WARN: Jira changelog %s%s mentions attachments but none were mapped.',
+                        $row['jira_entity_id'],
+                        $createdAt !== null ? ' at ' . $createdAt : ''
+                    );
                 }
             } else {
                 $note = '';
@@ -929,8 +933,7 @@ function runJournalPushPhase(
     string $extendedApiPrefix,
     bool $withJournals = true,
     bool $withHistory = false
-): void
-{
+): void {
     $candidateComments = $withJournals ? fetchPushableComments($pdo) : [];
     $candidateChangelogs = $withJournals ? fetchPushableChangelog($pdo) : [];
     $redmineClient = ClientFactory::redmine(ConfigValue::section($config, 'redmine'));
@@ -1502,8 +1505,7 @@ function processCommentPush(
     string $extendedApiPrefix,
     AdfConverter $adfConverter,
     int $commentWindow = 0
-): void
-{
+): void {
     $mappingId = (int)$comment['mapping_id'];
     $jiraIssueId = (string)$comment['jira_issue_id'];
     $jiraIssueKey = (string)$comment['jira_issue_key'];
@@ -1635,7 +1637,8 @@ function processCommentPush(
         if ($journalId !== null) {
             // success, mark and continue
             markJournalPushSuccess($pdo, $mappingId, $journalId, $note);
-            printf("  [journal] (extended api) Jira %s %s → Redmine issue #%d, journal #%d%s",
+            printf(
+                "  [journal] (extended api) Jira %s %s → Redmine issue #%d, journal #%d%s",
                 'comment',
                 $jiraCommentId,
                 $redmineIssueId,
@@ -1677,8 +1680,7 @@ function processChangelogPush(
     ?int $defaultAuthorId,
     bool $useExtendedApi,
     string $extendedApiPrefix
-): void
-{
+): void {
     $mappingId = (int)$history['mapping_id'];
     $jiraIssueId = (string)$history['jira_issue_id'];
     $jiraIssueKey = (string)$history['jira_issue_key'];
@@ -1709,22 +1711,24 @@ function processChangelogPush(
                 $items = [];
             }
         }
-    $mentionsAttachment = false;
-    $attachmentItemIds = [];
-    if (is_array($items)) {
-        foreach ($items as $it) {
-            if (!is_array($it) || !isset($it['field'])) continue;
-            $f = strtolower((string)$it['field']);
-            if (str_contains($f, 'attachment')) {
-                $mentionsAttachment = true;
-                $attachmentId = $it['to'] ?? null;
-                if ($attachmentId !== null && is_scalar($attachmentId) && preg_match('/^\d+$/', (string)$attachmentId)) {
-                    $attachmentItemIds[] = (string)$attachmentId;
+        $mentionsAttachment = false;
+        $attachmentItemIds = [];
+        if (is_array($items)) {
+            foreach ($items as $it) {
+                if (!is_array($it) || !isset($it['field'])) {
+                    continue;
+                }
+                $f = strtolower((string)$it['field']);
+                if (str_contains($f, 'attachment')) {
+                    $mentionsAttachment = true;
+                    $attachmentId = $it['to'] ?? null;
+                    if ($attachmentId !== null && is_scalar($attachmentId) && preg_match('/^\d+$/', (string)$attachmentId)) {
+                        $attachmentItemIds[] = (string)$attachmentId;
+                    }
                 }
             }
         }
-    }
-    $attachmentItemIds = array_values(array_unique($attachmentItemIds));
+        $attachmentItemIds = array_values(array_unique($attachmentItemIds));
 
         // If neither attachments mapped nor a mention of attachments, skip (we don't want to pollute Redmine).
         if (empty($journalAttachments) && !$mentionsAttachment) {
@@ -1828,7 +1832,8 @@ function processChangelogPush(
 
         if ($journalId !== null) {
             markJournalPushSuccess($pdo, $mappingId, $journalId);
-            printf("  [journal] (extended api) Jira history %s → Redmine issue #%d, journal #%d%s",
+            printf(
+                "  [journal] (extended api) Jira history %s → Redmine issue #%d, journal #%d%s",
                 $historyId,
                 $redmineIssueId,
                 $journalId,
@@ -1880,7 +1885,9 @@ function fetchLatestJournalId(Client $client, int $redmineIssueId, ?string $toke
     $timeCandidates = [];
 
     foreach ($journals as $journal) {
-        if (!is_array($journal) || !isset($journal['id'])) continue;
+        if (!is_array($journal) || !isset($journal['id'])) {
+            continue;
+        }
 
         $jid = (int)$journal['id'];
         $latestId = $latestId === null || $jid > $latestId ? $jid : $latestId;
@@ -2194,7 +2201,9 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
         '#https?://[^\s)\]}]+/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+)[^\s)\]}]*#i',
         function ($m) use ($attachmentsMap) {
             $id = $m[1] ?? null;
-            if ($id === null || !isset($attachmentsMap[$id])) return $m[0];
+            if ($id === null || !isset($attachmentsMap[$id])) {
+                return $m[0];
+            }
             $meta = $attachmentsMap[$id];
             return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
         },
@@ -2206,7 +2215,9 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
         '#/rest/api/\d+/attachment/(?:content|thumbnail)/(\d+)[^\s)\]}]*#i',
         function ($m) use ($attachmentsMap) {
             $id = $m[1] ?? null;
-            if ($id === null || !isset($attachmentsMap[$id])) return $m[0];
+            if ($id === null || !isset($attachmentsMap[$id])) {
+                return $m[0];
+            }
             $meta = $attachmentsMap[$id];
             return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
         },
@@ -2218,7 +2229,9 @@ function normalizeJournalAttachmentLinks(string $text, array $issueAttachments):
         '#(?:/secure/attachment/|/attachment/|/attachment/content/)(\d+)#i',
         function ($m) use ($attachmentsMap) {
             $id = $m[1] ?? null;
-            if ($id === null || !isset($attachmentsMap[$id])) return $m[0];
+            if ($id === null || !isset($attachmentsMap[$id])) {
+                return $m[0];
+            }
             $meta = $attachmentsMap[$id];
             return !empty($meta['sharepoint']) ? $meta['sharepoint'] : $meta['unique'];
         },
@@ -2601,7 +2614,9 @@ SQL;
  */
 function buildJournalAttachmentBlock(array $attachments): ?string
 {
-    if ($attachments === []) return null;
+    if ($attachments === []) {
+        return null;
+    }
 
     $lines = [];
 
@@ -2621,7 +2636,9 @@ function buildJournalAttachmentBlock(array $attachments): ?string
             // fallback sanitization (should not be needed if your lib exports buildUploadUniqueName)
             $san = preg_replace('/[^A-Za-z0-9._-]/u', '_', $filename);
             $san = trim($san, '_');
-            if ($san === '') $san = 'attachment';
+            if ($san === '') {
+                $san = 'attachment';
+            }
             $unique = $att['jira_attachment_id'] . '__' . $san;
         }
 
@@ -2739,7 +2756,9 @@ function markJournalPushSkipped(PDO $pdo, int $mappingId, string $message = null
     SQL;
 
     $stmt = $pdo->prepare($sql);
-    if ($stmt === false) throw new RuntimeException('Failed to prepare journal skipped update.');
+    if ($stmt === false) {
+        throw new RuntimeException('Failed to prepare journal skipped update.');
+    }
 
     $stmt->execute([
         'notes' => $message,

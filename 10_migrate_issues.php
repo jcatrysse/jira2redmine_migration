@@ -1,7 +1,10 @@
 <?php
-/** @noinspection PhpArrayIndexImmediatelyRewrittenInspection */
-/** @noinspection DuplicatedCode */
-/** @noinspection SpellCheckingInspection */
+
+/**
+ * @noinspection PhpArrayIndexImmediatelyRewrittenInspection
+ * @noinspection DuplicatedCode
+ * @noinspection SpellCheckingInspection
+ */
 
 declare(strict_types=1);
 
@@ -1378,16 +1381,16 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
                     : null;
 
                 if ($customFieldWarnings !== []) {
-                $message = sprintf('Custom field values could not be normalised for fields: %s.', implode(', ', array_unique($customFieldWarnings)));
-                $notes[] = $message;
-                $blockingNotes[] = $message;
+                    $message = sprintf('Custom field values could not be normalised for fields: %s.', implode(', ', array_unique($customFieldWarnings)));
+                    $notes[] = $message;
+                    $blockingNotes[] = $message;
+                }
+                if ($cascadingWarnings !== []) {
+                    $message = sprintf('Cascading selection could not be mapped for fields: %s.', implode(', ', array_unique($cascadingWarnings)));
+                    $notes[] = $message;
+                    $blockingNotes[] = $message;
+                }
             }
-            if ($cascadingWarnings !== []) {
-                $message = sprintf('Cascading selection could not be mapped for fields: %s.', implode(', ', array_unique($cascadingWarnings)));
-                $notes[] = $message;
-                $blockingNotes[] = $message;
-            }
-        }
         }
 
         if ($row['redmine_issue_id'] !== null) {
@@ -1529,8 +1532,7 @@ function runIssuePushPhase(
     ?int $defaultIssueUserId,
     ?string $subtaskBehavior,
     ?int $subtaskOpenParentStatusId
-): void
-{
+): void {
     $creationCandidates = fetchIssueCreationCandidates($pdo);
     $rewriteCandidates = fetchIssueRewriteCandidates($pdo);
     $updateCandidates = fetchIssueUpdateCandidates($pdo);
@@ -3132,7 +3134,8 @@ function buildRedmineAttachmentFilename(string $jiraAttachmentId, string $origin
 /**
  * @return array<string, array{parent_field_id: int, child_field_id: int, child_lookup: array<string, array{parent_option_id: int|null, child_option_id: int|null, parent_label: string, child_label: string}>, child_label_lookup: array<string, array<int,string>>, parent_options: array<string,int>, child_options: array<string,int>, parent_jira_options: array<string,int>}>|array{}
  */
-function buildCascadingFieldIndex(PDO $pdo): array {
+function buildCascadingFieldIndex(PDO $pdo): array
+{
     $sql = <<<SQL
         SELECT
             child.jira_field_id,
@@ -3165,20 +3168,30 @@ function buildCascadingFieldIndex(PDO $pdo): array {
     $index = [];
     while (true) {
         $row = $statement->fetch(PDO::FETCH_ASSOC);
-        if ($row === false) break;
+        if ($row === false) {
+            break;
+        }
 
         $jiraFieldId = isset($row['jira_field_id']) ? (string)$row['jira_field_id'] : '';
-        if ($jiraFieldId === '') continue;
+        if ($jiraFieldId === '') {
+            continue;
+        }
 
         $allowedValues = decodeJsonColumn($row['jira_allowed_values'] ?? null);
-        if (!is_array($allowedValues)) continue;
+        if (!is_array($allowedValues)) {
+            continue;
+        }
 
         $parentRedmineFieldId = isset($row['parent_redmine_custom_field_id']) ? (int)$row['parent_redmine_custom_field_id'] : null;
         $childRedmineFieldId = isset($row['child_redmine_custom_field_id']) ? (int)$row['child_redmine_custom_field_id'] : null;
-        if ($parentRedmineFieldId === null || $childRedmineFieldId === null) continue;
+        if ($parentRedmineFieldId === null || $childRedmineFieldId === null) {
+            continue;
+        }
 
         $descriptor = parseCascadingAllowedValues($allowedValues);
-        if ($descriptor === null) continue;
+        if ($descriptor === null) {
+            continue;
+        }
 
         // decode enumerations for child and parent (Redmine option lists)
         $childEnums = decodeJsonColumn($row['child_redmine_custom_field_enumerations'] ?? null);
@@ -3188,10 +3201,16 @@ function buildCascadingFieldIndex(PDO $pdo): array {
         $childOptions = [];
         if (is_array($childEnums)) {
             foreach ($childEnums as $e) {
-                if (!is_array($e)) continue;
-                if (!isset($e['name']) && !isset($e['label'])) continue;
+                if (!is_array($e)) {
+                    continue;
+                }
+                if (!isset($e['name']) && !isset($e['label'])) {
+                    continue;
+                }
                 $name = isset($e['name']) ? (string)$e['name'] : (string)$e['label'];
-                if (!isset($e['id']) || $e['id'] === null) continue;
+                if (!isset($e['id']) || $e['id'] === null) {
+                    continue;
+                }
                 $id = (string)$e['id'];
                 $childOptions[ normalizeLabelKey($name) ] = $id;
             }
@@ -3200,10 +3219,16 @@ function buildCascadingFieldIndex(PDO $pdo): array {
         $parentOptions = [];
         if (is_array($parentEnums)) {
             foreach ($parentEnums as $e) {
-                if (!is_array($e)) continue;
-                if (!isset($e['name']) && !isset($e['label'])) continue;
+                if (!is_array($e)) {
+                    continue;
+                }
+                if (!isset($e['name']) && !isset($e['label'])) {
+                    continue;
+                }
                 $name = isset($e['name']) ? (string)$e['name'] : (string)$e['label'];
-                if (!isset($e['id']) || $e['id'] === null) continue;
+                if (!isset($e['id']) || $e['id'] === null) {
+                    continue;
+                }
                 $id = (string)$e['id'];
                 $parentOptions[ normalizeLabelKey($name) ] = $id;
             }
@@ -3232,8 +3257,12 @@ function buildCascadingFieldIndex(PDO $pdo): array {
 
             // also register reversed mapping: child label -> parent option id(s)
             if ($normChildLabel !== '') {
-                if (!isset($childLabelLookup[$normChildLabel])) $childLabelLookup[$normChildLabel] = [];
-                if ($parentOptionId !== null) $childLabelLookup[$normChildLabel][] = $parentOptionId;
+                if (!isset($childLabelLookup[$normChildLabel])) {
+                    $childLabelLookup[$normChildLabel] = [];
+                }
+                if ($parentOptionId !== null) {
+                    $childLabelLookup[$normChildLabel][] = $parentOptionId;
+                }
             }
         }
 
@@ -3472,8 +3501,7 @@ function buildMappedCustomFieldPayload(
     array $issueAttachments,
     AdfConverter $adfConverter,
     array &$warnings = []
-): array
-{
+): array {
     if ($mappingIndex === []) {
         return [];
     }
@@ -3661,8 +3689,7 @@ function normalizeCustomFieldValue(
     bool $isMultiple,
     array $enumerationLookup,
     mixed $rawValue
-): array|string|null
-{
+): array|string|null {
     // Special case: Jira label-manager object { labels: [...] }
     $labelsObject = extractJiraLabelsObject($rawValue);
     if ($labelsObject !== null) {
@@ -3934,7 +3961,9 @@ function extractJiraCustomFieldString(mixed $value): ?string
 {
     if (is_string($value) || is_int($value) || is_float($value)) {
         $trimmed = trim((string)$value);
-        if ($trimmed === '' || strtolower($trimmed) === 'none') return null;
+        if ($trimmed === '' || strtolower($trimmed) === 'none') {
+            return null;
+        }
         return $trimmed;
     }
 
@@ -3965,7 +3994,9 @@ function extractJiraCustomFieldString(mixed $value): ?string
                 fn($s) => strtolower($s) !== 'none'
             ));
 
-            if (count($labels) === 0) return null;
+            if (count($labels) === 0) {
+                return null;
+            }
 
             // Redmine enumeration is single value -> pak de eerste
             // (of implode(', ', $labels) als je toch multi wil bewaren)
@@ -3975,7 +4006,9 @@ function extractJiraCustomFieldString(mixed $value): ?string
         foreach (['value', 'name', 'label', 'id'] as $k) {
             if (isset($value[$k])) {
                 $candidate = trim((string)$value[$k]);
-                if ($candidate === '' || strtolower($candidate) === 'none') return null;
+                if ($candidate === '' || strtolower($candidate) === 'none') {
+                    return null;
+                }
                 return $candidate;
             }
         }
@@ -4871,8 +4904,11 @@ function markUploadedAttachmentsAsSuccess(PDO $pdo, array $attachments, int $red
     }
 }
 
-function normalizeJiraEmptyValue(mixed $v): mixed {
-    if ($v === null) return null;
+function normalizeJiraEmptyValue(mixed $v): mixed
+{
+    if ($v === null) {
+        return null;
+    }
 
     if (is_string($v)) {
         $t = trim($v);
@@ -4902,7 +4938,9 @@ function normalizeJiraEmptyValue(mixed $v): mixed {
             $v['labels']
         ), fn($s) => $s !== '' && strtolower($s) !== 'none');
 
-        if (count($labels) === 0) return null;
+        if (count($labels) === 0) {
+            return null;
+        }
     }
 
     if ($v === []) {
@@ -4915,7 +4953,9 @@ function normalizeJiraEmptyValue(mixed $v): mixed {
 function renderAdfNodeToMarkdown(array $node): string
 {
     $type = $node['type'] ?? null;
-    if (!is_string($type)) return '';
+    if (!is_string($type)) {
+        return '';
+    }
 
     switch ($type) {
         case 'doc':
@@ -4933,8 +4973,12 @@ function renderAdfNodeToMarkdown(array $node): string
 
         case 'heading':
             $level = (int)($node['attrs']['level'] ?? 1);
-            if ($level < 1) $level = 1;
-            if ($level > 6) $level = 6;
+            if ($level < 1) {
+                $level = 1;
+            }
+            if ($level > 6) {
+                $level = 6;
+            }
             $txt = trim(renderAdfChildren($node, ''));
             return str_repeat('#', $level) . ' ' . $txt . "\n\n";
 
@@ -4982,17 +5026,23 @@ function renderAdfNodeToMarkdown(array $node): string
 function renderAdfChildren(array $node, string $listPrefix): string
 {
     $content = $node['content'] ?? null;
-    if (!is_array($content)) return '';
+    if (!is_array($content)) {
+        return '';
+    }
 
     $out = '';
     foreach ($content as $child) {
-        if (!is_array($child)) continue;
+        if (!is_array($child)) {
+            continue;
+        }
 
         $childType = $child['type'] ?? null;
 
         if ($listPrefix !== '' && $childType === 'listItem') {
             $item = trim(renderAdfNodeToMarkdown($child));
-            if ($item === '') continue;
+            if ($item === '') {
+                continue;
+            }
 
             // indent eventuele multiline items
             $lines = preg_split("/\r?\n/", $item);
@@ -5000,7 +5050,9 @@ function renderAdfChildren(array $node, string $listPrefix): string
             $first = array_shift($lines);
             $out .= $listPrefix . $first . "\n";
             foreach ($lines as $l) {
-                if (trim($l) === '') continue;
+                if (trim($l) === '') {
+                    continue;
+                }
                 $out .= '  ' . $l . "\n";
             }
             $out .= "\n";
@@ -5016,25 +5068,37 @@ function renderAdfChildren(array $node, string $listPrefix): string
 function renderAdfTableToMarkdown(array $tableNode): string
 {
     $rows = $tableNode['content'] ?? null;
-    if (!is_array($rows) || $rows === []) return '';
+    if (!is_array($rows) || $rows === []) {
+        return '';
+    }
 
     // Eerst grid bouwen met colspans
     $grid = [];
     $maxCols = 0;
 
     foreach ($rows as $row) {
-        if (!is_array($row) || (($row['type'] ?? null) !== 'tableRow')) continue;
+        if (!is_array($row) || (($row['type'] ?? null) !== 'tableRow')) {
+            continue;
+        }
         $cells = $row['content'] ?? [];
-        if (!is_array($cells)) $cells = [];
+        if (!is_array($cells)) {
+            $cells = [];
+        }
 
         $line = [];
         foreach ($cells as $cell) {
-            if (!is_array($cell)) continue;
+            if (!is_array($cell)) {
+                continue;
+            }
             $cellType = $cell['type'] ?? null;
-            if ($cellType !== 'tableCell' && $cellType !== 'tableHeader') continue;
+            if ($cellType !== 'tableCell' && $cellType !== 'tableHeader') {
+                continue;
+            }
 
             $colspan = (int)($cell['attrs']['colspan'] ?? 1);
-            if ($colspan < 1) $colspan = 1;
+            if ($colspan < 1) {
+                $colspan = 1;
+            }
 
             $txt = trim(renderAdfChildren($cell, ''));
             $txt = preg_replace("/\s+/", ' ', $txt) ?? $txt;
@@ -5051,11 +5115,15 @@ function renderAdfTableToMarkdown(array $tableNode): string
         $grid[] = $line;
     }
 
-    if ($grid === []) return '';
+    if ($grid === []) {
+        return '';
+    }
 
     // Normalize: elke rij evenveel cols
     foreach ($grid as $i => $line) {
-        while (count($line) < $maxCols) $line[] = '';
+        while (count($line) < $maxCols) {
+            $line[] = '';
+        }
         $grid[$i] = $line;
     }
 
@@ -5063,7 +5131,10 @@ function renderAdfTableToMarkdown(array $tableNode): string
     $header = $grid[0];
     $hasRealHeaderText = false;
     foreach ($header as $c) {
-        if (trim($c) !== '') { $hasRealHeaderText = true; break; }
+        if (trim($c) !== '') {
+            $hasRealHeaderText = true;
+            break;
+        }
     }
     if (!$hasRealHeaderText) {
         // maak generieke header
@@ -5169,7 +5240,9 @@ SQL;
     $attachmentsMap = [];
     foreach ($rows as $r) {
         $aid = (string)($r['aid'] ?? '');
-        if ($aid === '') continue;
+        if ($aid === '') {
+            continue;
+        }
 
         $orig = isset($r['orig_name']) ? (string)$r['orig_name'] : '';
         $unique = buildUploadUniqueName($aid, $orig);
@@ -5184,8 +5257,12 @@ SQL;
         if (!$isImage && isset($r['mime_type'])) {
             $mt = strtolower(trim((string)$r['mime_type']));
             if ($mt !== '') {
-                if (str_starts_with($mt, 'image/')) $isImage = true;
-                if ($mt === 'image/svg+xml') $isImage = true;
+                if (str_starts_with($mt, 'image/')) {
+                    $isImage = true;
+                }
+                if ($mt === 'image/svg+xml') {
+                    $isImage = true;
+                }
             }
         }
 
@@ -5209,7 +5286,9 @@ SQL;
 function descriptionContainsAttachmentReference(string $description, array $issueAttachments): bool
 {
     $desc = $description;
-    if (trim($desc) === '') return false;
+    if (trim($desc) === '') {
+        return false;
+    }
 
     // specific patterns (no fallback)
     $specific = [
@@ -5221,27 +5300,35 @@ function descriptionContainsAttachmentReference(string $description, array $issu
         '#/attachments/(\d+)#i'
     ];
     foreach ($specific as $p) {
-        if (preg_match($p, $desc)) return true;
+        if (preg_match($p, $desc)) {
+            return true;
+        }
     }
 
     // explicit 'attachment:123__...' tokens
     if (preg_match_all('/\battachment:(\d+)__/i', $desc, $m)) {
         foreach ($m[1] as $candidate) {
-            if (isset($issueAttachments[$candidate])) return true;
+            if (isset($issueAttachments[$candidate])) {
+                return true;
+            }
         }
     }
 
     // bare unique filenames '1234__foo'
     if (preg_match_all('/\b(\d+)__/i', $desc, $m)) {
         foreach ($m[1] as $candidate) {
-            if (isset($issueAttachments[$candidate])) return true;
+            if (isset($issueAttachments[$candidate])) {
+                return true;
+            }
         }
     }
 
     // numeric fallback: only accept if actually one of this issue's attachments
     if (preg_match_all('#\b(\d+)\b#', $desc, $m)) {
         foreach ($m[1] as $candidate) {
-            if (isset($issueAttachments[$candidate])) return true;
+            if (isset($issueAttachments[$candidate])) {
+                return true;
+            }
         }
     }
 
@@ -5251,7 +5338,8 @@ function descriptionContainsAttachmentReference(string $description, array $issu
 /**
  * Normaliseer label voor vergelijkingen: lowercase, NBSP->space, collapse whitespace, trim.
  */
-function normalizeLabelKey(string $s): string {
+function normalizeLabelKey(string $s): string
+{
     // NBSP -> normale spatie
     $s = str_replace("\xc2\xa0", ' ', $s);
     // trim and collapse whitespace
@@ -5279,8 +5367,12 @@ function cleanCustomFieldEntries(array $entries): array
     $out = [];
 
     foreach ($entries as $entry) {
-        if (!is_array($entry)) continue;
-        if (!isset($entry['id'])) continue;
+        if (!is_array($entry)) {
+            continue;
+        }
+        if (!isset($entry['id'])) {
+            continue;
+        }
         $id = $entry['id'];
 
         $value = $entry['value'] ?? null;
@@ -5289,15 +5381,21 @@ function cleanCustomFieldEntries(array $entries): array
         if (is_array($value)) {
             $clean = [];
             foreach ($value as $v) {
-                if ($v === null) continue;
+                if ($v === null) {
+                    continue;
+                }
                 if (is_bool($v)) {
                     $clean[] = $v ? '1' : '0';
                     continue;
                 }
                 // only accept scalar values
-                if (!is_scalar($v)) continue;
+                if (!is_scalar($v)) {
+                    continue;
+                }
                 $s = trim((string)$v);
-                if ($s === '') continue;
+                if ($s === '') {
+                    continue;
+                }
                 $clean[] = $s;
             }
             $clean = array_values(array_unique($clean));
