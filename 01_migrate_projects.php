@@ -36,6 +36,7 @@ exit(Script::run(
     static function (array $cliOptions): void {
         /** @var array<string, mixed> $config */
         $config = require __DIR__ . '/bootstrap.php';
+        /** @var array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool} $cliOptions */
         main($config, $cliOptions);
     }
 ));
@@ -140,8 +141,8 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('push', $phasesToRun, true)) {
-        $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
-        $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
+        $confirmPush = $cliOptions['confirm_push'];
+        $isDryRun = $cliOptions['dry_run'];
 
         runProjectPushPhase($pdo, $config, $confirmPush, $isDryRun);
     } else {
@@ -559,7 +560,7 @@ function runProjectTransformationPhase(PDO $pdo, mixed $notMigrated = []): array
                 if ($matchedProject !== null) {
                     $newStatus = 'MATCH_FOUND';
                     $newRedmineId = (int)$matchedProject['id'];
-                    $proposedIdentifier = normalizeString($matchedProject['identifier'] ?? null, 255) ?? $normalizedIdentifier;
+                    $proposedIdentifier = normalizeString($matchedProject['identifier'], 255) ?? $normalizedIdentifier;
                     $proposedName = normalizeString($matchedProject['name'] ?? null, 255) ?? $proposedIdentifier;
                     $proposedDescription = normalizeMultilineString($matchedProject['description'] ?? null) ?? $proposedDescription;
                     $matchedIsPublic = normalizeBooleanFlag($matchedProject['is_public'] ?? null);
@@ -650,7 +651,8 @@ function runProjectTransformationPhase(PDO $pdo, mixed $notMigrated = []): array
             $summary['matched']++;
         } elseif ($newStatus === 'READY_FOR_CREATION' && $newStatus !== $currentStatus) {
             $summary['ready_for_creation']++;
-        } elseif ($newStatus === 'MANUAL_INTERVENTION_REQUIRED' && $newStatus !== $currentStatus) {
+        } elseif ($newStatus === 'MANUAL_INTERVENTION_REQUIRED') {
+            // the status read is one of $allowedStatuses: MANUAL_INTERVENTION_REQUIRED is always new
             $summary['manual_review']++;
         }
     }
@@ -1265,7 +1267,7 @@ function normalizeMultilineString(mixed $value): ?string
             throw new RuntimeException('Failed to encode multi-line value: ' . $exception->getMessage(), 0, $exception);
         }
 
-        return $encoded !== '' ? $encoded : null;
+        return $encoded;
     }
 
     return null;
@@ -1421,7 +1423,7 @@ function extractRedmineErrorMessage(?ResponseInterface $response, string $fallba
         }
     }
 
-    if ($message === null || $message === '') {
+    if ($message === null) {
         $message = $fallback !== '' ? $fallback : 'Unknown error response received from Redmine.';
     }
 

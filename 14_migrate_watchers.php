@@ -36,6 +36,7 @@ exit(Script::run(
     static function (array $cliOptions): void {
         /** @var array<string, mixed> $config */
         $config = require __DIR__ . '/bootstrap.php';
+        /** @var array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool} $cliOptions */
         main($config, $cliOptions);
     }
 ));
@@ -90,8 +91,8 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('push', $phasesToRun, true)) {
-        $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
-        $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
+        $confirmPush = $cliOptions['confirm_push'];
+        $isDryRun = $cliOptions['dry_run'];
         $redmineClient = ClientFactory::redmine(ConfigValue::section($config, 'redmine'));
         runWatcherPushPhase($pdo, $redmineClient, $confirmPush, $isDryRun);
     } else {
@@ -193,12 +194,12 @@ function fetchJiraWatchers(Client $client, PDO $pdo): array
             );
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
-            $status = $response instanceof ResponseInterface ? $response->getStatusCode() : null;
+            $status = $response->getStatusCode();
             if ($status !== 403 && $status !== 404) {
                 throw $exception;
             }
             $message = sprintf('Jira watchers not accessible for issue %s (HTTP %d).', $issueKey, $status);
-            $body = $response instanceof ResponseInterface ? extractErrorBody($response) : $exception->getMessage();
+            $body = extractErrorBody($response);
             $warningInsert->execute([
                 'issue_id' => $issueId,
                 'issue_key' => $issueKey,
@@ -407,16 +408,11 @@ function runWatcherPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
             $message = sprintf('Failed to add watcher to Redmine issue #%d', $redmineIssueId);
-            $body = null;
-            if ($response instanceof ResponseInterface) {
-                $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
-                $body = extractErrorBody($response);
-                $message .= ': ' . $body;
-            } else {
-                $message .= ': ' . $exception->getMessage();
-            }
+            $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+            $body = extractErrorBody($response);
+            $message .= ': ' . $body;
 
-            if ($body !== null && str_contains($body, 'is already watching')) {
+            if (str_contains($body, 'is already watching')) {
                 $updateStatement->execute([
                     'mapping_id' => $mappingId,
                     'migration_status' => 'SUCCESS',
@@ -525,6 +521,7 @@ function projectMemberUserIds(Client $client, int $projectId): ?array
 }
 
 /**
+ * @param array<string, mixed> $options
  * @throws BadResponseException
  * @throws GuzzleException|\Random\RandomException
  */
@@ -542,7 +539,7 @@ function jiraGetWithRetry(
             return $client->get($path, $options);
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
-            $status = $response instanceof ResponseInterface ? $response->getStatusCode() : null;
+            $status = $response->getStatusCode();
 
             if ($status !== 429) {
                 throw $exception;
@@ -554,13 +551,11 @@ function jiraGetWithRetry(
             }
 
             $retryAfter = null;
-            if ($response instanceof ResponseInterface) {
-                $headers = $response->getHeader('Retry-After');
-                if ($headers !== []) {
-                    $headerValue = trim((string)($headers[0] ?? ''));
-                    if ($headerValue !== '' && ctype_digit($headerValue)) {
-                        $retryAfter = (int)$headerValue;
-                    }
+            $headers = $response->getHeader('Retry-After');
+            if ($headers !== []) {
+                $headerValue = trim((string)($headers[0] ?? ''));
+                if ($headerValue !== '' && ctype_digit($headerValue)) {
+                    $retryAfter = (int)$headerValue;
                 }
             }
 

@@ -1,0 +1,9 @@
+# The 16 scripts, each analysed on its own by tools/qa.sh: every script declares main(), printUsage() and helpers of
+# the same name, which one analysis of all would mix up. A script's baseline, if it has one, is
+# tools/phpstan-baseline/<script>.neon, each entry with its reason.
+parameters:
+    level: 8
+    bootstrapFiles:
+        - vendor/autoload.php
+        - lib/jira_gateway.php
+        - lib/description_conversion.php

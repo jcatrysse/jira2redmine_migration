@@ -53,6 +53,11 @@ exit(Script::run(
     static function (array $cliOptions): void {
         /** @var array<string, mixed> $config */
         $config = require __DIR__ . '/bootstrap.php';
+        /**
+         * @var array{
+         *     help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool
+         * } $cliOptions
+         */
         main($config, $cliOptions);
     }
 ));
@@ -133,10 +138,10 @@ function main(array $config, array $cliOptions): void
     $withJournals = in_array('push', $phasesToRun, true);
     $withHistory = in_array('history', $phasesToRun, true);
     if ($withJournals || $withHistory) {
-        $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
-        $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
+        $confirmPush = $cliOptions['confirm_push'];
+        $isDryRun = $cliOptions['dry_run'];
         $redmineConfig = ConfigValue::section($config, 'redmine');
-        $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $useExtendedApi = ExtendedApi::enabled($redmineConfig, $cliOptions['use_extended_api']);
         $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
         runJournalPushPhase($pdo, $config, $confirmPush, $isDryRun, $useExtendedApi, $extendedApiPrefix, $withJournals, $withHistory);
     } else {
@@ -468,13 +473,9 @@ function fetchJiraCommentsForIssue(Client $client, PDOStatement $statement, stri
             $response = $exception->getResponse();
             $message = sprintf('Failed to fetch comments for Jira issue %s', $issueKey);
             $statusCode = 0;
-            if ($response instanceof ResponseInterface) {
-                $statusCode = $response->getStatusCode();
-                $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
-                $message .= ': ' . extractErrorBody($response);
-            } else {
-                $message .= ': ' . $exception->getMessage();
-            }
+            $statusCode = $response->getStatusCode();
+            $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+            $message .= ': ' . extractErrorBody($response);
             throw new RuntimeException($message, $statusCode, $exception);
         } catch (GuzzleException $exception) {
             throw new RuntimeException(sprintf('Failed to fetch comments for Jira issue %s: %s', $issueKey, $exception->getMessage()), 0, $exception);
@@ -559,13 +560,9 @@ function fetchJiraChangelogForIssue(Client $client, PDOStatement $statement, str
             $response = $exception->getResponse();
             $message = sprintf('Failed to fetch changelog for Jira issue %s', $issueKey);
             $statusCode = 0;
-            if ($response instanceof ResponseInterface) {
-                $statusCode = $response->getStatusCode();
-                $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
-                $message .= ': ' . extractErrorBody($response);
-            } else {
-                $message .= ': ' . $exception->getMessage();
-            }
+            $statusCode = $response->getStatusCode();
+            $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+            $message .= ': ' . extractErrorBody($response);
             throw new RuntimeException($message, $statusCode, $exception);
         } catch (GuzzleException $exception) {
             throw new RuntimeException(sprintf('Failed to fetch changelog for Jira issue %s: %s', $issueKey, $exception->getMessage()), 0, $exception);
@@ -1611,12 +1608,8 @@ function processCommentPush(
     } catch (BadResponseException $exception) {
         $response = $exception->getResponse();
         $message = sprintf('Failed to create journal for Jira comment %s on issue %s', $jiraCommentId, $jiraIssueKey);
-        if ($response instanceof ResponseInterface) {
-            $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
-            $message .= ': ' . extractErrorBody($response);
-        } else {
-            $message .= ': ' . $exception->getMessage();
-        }
+        $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+        $message .= ': ' . extractErrorBody($response);
         markJournalPushFailure($pdo, $mappingId, $message);
         printf("  [error] %s%s", $message, PHP_EOL);
         return;
@@ -1811,12 +1804,8 @@ function processChangelogPush(
     } catch (BadResponseException $exception) {
         $response = $exception->getResponse();
         $message = sprintf('Failed to create journal for Jira %s on issue %s', 'history ' . $historyId, $jiraIssueKey);
-        if ($response instanceof ResponseInterface) {
-            $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
-            $message .= ': ' . extractErrorBody($response);
-        } else {
-            $message .= ': ' . $exception->getMessage();
-        }
+        $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+        $message .= ': ' . extractErrorBody($response);
         markJournalPushFailure($pdo, $mappingId, $message);
         printf("  [error] %s%s", $message, PHP_EOL);
         return;
@@ -2502,7 +2491,7 @@ function jiraGetWithRetry(
             return $client->get($path, $options);
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
-            $status = $response instanceof ResponseInterface ? $response->getStatusCode() : null;
+            $status = $response->getStatusCode();
 
             if ($status !== 429) {
                 throw $exception;
@@ -2514,13 +2503,11 @@ function jiraGetWithRetry(
             }
 
             $retryAfter = null;
-            if ($response instanceof ResponseInterface) {
-                $headers = $response->getHeader('Retry-After');
-                if ($headers !== []) {
-                    $headerValue = trim((string)($headers[0] ?? ''));
-                    if ($headerValue !== '' && ctype_digit($headerValue)) {
-                        $retryAfter = (int)$headerValue;
-                    }
+            $headers = $response->getHeader('Retry-After');
+            if ($headers !== []) {
+                $headerValue = trim((string)($headers[0] ?? ''));
+                if ($headerValue !== '' && ctype_digit($headerValue)) {
+                    $retryAfter = (int)$headerValue;
                 }
             }
 

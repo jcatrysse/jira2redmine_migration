@@ -36,6 +36,11 @@ exit(Script::run(
     static function (array $cliOptions): void {
         /** @var array<string, mixed> $config */
         $config = require __DIR__ . '/bootstrap.php';
+        /**
+         * @var array{
+         *     help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool
+         * } $cliOptions
+         */
         main($config, $cliOptions);
     }
 ));
@@ -90,7 +95,7 @@ function main(array $config, array $cliOptions): void
 
         printf("[%s] Starting Redmine tracker snapshot...%s", Clock::atom(), PHP_EOL);
 
-        $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $useExtendedApi = ExtendedApi::enabled($redmineConfig, $cliOptions['use_extended_api']);
 
         $totalRedmineProcessed = fetchAndStoreRedmineTrackers($redmineClient, $pdo, $redmineConfig, $useExtendedApi);
 
@@ -141,10 +146,10 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('push', $phasesToRun, true)) {
-        $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
-        $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
+        $confirmPush = $cliOptions['confirm_push'];
+        $isDryRun = $cliOptions['dry_run'];
         $redmineConfig ??= ConfigValue::section($config, 'redmine');
-        $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $useExtendedApi = ExtendedApi::enabled($redmineConfig, $cliOptions['use_extended_api']);
 
         runTrackerPushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi);
     } else {

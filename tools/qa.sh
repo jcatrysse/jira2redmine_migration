@@ -10,4 +10,19 @@ for f in [0-9]*.php lib/*.php src/*/*.php tools/*.php tools/testenv/*.php; do ph
 echo "php -l: ok"
 vendor/bin/phpunit
 php tools/bin/phpstan.phar analyse --no-progress --memory-limit=1G
+# The scripts PHPCS covers (phpcs.xml.dist) are analysed one by one (phpstan-scripts.neon), each with its own cache.
+mkdir -p tools/bin/phpstan
+scripts=$(grep -o '<file>[0-9][0-9]_[a-z_]*\.php</file>' phpcs.xml.dist | sed 's/<[^>]*>//g')
+for script in $scripts; do
+  {
+    echo "includes:"
+    echo "    - $PWD/phpstan-scripts.neon"
+    [ -f "tools/phpstan-baseline/$script.neon" ] && echo "    - $PWD/tools/phpstan-baseline/$script.neon"
+    echo "parameters:"
+    echo "    tmpDir: $PWD/tools/bin/phpstan/$script"
+  } > "tools/bin/phpstan/$script.neon"
+done
+[ -z "$scripts" ] || printf '%s\n' $scripts | xargs -P 4 -I{} php tools/bin/phpstan.phar analyse --no-progress --memory-limit=1G \
+  --error-format=raw -c "tools/bin/phpstan/{}.neon" {}
+echo "PHPStan scripts: $(echo $scripts | wc -w) of 16 ok"
 php tools/bin/phpcs.phar

@@ -41,6 +41,12 @@ exit(Script::run(
     static function (array $cliOptions): void {
         /** @var array<string, mixed> $config */
         $config = require __DIR__ . '/bootstrap.php';
+        /**
+         * @var array{
+         *     help: bool, version: bool, phases: ?string, skip: ?string, confirm_pull: bool, confirm_push: bool, dry_run: bool,
+         *     download_limit: ?int, upload_limit: ?int, use_extended_api: bool
+         * } $cliOptions
+         */
         main($config, $cliOptions);
     }
 ));
@@ -102,8 +108,8 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('pull', $phasesToRun, true)) {
-        $confirmPull = (bool)($cliOptions['confirm_pull'] ?? false);
-        $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
+        $confirmPull = $cliOptions['confirm_pull'];
+        $isDryRun = $cliOptions['dry_run'];
         $downloadLimit = $cliOptions['download_limit'] ?? null;
         runAttachmentPullPhase($pdo, $config, $confirmPull, $isDryRun, $downloadLimit);
     } else {
@@ -130,11 +136,11 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('push', $phasesToRun, true)) {
-        $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
-        $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
+        $confirmPush = $cliOptions['confirm_push'];
+        $isDryRun = $cliOptions['dry_run'];
         $uploadLimit = $cliOptions['upload_limit'] ?? null;
         $redmineConfig = ConfigValue::section($config, 'redmine');
-        $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $useExtendedApi = ExtendedApi::enabled($redmineConfig, $cliOptions['use_extended_api']);
         $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
         runAttachmentUploadPhase($pdo, $config, $confirmPush, $isDryRun, $uploadLimit, $useExtendedApi, $extendedApiPrefix);
     } else {
@@ -742,12 +748,8 @@ function downloadPendingJiraAttachments(Client $client, PDO $pdo, array $config,
             } catch (BadResponseException $exception) {
                 $response = $exception->getResponse();
                 $message = 'Failed to download attachment from Jira';
-                if ($response instanceof ResponseInterface) {
-                    $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
-                    $message .= ': ' . extractErrorBody($response);
-                } else {
-                    $message .= ': ' . $exception->getMessage();
-                }
+                $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+                $message .= ': ' . extractErrorBody($response);
 
                 if (is_resource($handle)) {
                     fclose($handle);
@@ -854,12 +856,8 @@ function downloadPendingJiraAttachments(Client $client, PDO $pdo, array $config,
                 $message = 'Failed to download attachment';
                 if ($reason instanceof BadResponseException) {
                     $response = $reason->getResponse();
-                    if ($response instanceof ResponseInterface) {
-                        $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
-                        $message .= ': ' . extractErrorBody($response);
-                    } else {
-                        $message .= ': ' . $reason->getMessage();
-                    }
+                    $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+                    $message .= ': ' . extractErrorBody($response);
                 } elseif ($reason instanceof Throwable) {
                     $message .= ': ' . $reason->getMessage();
                 }
@@ -1100,12 +1098,8 @@ SQL);
             $bodyStream->close();
             $response = $exception->getResponse();
             $message = 'Failed to upload attachment to Redmine';
-            if ($response instanceof ResponseInterface) {
-                $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
-                $message .= ': ' . extractErrorBody($response);
-            } else {
-                $message .= ': ' . $exception->getMessage();
-            }
+            $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+            $message .= ': ' . extractErrorBody($response);
 
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
@@ -1504,15 +1498,13 @@ function uploadAttachmentToSharePoint(Client &$client, array $sharePointConfig, 
                 break;
             } catch (BadResponseException $exception) {
                 $response = $exception->getResponse();
-                $code = ($response instanceof ResponseInterface) ? $response->getStatusCode() : 0;
+                $code = $response->getStatusCode();
 
                 if (in_array($code, [429, 502, 503, 504], true) && $attempts < 6) {
                     $retryAfter = 0;
-                    if ($response instanceof ResponseInterface) {
-                        $ra = $response->getHeaderLine('Retry-After');
-                        if ($ra !== '' && ctype_digit($ra)) {
-                            $retryAfter = (int)$ra;
-                        }
+                    $ra = $response->getHeaderLine('Retry-After');
+                    if ($ra !== '' && ctype_digit($ra)) {
+                        $retryAfter = (int)$ra;
                     }
                     if ($retryAfter > 0) {
                         sleep(min($retryAfter, 30));
@@ -1606,7 +1598,7 @@ function createSharePointUploadSession(Client &$client, array $sharePointConfig,
         ]);
     } catch (BadResponseException $exception) {
         $response = $exception->getResponse();
-        if ($attempt === 0 && $response instanceof ResponseInterface && $response->getStatusCode() === 401) {
+        if ($attempt === 0 && $response->getStatusCode() === 401) {
             $client = createSharePointClient($sharePointConfig);
             return createSharePointUploadSession($client, $sharePointConfig, $targetPath, $attempt + 1);
         }

@@ -142,6 +142,18 @@ final class CommandLineTest extends TestCase
         ScriptCommandLines::for('17_unknown.php');
     }
 
+    public function testEachScriptTellsTheAnalysisTheOptionsItsCommandLineGives(): void
+    {
+        // the start passes the options to main() with an @var of their shape; it must name what the parser returns
+        foreach (glob(__DIR__ . '/../[0-9][0-9]_*.php') ?: [] as $file) {
+            $source = (string)file_get_contents($file);
+            self::assertSame(1, preg_match('/@var array\{(.*?)\} \$cliOptions/s', $source, $match), basename($file));
+            preg_match_all('/(\w+): /', $match[1], $keys);
+            [$options] = ScriptCommandLines::for(basename($file))->parse([basename($file)]);
+            self::assertSame(array_keys($options), $keys[1], basename($file));
+        }
+    }
+
     /**
      * @param list<string> $arguments
      * @return array{int, string, string, list<array<string, mixed>>}

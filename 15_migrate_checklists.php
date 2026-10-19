@@ -32,6 +32,7 @@ exit(Script::run(
     static function (array $cliOptions): void {
         /** @var array<string, mixed> $config */
         $config = require __DIR__ . '/bootstrap.php';
+        /** @var array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool} $cliOptions */
         main($config, $cliOptions);
     }
 ));
@@ -71,8 +72,8 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('push', $phasesToRun, true)) {
-        $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
-        $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
+        $confirmPush = $cliOptions['confirm_push'];
+        $isDryRun = $cliOptions['dry_run'];
         $redmineClient = ClientFactory::redmine(ConfigValue::section($config, 'redmine'));
         runChecklistPushPhase($pdo, $redmineClient, $confirmPush, $isDryRun);
     } else {
@@ -99,6 +100,7 @@ function printVersion(): void
 }
 
 /**
+ * @param array<string, mixed> $config
  * @return array{ready: int, ignored: int, pending: int}
  */
 function transformChecklists(PDO $pdo, array $config): array
@@ -394,12 +396,8 @@ function runChecklistPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
             $message = sprintf('Failed to create checklist for Redmine issue #%d', $redmineIssueId);
-            if ($response instanceof ResponseInterface) {
-                $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
-                $message .= ': ' . extractErrorBody($response);
-            } else {
-                $message .= ': ' . $exception->getMessage();
-            }
+            $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+            $message .= ': ' . extractErrorBody($response);
             $updateStatement->execute([
                 'mapping_id' => $mappingId,
                 'migration_status' => 'FAILED',

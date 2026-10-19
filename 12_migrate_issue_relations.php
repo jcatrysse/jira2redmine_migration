@@ -45,6 +45,7 @@ exit(Script::run(
     static function (array $cliOptions): void {
         /** @var array<string, mixed> $config */
         $config = require __DIR__ . '/bootstrap.php';
+        /** @var array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool} $cliOptions */
         main($config, $cliOptions);
     }
 ));
@@ -70,8 +71,8 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('push', $phasesToRun, true)) {
-        $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
-        $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
+        $confirmPush = $cliOptions['confirm_push'];
+        $isDryRun = $cliOptions['dry_run'];
         runRelationPushPhase($pdo, $config, $confirmPush, $isDryRun);
     } else {
         printf('[%s] Skipping push phase (disabled via CLI option).%s', Clock::dateTime(), PHP_EOL);
@@ -358,10 +359,8 @@ function runRelationPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
             $message = 'Failed to create Redmine relation';
-            if ($response instanceof ResponseInterface) {
-                $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
-                $message .= ': ' . extractErrorBody($response);
-            }
+            $message .= sprintf(' (HTTP %d)', $response->getStatusCode());
+            $message .= ': ' . extractErrorBody($response);
 
             $failureStatement->execute(['mapping_id' => $mappingId] + RelationState::failed($row, $message));
             printf("  [error] %s for Jira link %s.%s", $message, (string)$row['jira_link_id'], PHP_EOL);

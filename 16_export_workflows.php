@@ -37,6 +37,7 @@ exit(Script::run(
     static function (array $cliOptions): void {
         /** @var array<string, mixed> $config */
         $config = require __DIR__ . '/bootstrap.php';
+        /** @var array{help: bool, version: bool, phases: ?string, skip: ?string} $cliOptions */
         main($config, $cliOptions);
     }
 ));
@@ -1000,7 +1001,7 @@ function jiraGetWithRetry(
             return $client->get($path, $options);
         } catch (BadResponseException $exception) {
             $response = $exception->getResponse();
-            $status = $response instanceof ResponseInterface ? $response->getStatusCode() : null;
+            $status = $response->getStatusCode();
 
             if ($status !== 429) {
                 throw $exception;
@@ -1012,13 +1013,11 @@ function jiraGetWithRetry(
             }
 
             $retryAfter = null;
-            if ($response instanceof ResponseInterface) {
-                $headers = $response->getHeader('Retry-After');
-                if ($headers !== []) {
-                    $headerValue = trim((string)($headers[0] ?? ''));
-                    if ($headerValue !== '' && ctype_digit($headerValue)) {
-                        $retryAfter = (int)$headerValue;
-                    }
+            $headers = $response->getHeader('Retry-After');
+            if ($headers !== []) {
+                $headerValue = trim((string)($headers[0] ?? ''));
+                if ($headerValue !== '' && ctype_digit($headerValue)) {
+                    $retryAfter = (int)$headerValue;
                 }
             }
 

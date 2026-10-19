@@ -34,6 +34,7 @@ exit(Script::run(
     static function (array $cliOptions): void {
         /** @var array<string, mixed> $config */
         $config = require __DIR__ . '/bootstrap.php';
+        /** @var array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool} $cliOptions */
         main($config, $cliOptions);
     }
 ));
@@ -166,8 +167,8 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('push', $phasesToRun, true)) {
-        $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
-        $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
+        $confirmPush = $cliOptions['confirm_push'];
+        $isDryRun = $cliOptions['dry_run'];
 
         runGroupPushPhase($pdo, $config, $confirmPush, $isDryRun);
     } else {
@@ -857,7 +858,7 @@ function extractRedmineErrorMessage(?ResponseInterface $response, string $fallba
         }
     }
 
-    if ($message === null || $message === '') {
+    if ($message === null) {
         $message = $fallback !== '' ? $fallback : 'Unknown error response received from Redmine.';
     }
 

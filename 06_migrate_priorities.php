@@ -36,6 +36,11 @@ exit(Script::run(
     static function (array $cliOptions): void {
         /** @var array<string, mixed> $config */
         $config = require __DIR__ . '/bootstrap.php';
+        /**
+         * @var array{
+         *     help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool
+         * } $cliOptions
+         */
         main($config, $cliOptions);
     }
 ));
@@ -138,10 +143,10 @@ function main(array $config, array $cliOptions): void
     }
 
     if (in_array('push', $phasesToRun, true)) {
-        $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
-        $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
+        $confirmPush = $cliOptions['confirm_push'];
+        $isDryRun = $cliOptions['dry_run'];
         $redmineConfig ??= ConfigValue::section($config, 'redmine');
-        $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        $useExtendedApi = ExtendedApi::enabled($redmineConfig, $cliOptions['use_extended_api']);
 
         runPriorityPushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi);
     } else {
@@ -336,6 +341,7 @@ function fetchAndStoreRedmineIssuePriorities(Client $client, PDO $pdo): int
 }
 
 /**
+ * @param array<string, mixed> $priorityConfig
  * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int, status_counts: array<string, int>}
  */
 function runPriorityTransformationPhase(PDO $pdo, array $priorityConfig = []): array
@@ -535,7 +541,7 @@ function refreshPriorityMetadata(PDO $pdo): void
 }
 
 /**
- * @return array<string, array{id: int, name: string, is_default: mixed}>
+ * @return array<string, array<string, mixed>> the staging rows by lowercase name
  */
 function buildRedminePriorityLookup(PDO $pdo): array
 {
@@ -655,6 +661,9 @@ function computeLegacyPriorityAutomationStateHash(
     return hash('sha256', $json);
 }
 
+/**
+ * @return array<string, int>
+ */
 function fetchPriorityMigrationStatusCounts(PDO $pdo): array
 {
     try {
@@ -683,6 +692,9 @@ function fetchPriorityMigrationStatusCounts(PDO $pdo): array
     return $results;
 }
 
+/**
+ * @param array<string, mixed> $redmineConfig
+ */
 function runPriorityPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi): void
 {
     $pendingPriorities = fetchPrioritiesReadyForCreation($pdo);
@@ -932,6 +944,9 @@ function runPriorityPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array
     printf("  Manual acknowledgement recorded. Remember to update redmine_priority_id, proposed_redmine_position, and migration_status once the priorities exist in Redmine.%s", PHP_EOL);
 }
 
+/**
+ * @return array<int, array<string, mixed>>
+ */
 function fetchPrioritiesReadyForCreation(PDO $pdo): array
 {
     $sql = <<<SQL
