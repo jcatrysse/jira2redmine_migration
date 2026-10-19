@@ -484,7 +484,7 @@ After that the scripts send only GET requests to Jira (and the same 401 refuses 
 **Production: one maintenance window (Jan, decision 36).** Part B, from this section to the end of B9, runs in one
 window; part A is its own window before it (decision 29). Why: the scripts skip an issue that is already migrated, so
 a change made in Jira after the extraction would be lost, and a rollback to a snapshot would erase what users did
-in Redmine meanwhile. The rehearsal measures the window's length (B8 estimates 7 to 12 hours of run time in
+in Redmine meanwhile. The rehearsal measures the window's length (B8 estimates about 6 to 9 hours of run time in
 production, plus Jan's reviews and the snapshots); its report gives the real figure, which sets the window.
 
 1. **Announce** the window (Jan): from its start Jira is read-only and Redmine closed; afterwards everyone works in

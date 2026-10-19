@@ -1805,7 +1805,8 @@ Options for Jan (they need a change in redmine_extended_api, which has its own s
   stays as the proof (it must say 0).
 - B38 waiting parents and relations to a later batch disappear (only parents and links outside the migration remain).
 - duration: about the same work, a little less (14's jira phase, 16 and 08's transform read everything once instead of
-  four times: roughly 30 to 60 minutes less); one long run of about 7 to 12 hours in production, in tmux.
+  four times: roughly 30 to 60 minutes less); one long run of about 6 to 9 hours in production (measured, PRODUCTION.md
+  B8; first estimated 7 to 12), in tmux.
 - Jan's reviews: the same review points once, larger (all memberships of 14 projects at once); B6's matching review
   is the same, since 01 to 07 already cover all projects in the first batch.
 - rollback: no batch boundaries, but natural pauses for a VM snapshot: after the structure and its reviews (01 to 08),
