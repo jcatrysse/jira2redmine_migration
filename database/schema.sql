@@ -782,6 +782,8 @@ CREATE TABLE `migration_mapping_journals` (
                                               `proposed_updated_on` DATETIME NULL,
                                               `automation_hash` VARCHAR(64) NULL,
                                               `pushed_text_hash` CHAR(64) NULL COMMENT 'hash of the text as pushed (B52 relink: edits in Redmine are left alone)',
+                                              `history_journal_id` INT NULL COMMENT 'CHANGELOG: the journal of its status, assignee and priority details (11 history phase, decision 41)',
+                                              `history_attachment_id` INT NULL COMMENT 'CHANGELOG: jira-history.json, on the entry of its last transition (decision 41)',
                                               `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                               `last_updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                                               UNIQUE KEY `uk_jira_journal_entity` (`jira_entity_id`, `entity_type`)

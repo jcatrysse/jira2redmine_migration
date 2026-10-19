@@ -19,6 +19,10 @@ use Jira2Redmine\Journals\JournalStatus;
 use Jira2Redmine\Text\Relink;
 use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Journals\ExtractionFailure;
+use Jira2Redmine\History\HistoryChain;
+use Jira2Redmine\History\HistoryFile;
+use Jira2Redmine\History\HistoryLookups;
+use Jira2Redmine\History\HistoryRequest;
 const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.1';
 const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
 const JIRA_RATE_LIMIT_BASE_DELAY_MS = 1000;
@@ -26,6 +30,7 @@ const AVAILABLE_PHASES = [
     'jira' => 'Extract Jira comments and changelog entries into staging tables.',
     'transform' => 'Populate and classify journal mappings based on issue availability.',
     'push' => 'Create Redmine journals for migrated Jira comments and changelog events.',
+    'history' => 'Write the Jira history of status, assignee and priority as Redmine journals (decision 41).',
 ];
 
 if (PHP_SAPI !== 'cli') {
@@ -150,6 +155,14 @@ function main(array $config, array $cliOptions): void
     } else {
         printf("[%s] Skipping push phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
     }
+
+    if (in_array('history', $phasesToRun, true)) {
+        $redmineConfig = extractArrayConfig($config, 'redmine');
+        $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
+        runHistoryPhase($pdo, $config, $useExtendedApi);
+    } else {
+        printf("[%s] Skipping history phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+    }
 }
 
 function printUsage(): void
@@ -157,7 +170,7 @@ function printUsage(): void
     printf("Jira to Redmine Journal Migration (step 12) — version %s%s", MIGRATE_JOURNALS_SCRIPT_VERSION, PHP_EOL);
     printf("Usage: php 11_migrate_journals.php [options]\n\n");
     printf("Options:\n");
-    printf("  --phases=LIST        Comma separated list of phases to run (default: jira,transform,push).\n");
+    printf("  --phases=LIST        Comma separated list of phases to run (default: jira,transform,push,history).\n");
     printf("  --skip=LIST          Comma separated list of phases to skip.\n");
     printf("  --confirm-push       Required to execute the push phase.\n");
     printf("  --dry-run            Preview the push phase without modifying Redmine.\n");
@@ -1088,6 +1101,231 @@ function fetchPushableChangelog(PDO $pdo): array
     $statement->closeCursor();
 
     return $rows;
+}
+
+/**
+ * Decision 41 (Jan, 2026-10-19): Jira's status, assignee and priority changes as Redmine journals, after 11's push. A
+ * value Redmine does not have is skipped with the chain kept connected, and only such an issue gets jira-history.json
+ * (src/History). This version builds the requests and writes them to history-preview.jsonl in the attachment
+ * directory (Jira data: never in the repository); the push follows the Extended API's history endpoint.
+ *
+ * @param array<string, mixed> $config
+ * @throws Throwable
+ */
+function runHistoryPhase(PDO $pdo, array $config, bool $useExtendedApi): void
+{
+    if (!$useExtendedApi) {
+        printf("  [warn] The history phase needs the Extended API (--use-extended-api); skipped.%s", PHP_EOL);
+        return;
+    }
+
+    $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
+    $lookups = buildHistoryLookups($pdo, $redmineClient, extractDefaultJournalAuthorId($config));
+    $issues = fetchHistoryIssues($pdo);
+    $previewPath = historyPreviewPath($config);
+    $preview = fopen($previewPath, 'wb');
+    if ($preview === false) {
+        throw new RuntimeException(sprintf('Cannot write the history preview %s.', $previewPath));
+    }
+
+    $totals = ['issues' => 0, 'journals' => 0, 'details' => 0, 'skipped' => 0, 'dropped' => 0, 'files' => 0, 'mismatches' => 0, 'open_parents' => 0];
+    foreach (fetchHistoryEntries($pdo, $issues) as $jiraIssueId => $entries) {
+        $issue = $issues[$jiraIssueId];
+        $history = HistoryChain::build($entries, $lookups);
+        if ($history->journals === [] && !$history->needsFile()) {
+            continue;
+        }
+        $check = $history->statusCheck($issue['status_id'], $issue['jira_status_id']);
+        if ($check !== null) {
+            $openParent = $check === 'open parent';
+            $totals[$openParent ? 'open_parents' : 'mismatches']++;
+            printf(
+                "  [%s] %s: the history ends in status %s, the issue has status %s%s.%s",
+                $openParent ? 'note' : 'warn',
+                $issue['key'],
+                var_export($history->last['status'], true),
+                var_export($issue['status_id'], true),
+                $openParent ? ' (an open parent: 10 changed it, the history ends as in Jira)' : '',
+                PHP_EOL
+            );
+        }
+        $file = null;
+        $fileContent = null;
+        if ($history->needsFile()) {
+            $fileContent = HistoryFile::content($issue['key'], (string)$jiraIssueId, $history);
+            $stamp = HistoryFile::stamp($history, $lookups);
+            $file = ['token' => '(upload)', 'author_id' => $stamp['author_id'], 'created_on' => $stamp['created_on']];
+            $totals['files']++;
+        }
+        fwrite($preview, json_encode([
+            'jira_key' => $issue['key'],
+            'redmine_issue_id' => $issue['redmine_issue_id'],
+            'path' => HistoryRequest::path($issue['redmine_issue_id']),
+            'request' => HistoryRequest::body($history, $file),
+            'file' => $fileContent,
+        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
+        $totals['issues']++;
+        $totals['journals'] += count($history->journals);
+        $totals['details'] += $history->detailCount();
+        $totals['skipped'] += $history->skipped;
+        $totals['dropped'] += $history->dropped;
+    }
+    fclose($preview);
+
+    printf(
+        "[%s] History: %d issue(s), %d journal(s), %d detail(s); %d item(s) skipped and connected, %d dropped as no change; %d file(s); status mismatches: %d (open parents: %d).%s",
+        formatCurrentTimestamp(),
+        $totals['issues'],
+        $totals['journals'],
+        $totals['details'],
+        $totals['skipped'],
+        $totals['dropped'],
+        $totals['files'],
+        $totals['mismatches'],
+        $totals['open_parents'],
+        PHP_EOL
+    );
+    printf("  Preview written to %s; the push waits for the Extended API's history endpoint.%s", $previewPath, PHP_EOL);
+}
+
+/**
+ * Statuses (05), priorities (06) and people (02) with a Redmine value, by the rule 10 uses; authors without an
+ * account get 11's fallback: the default author, else the API user.
+ */
+function buildHistoryLookups(PDO $pdo, Client $redmineClient, ?int $defaultAuthorId): HistoryLookups
+{
+    $mapped = "migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')";
+    $statuses = [];
+    foreach (historyRows($pdo, "SELECT jira_status_id, redmine_status_id FROM migration_mapping_statuses WHERE $mapped AND redmine_status_id IS NOT NULL") as $row) {
+        $statuses[(string)$row['jira_status_id']] = (int)$row['redmine_status_id'];
+    }
+    $priorities = [];
+    foreach (historyRows($pdo, "SELECT jira_priority_id, redmine_priority_id FROM migration_mapping_priorities WHERE $mapped AND redmine_priority_id IS NOT NULL") as $row) {
+        $priorities[(string)$row['jira_priority_id']] = (int)$row['redmine_priority_id'];
+    }
+    $users = [];
+    $userSql = 'SELECT m.jira_account_id, m.redmine_user_id, COALESCE(r.login, m.proposed_redmine_login) AS login'
+        . ' FROM migration_mapping_users m LEFT JOIN staging_redmine_users r ON r.id = m.redmine_user_id'
+        . " WHERE m.$mapped AND m.redmine_user_id IS NOT NULL";
+    foreach (historyRows($pdo, $userSql) as $row) {
+        $users[(string)$row['jira_account_id']] = ['id' => (int)$row['redmine_user_id'], 'login' => $row['login'] !== null ? (string)$row['login'] : null];
+    }
+
+    return new HistoryLookups($statuses, $priorities, $users, $defaultAuthorId ?? fetchApiUserId($redmineClient));
+}
+
+/**
+ * @return list<array<string, mixed>>
+ */
+function historyRows(PDO $pdo, string $sql): array
+{
+    $statement = $pdo->query($sql);
+    if ($statement === false) {
+        throw new RuntimeException('Failed to read the history lookups.');
+    }
+
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+function fetchApiUserId(Client $redmineClient): int
+{
+    $answer = decodeJsonResponse($redmineClient->get('users/current.json'));
+    $id = $answer['user']['id'] ?? null;
+    if (!is_numeric($id)) {
+        throw new RuntimeException('Cannot read the API user (GET users/current.json).');
+    }
+
+    return (int)$id;
+}
+
+/**
+ * The migrated issues whose history is not in Redmine yet: a rerun skips an issue once one of its Jira history
+ * entries holds a history journal or the file (migration_mapping_journals, CHANGELOG).
+ *
+ * @return array<string, array{key: string, redmine_issue_id: int, status_id: ?int, jira_status_id: ?int}>
+ */
+function fetchHistoryIssues(PDO $pdo): array
+{
+    $rows = historyRows($pdo, <<<SQL
+        SELECT i.jira_issue_id, i.jira_issue_key, i.redmine_issue_id, i.redmine_status_id, i.proposed_status_id
+        FROM migration_mapping_issues i
+        WHERE i.redmine_issue_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM migration_mapping_journals j
+              WHERE j.jira_issue_id = i.jira_issue_id AND j.entity_type = 'CHANGELOG'
+                AND (j.history_journal_id IS NOT NULL OR j.history_attachment_id IS NOT NULL)
+          )
+    SQL);
+    $issues = [];
+    foreach ($rows as $row) {
+        $issues[(string)$row['jira_issue_id']] = [
+            'key' => (string)$row['jira_issue_key'],
+            'redmine_issue_id' => (int)$row['redmine_issue_id'],
+            // the status 10 gave the issue, and the one Jira's current status maps onto
+            'status_id' => $row['proposed_status_id'] !== null ? (int)$row['proposed_status_id'] : null,
+            'jira_status_id' => $row['redmine_status_id'] !== null ? (int)$row['redmine_status_id'] : null,
+        ];
+    }
+
+    return $issues;
+}
+
+/**
+ * The Jira history entries of those issues with their status, assignee and priority items only.
+ *
+ * @param array<string, mixed> $issues
+ * @return array<string, list<array{id: string, created: string, author: ?string, items: list<array<string, mixed>>}>>
+ * @throws JsonException
+ */
+function fetchHistoryEntries(PDO $pdo, array $issues): array
+{
+    $statement = $pdo->query(
+        'SELECT id, issue_id, author_account_id, created_at, items_json FROM staging_jira_changelogs'
+        . ' ORDER BY issue_id, created_at, CAST(id AS UNSIGNED)'
+    );
+    if ($statement === false) {
+        throw new RuntimeException('Failed to read the Jira history entries.');
+    }
+    $entries = [];
+    while ($row = $statement->fetch(PDO::FETCH_ASSOC)) {
+        $jiraIssueId = (string)$row['issue_id'];
+        if (!isset($issues[$jiraIssueId]) || $row['items_json'] === null) {
+            continue;
+        }
+        $items = json_decode((string)$row['items_json'], true, 512, JSON_THROW_ON_ERROR);
+        $items = array_values(array_filter(
+            is_array($items) ? $items : [],
+            static fn (mixed $item): bool => is_array($item) && isset(HistoryChain::FIELDS[$item['field'] ?? ''])
+        ));
+        if ($items === []) {
+            continue;
+        }
+        $entries[$jiraIssueId][] = [
+            'id' => (string)$row['id'],
+            'created' => (string)$row['created_at'],
+            'author' => $row['author_account_id'] !== null ? (string)$row['author_account_id'] : null,
+            'items' => $items,
+        ];
+    }
+    $statement->closeCursor();
+
+    return $entries;
+}
+
+/**
+ * @param array<string, mixed> $config
+ */
+function historyPreviewPath(array $config): string
+{
+    $tmp = $config['paths']['tmp'] ?? null;
+    if (!is_string($tmp) || trim($tmp) === '') {
+        throw new RuntimeException('paths.tmp is not configured: the history preview goes to the attachment directory.');
+    }
+    if (!is_dir($tmp) && !mkdir($tmp, 0775, true) && !is_dir($tmp)) {
+        throw new RuntimeException(sprintf('Cannot create %s.', $tmp));
+    }
+
+    return rtrim($tmp, '/') . '/history-preview.jsonl';
 }
 
 /**
