@@ -1,6 +1,6 @@
 # Jira Cloud to Redmine: test migrations and script upgrade
 
-## Samenvatting voor Jan (2026-10-16, B2, 's nachts bijgewerkt)
+## Samenvatting voor Jan (2026-10-19, B2)
 
 **Stand.** Alles staat op `redmine70-migration`, QA groen (336 tests). Jira bleef read-only: alleen GET-calls.
 
@@ -21,6 +21,10 @@
   - B83: een nieuwe run van 15 probeerde een mislukte checklist niet opnieuw.
 - **Jouw beslissing 40 (B78):** het Jira-veld "Agent Sessions" (AI-agentsessies) gaat niet mee, zoals beslissing
   20; staat in de standaardconfig. Daarmee is er voor de scripts niets meer open tot de repetitie op je kloon.
+- **Jouw beslissing 41 (Jira-geschiedenis, 2026-10-19):** status, toegewezene en prioriteit worden na productie
+  echte journals via een nieuw Extended API-endpoint; de rest blijft in het archief. Staging blijft bewaard als
+  versleutelde dump (PRODUCTION.md B9 stap 6, met een terugleestest vóór er iets verdwijnt); eigenaar, bewaartermijn
+  en opslagplaats zijn nog open. LABO's 7 ongebruikte statussen map je via een tabel. Werklijst item 18.
 - **Relatie DOC-448/449:** Jira heeft er twee, Redmine weigert de tweede als circulair; staat in B9 bij wat je na de
   run bekijkt.
 
@@ -543,6 +547,22 @@ Jan's answer to B78 (2026-10-16, relayed by the coordinator):
     with a session (SURV-1752, held back before). Proven in the 7.0 run of decision 37 (with the same setting in the
     test configuration then).
 
+Jan's answers to the Jira history research (2026-10-19, relayed by the coordinator; `docs/research/JIRA-HISTORY.md`,
+`8cc72ee`):
+
+41. **Jira's history: a hybrid, built after production.**
+    - **Approach**: real Redmine journals for `status_id`, `assigned_to_id` and `priority_id` only, written through a
+      new admin-only raw-insert endpoint of the Extended API (`POST /extended_api/issues/:id/history.json`,
+      `insert_all`, no issue save); every other history item stays in the archive only; no JSON attachment (the
+      research's option B).
+    - **Staging is kept after production**, as an encrypted dump with limited access, as the archive and the source of
+      the history step (docs/PRODUCTION.md B9 step 6). Owner, retention and storage place: **open**, the coordinator
+      asks Jan.
+    - **LABO's 7 statuses that no project uses any more** (610 history items): mapped onto existing Redmine statuses
+      through a table Jan fills in.
+    - **Timing**: built after production and run from the kept staging; not part of the rehearsal or of the production
+      run. The journals sort by their own time, so written later they give the same history (the research, section 5).
+
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
 Taken by B2 on the coordinator's instruction (recommended option, no waiting); each can be reversed.
@@ -820,6 +840,19 @@ In this order. Each item records its result under "Results" when done.
 **Phase 9, final runs**
 
 17. Full test run on both targets with the final code; verify report green; numbers in "Results".
+
+**After production (decision 41)**
+
+18. Jira's history as journals, from the kept staging (decision 41; docs/research/JIRA-HISTORY.md):
+    - the Extended API endpoint `POST /extended_api/issues/:id/history.json` (admin only, raw insert, no issue save),
+      in redmine_extended_api's own session, with tests on 5.1, 6.1 and 7.0;
+    - a history step here (a phase after 11, or `tools/push_history.php`), reading `staging_jira_changelogs`, mapping
+      users (02), statuses (05) and priorities (06), off by default, with dry-run payloads and a test per mapping and
+      per skip;
+    - the LABO status table Jan fills in (the 7 statuses no project uses, 610 items);
+    - a proof run on 5.1 and 7.0: journals per issue, the last status detail equals the current status, redmine_agile's
+      charts, no watcher added, `updated_on` unchanged.
+    Not started; it waits for production and for the staging dump of docs/PRODUCTION.md B9 step 6.
 
 ## Sessions
 

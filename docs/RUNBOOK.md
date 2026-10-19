@@ -40,8 +40,9 @@ database, which is removed after the migration (no PostgreSQL port of the stagin
    migrated issue and comment, and `paths.tmp` the attachments of the run until 09 has pushed them (all 14
    projects about 116 GiB, SURV alone 98.7 GiB; docs/PRODUCTION.md B2).
 3. **After the migration**, once the run (or the last batch), the relink check (section 1) and the workflows
-   (section 5) are done and no rerun is needed: if a copy of the staging data is wanted, `mysqldump` it and keep
-   it outside this repository (it holds Jira data); then `mysql -e "DROP DATABASE jira2redmine; DROP USER
+   (section 5) are done and no rerun is needed: in production staging is kept as an encrypted dump, read back
+   before anything is dropped (Jan, decision 41; docs/PRODUCTION.md B9 step 6); outside production, if a copy is
+   wanted, `mysqldump` it and keep it outside this repository (it holds Jira data); then `mysql -e "DROP DATABASE jira2redmine; DROP USER
    'jira2redmine'@'localhost';"`, `apt purge mariadb-server` (if installed for this), and empty `paths.tmp`.
 
 ## 0. Before the run
