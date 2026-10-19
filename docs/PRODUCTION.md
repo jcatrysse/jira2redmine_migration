@@ -303,6 +303,7 @@ else is a finding.
 | 18 | LDAP sync (real AD) | `DRY_RUN=1 bundle exec rake redmine:plugins:ldap_sync:sync_all`, read it (the first run creates groups and memberships that 5.1 never synced), then the real run; log in as one account in the required group, one outside, one disabled in AD | as the AD says |
 | 19 | SSO | `bundle exec rake redmine:bless_this_sso:status`; the entry point is now `/oauth/sso/authorize` (callback unchanged) | production: login, SSO-only, sign out |
 | 20 | the whole site | open the issue list, an issue, the agile board, the calendar, the gantt, My page, a wiki page, a helpdesk ticket, a contact, the people page, as admin and as a normal user; on the clone Claude can crawl every menu link and report any 500 | no error page |
+| 21 | GEOxyz relation types | open an issue with a GEOxyz relation (for example "create RMA" or "Wiki"), section Related issues; the labels come from `redmine_issue_view_columns.local.rb` and its locale file, kept from 5.1 (A.3) | the relation's own label, no "Translation missing" (the sign of a forgotten locale file) |
 
 ### A.6 Cron entries
 
