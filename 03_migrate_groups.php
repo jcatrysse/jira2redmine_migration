@@ -65,7 +65,10 @@ function main(array $config, array $cliOptions): void
     );
 
     $databaseConfig = ConfigValue::section($config, 'database', 'Missing or invalid configuration section: %s');
-    $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false]);
+    $pdo = ConnectionFactory::connect(
+        $databaseConfig,
+        [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false]
+    );
 
     if (in_array('jira', $phasesToRun, true)) {
         $jiraConfig = ConfigValue::section($config, 'jira', 'Missing or invalid configuration section: %s');
@@ -121,7 +124,8 @@ function main(array $config, array $cliOptions): void
         $transformSummary = runGroupTransformationPhase($pdo);
 
         printf(
-            "[%s] Completed transform phase.\n  Group sync -> Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
+            "[%s] Completed transform phase.\n  Group sync -> Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Skipped: %d,"
+                . " Unchanged: %d.%s",
             Clock::atom(),
             $transformSummary['matched'],
             $transformSummary['ready_for_creation'],
@@ -142,7 +146,8 @@ function main(array $config, array $cliOptions): void
         $memberSummary = $transformSummary['member_summary'] ?? null;
         if (is_array($memberSummary) && $memberSummary !== []) {
             printf(
-                "  Member sync -> Matched: %d, Ready: %d, Awaiting group: %d, Awaiting user: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
+                "  Member sync -> Matched: %d, Ready: %d, Awaiting group: %d, Awaiting user: %d, Manual: %d, Overrides kept: %d,"
+                    . " Skipped: %d, Unchanged: %d.%s",
                 $memberSummary['matched'] ?? 0,
                 $memberSummary['ready_for_assignment'] ?? 0,
                 $memberSummary['awaiting_group'] ?? 0,
@@ -225,7 +230,11 @@ function runGroupPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isD
     }
 
     if ($memberCount > 0) {
-        printf("  %d membership assignment(s) are marked as READY_FOR_ASSIGNMENT in migration_mapping_group_members.%s", $memberCount, PHP_EOL);
+        printf(
+            "  %d membership assignment(s) are marked as READY_FOR_ASSIGNMENT in migration_mapping_group_members.%s",
+            $memberCount,
+            PHP_EOL
+        );
     } else {
         printf("  No membership assignments are queued.%s", PHP_EOL);
     }
@@ -916,7 +925,10 @@ function printVersion(): void
 }
 
 /**
- * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int, status_counts: array<string, int>}
+ * @return array{
+ *     matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int,
+ *     status_counts: array<string, int>
+ * }
  */
 function runGroupTransformationPhase(PDO $pdo): array
 {
@@ -1279,7 +1291,11 @@ SQL;
     try {
         $statement = $pdo->query($sql);
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to load group membership mappings for transformation: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException(
+            'Failed to load group membership mappings for transformation: ' . $exception->getMessage(),
+            0,
+            $exception
+        );
     }
 
     if ($statement === false) {
@@ -1316,7 +1332,13 @@ SQL;
 }
 
 /**
- * @return array{summary: array{matched: int, ready_for_assignment: int, awaiting_group: int, awaiting_user: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int}, status_counts: array<string, int>}
+ * @return array{
+ *     summary: array{
+ *         matched: int, ready_for_assignment: int, awaiting_group: int, awaiting_user: int, manual_review: int,
+ *         manual_overrides: int, skipped: int, unchanged: int
+ *     },
+ *     status_counts: array<string, int>
+ * }
  */
 function runGroupMembershipTransformation(PDO $pdo): array
 {
@@ -1602,7 +1624,9 @@ function fetchGroupMigrationStatusCounts(PDO $pdo): array
 function fetchGroupMemberMigrationStatusCounts(PDO $pdo): array
 {
     try {
-        $statement = $pdo->query('SELECT migration_status, COUNT(*) AS total FROM migration_mapping_group_members GROUP BY migration_status');
+        $statement = $pdo->query(
+            'SELECT migration_status, COUNT(*) AS total FROM migration_mapping_group_members GROUP BY migration_status'
+        );
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to compute group member migration status counts: ' . $exception->getMessage(), 0, $exception);
     }
@@ -1839,7 +1863,11 @@ function fetchAndStoreRedmineGroups(Client $client, PDO $pdo): int
             try {
                 $rawPayload = json_encode($group, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             } catch (JsonException $exception) {
-                throw new RuntimeException(sprintf('Failed to encode Redmine group payload for group %d: %s', $groupId, $exception->getMessage()), 0, $exception);
+                throw new RuntimeException(
+                    sprintf('Failed to encode Redmine group payload for group %d: %s', $groupId, $exception->getMessage()),
+                    0,
+                    $exception
+                );
             }
 
             $rowsToInsert[] = [
@@ -1939,7 +1967,11 @@ function refreshJiraGroupMemberships(Client $client, PDO $pdo, array $groupIds):
                     ],
                 ]);
             } catch (GuzzleException $exception) {
-                throw new RuntimeException(sprintf('Failed to fetch Jira members for group %s: %s', $groupId, $exception->getMessage()), 0, $exception);
+                throw new RuntimeException(
+                    sprintf('Failed to fetch Jira members for group %s: %s', $groupId, $exception->getMessage()),
+                    0,
+                    $exception
+                );
             }
 
             try {
@@ -1975,7 +2007,11 @@ function refreshJiraGroupMemberships(Client $client, PDO $pdo, array $groupIds):
                     try {
                         $rawPayload = json_encode($member, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                     } catch (JsonException $exception) {
-                        throw new RuntimeException('Failed to encode Jira group member payload: ' . $exception->getMessage(), 0, $exception);
+                        throw new RuntimeException(
+                            'Failed to encode Jira group member payload: ' . $exception->getMessage(),
+                            0,
+                            $exception
+                        );
                     }
 
                     $insertStatement->execute([
@@ -1995,7 +2031,9 @@ function refreshJiraGroupMemberships(Client $client, PDO $pdo, array $groupIds):
             }
 
             $startAtValue = isset($decoded['startAt']) && is_numeric($decoded['startAt']) ? (int)$decoded['startAt'] : $startAt;
-            $maxResultsValue = isset($decoded['maxResults']) && is_numeric($decoded['maxResults']) ? (int)$decoded['maxResults'] : $maxResults;
+            $maxResultsValue = isset($decoded['maxResults']) && is_numeric($decoded['maxResults'])
+                ? (int)$decoded['maxResults']
+                : $maxResults;
             $startAt = $startAtValue + $maxResultsValue;
 
             $totalValue = isset($decoded['total']) && is_numeric($decoded['total']) ? (int)$decoded['total'] : null;
@@ -2076,7 +2114,11 @@ function refreshRedmineGroupMemberships(Client $client, PDO $pdo, array $groupId
                 'query' => ['include' => 'users,memberships'],
             ]);
         } catch (GuzzleException $exception) {
-            throw new RuntimeException(sprintf('Failed to fetch Redmine members for group %d: %s', $groupId, $exception->getMessage()), 0, $exception);
+            throw new RuntimeException(
+                sprintf('Failed to fetch Redmine members for group %d: %s', $groupId, $exception->getMessage()),
+                0,
+                $exception
+            );
         }
 
         try {
@@ -2182,7 +2224,11 @@ function refreshRedmineGroupMemberships(Client $client, PDO $pdo, array $groupId
                             JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
                         );
                     } catch (JsonException $exception) {
-                        throw new RuntimeException('Failed to encode Redmine group project role payload: ' . $exception->getMessage(), 0, $exception);
+                        throw new RuntimeException(
+                            'Failed to encode Redmine group project role payload: ' . $exception->getMessage(),
+                            0,
+                            $exception
+                        );
                     }
 
                     $projectRoleInsertStatement->execute([
@@ -2253,7 +2299,11 @@ function computeGroupMemberAutomationStateHash(
             JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
         );
     } catch (JsonException $exception) {
-        throw new RuntimeException('Failed to encode group membership automation state hash payload: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException(
+            'Failed to encode group membership automation state hash payload: ' . $exception->getMessage(),
+            0,
+            $exception
+        );
     }
 
     return hash('sha256', (string)$payload);

@@ -7,3 +7,4 @@ require_once __DIR__ . '/../lib/jira_gateway.php';
 require_once __DIR__ . '/../lib/verify.php';
 require_once __DIR__ . '/../lib/description_conversion.php';
 require_once __DIR__ . '/CommandLineInputs.php';
+require_once __DIR__ . '/SourceLayout.php';

@@ -204,7 +204,8 @@ function exportWorkflowSchemeProjects(Client $client, PDO $pdo): void
 {
     $projectIds = $pdo->query('SELECT project_id FROM staging_jira_projects_export ORDER BY project_id');
     $statement = $pdo->prepare(<<<SQL
-        INSERT INTO staging_jira_workflow_scheme_projects (project_id, scheme_id, scheme_name, default_workflow, issue_type_mappings, raw_payload)
+        INSERT INTO staging_jira_workflow_scheme_projects
+            (project_id, scheme_id, scheme_name, default_workflow, issue_type_mappings, raw_payload)
         VALUES (:project_id, :scheme_id, :scheme_name, :default_workflow, :issue_type_mappings, :raw_payload)
         ON DUPLICATE KEY UPDATE
             scheme_id = VALUES(scheme_id),
@@ -222,7 +223,9 @@ function exportWorkflowSchemeProjects(Client $client, PDO $pdo): void
     foreach (array_chunk($projectIds->fetchAll(PDO::FETCH_COLUMN), 50) as $chunk) {
         // the API takes the project ids as a repeated parameter
         $query = implode('&', array_map(static fn (mixed $id): string => 'projectId=' . rawurlencode((string)$id), $chunk));
-        $payload = decodeJsonResponse(jiraGetWithRetry($client, '/rest/api/3/workflowscheme/project?' . $query, [], 'projects', 'workflow-scheme-project'));
+        $payload = decodeJsonResponse(
+            jiraGetWithRetry($client, '/rest/api/3/workflowscheme/project?' . $query, [], 'projects', 'workflow-scheme-project')
+        );
         foreach (is_array($payload) ? ($payload['values'] ?? []) : [] as $entry) {
             $scheme = is_array($entry['workflowScheme'] ?? null) ? $entry['workflowScheme'] : [];
             foreach ($entry['projectIds'] ?? [] as $projectId) {

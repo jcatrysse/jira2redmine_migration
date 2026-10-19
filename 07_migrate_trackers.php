@@ -51,7 +51,9 @@ exit(Script::run(
 
 /**
  * @param array<string, mixed> $config
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool} $cliOptions
+ * @param array{
+ *     help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool
+ * } $cliOptions
  * @throws Throwable
  */
 function main(array $config, array $cliOptions): void
@@ -123,7 +125,8 @@ function main(array $config, array $cliOptions): void
         $transformSummary = runTrackerTransformationPhase($pdo, $config);
 
         printf(
-            "[%s] Completed transform phase. Matched: %d, Ready (create): %d, Ready (update): %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
+            "[%s] Completed transform phase. Matched: %d, Ready (create): %d, Ready (update): %d, Manual: %d, Overrides kept: %d,"
+                . " Skipped: %d, Unchanged: %d.%s",
             Clock::atom(),
             $transformSummary['matched'],
             $transformSummary['ready_for_creation'],
@@ -171,7 +174,8 @@ function main(array $config, array $cliOptions): void
 function fetchAndStoreJiraIssueTypes(Client $client, PDO $pdo): int
 {
     $insertStatement = $pdo->prepare(<<<SQL
-        INSERT INTO staging_jira_issue_types (id, name, description, is_subtask, hierarchy_level, scope_type, scope_project_id, raw_payload, extracted_at)
+        INSERT INTO staging_jira_issue_types
+            (id, name, description, is_subtask, hierarchy_level, scope_type, scope_project_id, raw_payload, extracted_at)
         VALUES (:id, :name, :description, :is_subtask, :hierarchy_level, :scope_type, :scope_project_id, :raw_payload, :extracted_at)
         ON DUPLICATE KEY UPDATE
             name = VALUES(name),
@@ -197,7 +201,8 @@ function fetchAndStoreJiraIssueTypes(Client $client, PDO $pdo): int
     $projectUsage = fetchJiraIssueTypeProjectUsage($client);
 
     $projectAssociationStatement = $pdo->prepare(<<<SQL
-        INSERT INTO staging_jira_issue_type_projects (jira_issue_type_id, jira_project_id, jira_project_key, jira_project_name, extracted_at)
+        INSERT INTO staging_jira_issue_type_projects
+            (jira_issue_type_id, jira_project_id, jira_project_key, jira_project_name, extracted_at)
         VALUES (:jira_issue_type_id, :jira_project_id, :jira_project_key, :jira_project_name, :extracted_at)
     SQL);
 
@@ -572,7 +577,10 @@ function fetchAndStoreRedmineTrackers(Client $client, PDO $pdo, array $redmineCo
 }
 
 /**
- * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int, status_counts: array<string, int>}
+ * @return array{
+ *     matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int,
+ *     status_counts: array<string, int>
+ * }
  */
 
 function runTrackerTransformationPhase(PDO $pdo, array $config): array
@@ -899,7 +907,11 @@ function refreshTrackerMetadata(PDO $pdo): void
     try {
         $pdo->exec($sql);
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to refresh Jira issue type metadata in migration_mapping_trackers: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException(
+            'Failed to refresh Jira issue type metadata in migration_mapping_trackers: ' . $exception->getMessage(),
+            0,
+            $exception
+        );
     }
 }
 
@@ -1504,7 +1516,11 @@ function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array 
 
     if (!$confirmPush) {
         printf("  --confirm-push not supplied: mappings remain in READY_FOR_CREATION.%s", PHP_EOL);
-        printf("  After creating the trackers manually, update migration_mapping_trackers with the Redmine IDs and set migration_status to CREATION_SUCCESS.%s", PHP_EOL);
+        printf(
+            "  After creating the trackers manually, update migration_mapping_trackers with the Redmine IDs and set migration_status"
+                . " to CREATION_SUCCESS.%s",
+            PHP_EOL
+        );
         return;
     }
 
@@ -1513,7 +1529,11 @@ function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array 
         return;
     }
 
-    printf("  Manual acknowledgement recorded. Remember to update redmine_tracker_id and migration_status once the trackers exist in Redmine.%s", PHP_EOL);
+    printf(
+        "  Manual acknowledgement recorded. Remember to update redmine_tracker_id and migration_status once the trackers exist in"
+            . " Redmine.%s",
+        PHP_EOL
+    );
 }
 
 function fetchTrackersReadyForCreation(PDO $pdo): array
@@ -1639,7 +1659,9 @@ function buildRedmineProjectTrackerSnapshot(PDO $pdo): array
 function buildJiraToRedmineProjectLookup(PDO $pdo): array
 {
     try {
-        $statement = $pdo->query('SELECT jira_project_id, redmine_project_id FROM migration_mapping_projects WHERE redmine_project_id IS NOT NULL');
+        $statement = $pdo->query(
+            'SELECT jira_project_id, redmine_project_id FROM migration_mapping_projects WHERE redmine_project_id IS NOT NULL'
+        );
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to load project mappings for tracker linkage: ' . $exception->getMessage(), 0, $exception);
     }

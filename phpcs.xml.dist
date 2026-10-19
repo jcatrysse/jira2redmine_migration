@@ -1,13 +1,34 @@
 <?xml version="1.0"?>
 <ruleset name="jira2redmine">
-    <description>PSR-12 for the new code; the scripts join as they move to src/.</description>
+    <description>PSR-12 for src/, the tests, the 16 scripts and the shared lib files.</description>
     <file>src</file>
     <file>tests</file>
+    <file>lib/cli.php</file>
     <file>lib/jira_gateway.php</file>
     <file>lib/verify.php</file>
+    <file>01_migrate_projects.php</file>
+    <file>02_migrate_users.php</file>
+    <file>03_migrate_groups.php</file>
+    <file>04_migrate_roles.php</file>
+    <file>05_migrate_statuses.php</file>
+    <file>06_migrate_priorities.php</file>
+    <file>07_migrate_trackers.php</file>
+    <file>08_migrate_custom_fields.php</file>
+    <file>09_migrate_attachments.php</file>
+    <file>10_migrate_issues.php</file>
+    <file>11_migrate_journals.php</file>
+    <file>12_migrate_issue_relations.php</file>
+    <file>13_migrate_tags.php</file>
+    <file>14_migrate_watchers.php</file>
+    <file>15_migrate_checklists.php</file>
+    <file>16_export_workflows.php</file>
     <rule ref="PSR12">
         <!-- Test classes and tools live in the global namespace, loaded by tests/bootstrap.php. -->
         <exclude name="PSR1.Classes.ClassDeclaration.MissingNamespace"/>
+    </rule>
+    <!-- A script is a command: it declares its functions and runs (the start, src/Cli/Script.php). -->
+    <rule ref="PSR1.Files.SideEffects.FoundWithSymbols">
+        <exclude-pattern>*/[0-9][0-9]_*.php</exclude-pattern>
     </rule>
     <rule ref="Generic.Files.LineLength">
         <properties>

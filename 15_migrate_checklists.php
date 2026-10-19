@@ -332,7 +332,13 @@ function runChecklistPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool
     if ($isDryRun) {
         foreach ($rows as $row) {
             $items = decodeJsonColumn($row['proposed_payload'] ?? null) ?: [];
-            printf("  - Issue #%d (%s): %d checklist items%s", (int)$row['redmine_issue_id'], $row['jira_issue_key'], count($items), PHP_EOL);
+            printf(
+                "  - Issue #%d (%s): %d checklist items%s",
+                (int)$row['redmine_issue_id'],
+                $row['jira_issue_key'],
+                count($items),
+                PHP_EOL
+            );
         }
         printf("  Dry-run active; no checklists will be pushed.%s", PHP_EOL);
         return;

@@ -22,17 +22,17 @@ final class ScriptFactoriesTest extends TestCase
             '07' => null, '10' => null];
         foreach (glob(__DIR__ . '/../[0-9][0-9]_*.php') ?: [] as $file) {
             $number = substr(basename($file), 0, 2);
-            $source = (string)file_get_contents($file);
+            $source = sourceWithoutLayout((string)file_get_contents($file));
             foreach (['createDatabaseConnection', 'createJiraClient', 'createRedmineClient'] as $copy) {
                 self::assertStringNotContainsString('function ' . $copy . '(', $source, basename($file));
             }
 
             $attribute = array_key_exists($number, $attributes) ? $attributes[$number] : self::ASSOC;
-            preg_match_all('/ConnectionFactory::connect\((.*)\);/', $source, $connects);
+            preg_match_all('/ConnectionFactory::connect\((.*?)\);/', $source, $connects);
             self::assertCount(1, $connects[1], basename($file));
             self::assertStringEndsWith($attribute === null ? 'Config' : ', ' . $attribute, $connects[1][0], basename($file));
 
-            preg_match_all('/ClientFactory::(?:jira|redmine)\((.*)\);/', $source, $clients);
+            preg_match_all('/ClientFactory::(?:jira|redmine)\((.*?)\);/', $source, $clients);
             self::assertNotEmpty($clients[1], basename($file));
             foreach ($clients[1] as $arguments) {
                 $hasTimeout = str_ends_with($arguments, ', 30.0');

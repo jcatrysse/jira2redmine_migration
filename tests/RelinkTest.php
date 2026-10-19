@@ -118,8 +118,8 @@ final class RelinkTest extends TestCase
 
     public function testThePushesStoreWhatTheySent(): void
     {
-        $ten = (string)file_get_contents(__DIR__ . '/../10_migrate_issues.php');
-        $eleven = (string)file_get_contents(__DIR__ . '/../11_migrate_journals.php');
+        $ten = sourceWithoutLayout((string)file_get_contents(__DIR__ . '/../10_migrate_issues.php'));
+        $eleven = sourceWithoutLayout((string)file_get_contents(__DIR__ . '/../11_migrate_journals.php'));
 
         self::assertGreaterThanOrEqual(4, substr_count($ten, 'recordPushedDescription($pdo, '), '10 does not store what it pushed');
         $call = 'markJournalPushSuccess($pdo, $mappingId, $journalId, $note)';

@@ -59,7 +59,9 @@ exit(Script::run(
 
 /**
  * @param array<string, mixed> $config
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool} $cliOptions
+ * @param array{
+ *     help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool
+ * } $cliOptions
  * @throws Throwable
  */
 function main(array $config, array $cliOptions): void
@@ -154,7 +156,8 @@ function main(array $config, array $cliOptions): void
 
         $assignmentSummary = $transformSummary['assignments'];
         printf(
-            "[%s] Project role assignment summary -> Ready: %d, Recorded: %d, Awaiting project: %d, Awaiting group: %d, Awaiting role: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
+            "[%s] Project role assignment summary -> Ready: %d, Recorded: %d, Awaiting project: %d, Awaiting group: %d, Awaiting role:"
+                . " %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
             Clock::atom(),
             $assignmentSummary['ready_for_assignment'],
             $assignmentSummary['already_recorded'],
@@ -189,7 +192,14 @@ function main(array $config, array $cliOptions): void
         $useExtendedApi = ExtendedApi::enabled($redmineConfig, $cliOptions['use_extended_api']);
 
         $workflowsConfig = $config['migration']['workflows'] ?? [];
-        runRolePushPhase($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi, is_array($workflowsConfig) ? $workflowsConfig : []);
+        runRolePushPhase(
+            $pdo,
+            $confirmPush,
+            $isDryRun,
+            $redmineConfig,
+            $useExtendedApi,
+            is_array($workflowsConfig) ? $workflowsConfig : []
+        );
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
@@ -317,7 +327,11 @@ function refreshJiraRoleDefinitions(Client $client, PDO $pdo): int
         try {
             $rawPayload = json_encode($role, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         } catch (JsonException $exception) {
-            throw new RuntimeException(sprintf('Failed to encode Jira role payload for role %d: %s', $roleId, $exception->getMessage()), 0, $exception);
+            throw new RuntimeException(
+                sprintf('Failed to encode Jira role payload for role %d: %s', $roleId, $exception->getMessage()),
+                0,
+                $exception
+            );
         }
 
         $roles[] = [
@@ -718,7 +732,9 @@ function fetchAndStoreRedmineBuiltinGroups(Client $client, PDO $pdo): int
         if (!is_array($group) || !isset($group['id'], $group['builtin']) || (string)$group['builtin'] === '') {
             continue;
         }
-        $insert->execute(['id' => (int)$group['id'], 'builtin' => (string)$group['builtin'], 'name' => normalizeString($group['name'] ?? null, 255)]);
+        $insert->execute(
+            ['id' => (int)$group['id'], 'builtin' => (string)$group['builtin'], 'name' => normalizeString($group['name'] ?? null, 255)]
+        );
         $count++;
     }
 
@@ -765,7 +781,11 @@ function fetchAndStoreRedmineRoles(Client $client, PDO $pdo): int
         try {
             $rawPayload = json_encode($role, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         } catch (JsonException $exception) {
-            throw new RuntimeException(sprintf('Failed to encode Redmine role payload for role %d: %s', $roleId, $exception->getMessage()), 0, $exception);
+            throw new RuntimeException(
+                sprintf('Failed to encode Redmine role payload for role %d: %s', $roleId, $exception->getMessage()),
+                0,
+                $exception
+            );
         }
 
         $roles[] = [
@@ -823,7 +843,10 @@ function fetchAndStoreRedmineRoles(Client $client, PDO $pdo): int
  * @return array{
  *     roles: array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int},
  *     role_status_counts: array<string, int>,
- *     assignments: array{ready_for_assignment: int, already_recorded: int, awaiting_project: int, awaiting_group: int, awaiting_role: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int},
+ *     assignments: array{
+ *         ready_for_assignment: int, already_recorded: int, awaiting_project: int, awaiting_group: int, awaiting_role: int,
+ *         manual_review: int, manual_overrides: int, skipped: int, unchanged: int
+ *     },
  *     assignment_status_counts: array<string, int>
  * }
  */
@@ -831,14 +854,24 @@ function runRoleTransformationPhase(PDO $pdo, array $config): array
 {
     synchronizeMigrationMappingRoles($pdo);
     $workflowsConfig = $config['migration']['workflows'] ?? [];
-    synchronizeMigrationMappingProjectRoleGroups($pdo, $config['migration']['roles'] ?? [], is_array($workflowsConfig) ? $workflowsConfig : []);
+    synchronizeMigrationMappingProjectRoleGroups(
+        $pdo,
+        $config['migration']['roles'] ?? [],
+        is_array($workflowsConfig) ? $workflowsConfig : []
+    );
 
     $roleMapping = new RoleMapping(WatcherMemberships::mappings($config['migration']['roles'] ?? []));
     $redmineRoleLookup = fetchRedmineRoleLookup($pdo);
     $roleTransformSummary = runRoleDefinitionTransformation($pdo, $redmineRoleLookup, $roleMapping);
 
     $existingAssignments = fetchRedmineGroupProjectRoleAssignments($pdo);
-    $assignmentTransformSummary = runProjectRoleAssignmentTransformation($pdo, $config, $redmineRoleLookup, $existingAssignments, $roleMapping);
+    $assignmentTransformSummary = runProjectRoleAssignmentTransformation(
+        $pdo,
+        $config,
+        $redmineRoleLookup,
+        $existingAssignments,
+        $roleMapping
+    );
 
     return [
         'roles' => $roleTransformSummary['summary'],
@@ -879,7 +912,10 @@ SQL;
 function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo, array $rolesConfig, array $workflowsConfig = []): void
 {
     try {
-        $actorRows = $pdo->query('SELECT project_id, project_key, project_name, role_id, role_name, actor_id, actor_display, actor_type FROM staging_jira_project_role_actors ORDER BY project_id, role_id, actor_type, actor_id');
+        $actorRows = $pdo->query(
+            'SELECT project_id, project_key, project_name, role_id, role_name, actor_id, actor_display, actor_type FROM'
+                . ' staging_jira_project_role_actors ORDER BY project_id, role_id, actor_type, actor_id'
+        );
         $groupRows = $pdo->query('SELECT group_id, name FROM staging_jira_groups');
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to read Jira project role actors: ' . $exception->getMessage(), 0, $exception);
@@ -894,7 +930,9 @@ function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo, array $rolesConf
     $groupNames = $groupRows->fetchAll(PDO::FETCH_KEY_PAIR);
 
     // The permission scheme's group grants, as group actors of a pseudo role (B31).
-    $grantRows = $pdo->query('SELECT project_id, project_key, project_name, permission, group_id, group_name FROM staging_jira_project_permission_grants');
+    $grantRows = $pdo->query(
+        'SELECT project_id, project_key, project_name, permission, group_id, group_name FROM staging_jira_project_permission_grants'
+    );
     foreach ($grantRows !== false ? $grantRows->fetchAll(PDO::FETCH_ASSOC) : [] as $grant) {
         [$pseudoRoleId, $pseudoRoleName] = PermissionGrants::PSEUDO_ROLES[(string)$grant['permission']] ?? [null, null];
         if ($pseudoRoleId === null) {
@@ -981,7 +1019,10 @@ function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo, array $rolesConf
     $stagedProjects = [];
     $projectRows = $pdo->query('SELECT id, project_key, name FROM staging_jira_projects');
     foreach ($projectRows !== false ? $projectRows->fetchAll(PDO::FETCH_ASSOC) : [] as $project) {
-        $stagedProjects[(string)$project['project_key']] = ['id' => (string)$project['id'], 'name' => $project['name'] !== null ? (string)$project['name'] : null];
+        $stagedProjects[(string)$project['project_key']] = [
+            'id' => (string)$project['id'],
+            'name' => $project['name'] !== null ? (string)$project['name'] : null,
+        ];
     }
     $stagedGroups = [];
     foreach ($groupNames as $groupId => $groupName) {
@@ -992,7 +1033,11 @@ function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo, array $rolesConf
         printf("  [warn] migration.workflows.group_roles: %s; no membership proposed (decision 14).%s", $unknown, PHP_EOL);
     }
     if ($workflowGroups['actors'] !== []) {
-        printf("  Proposed %d group(s) as members with their own workflow role (decision 14).%s", count($workflowGroups['actors']), PHP_EOL);
+        printf(
+            "  Proposed %d group(s) as members with their own workflow role (decision 14).%s",
+            count($workflowGroups['actors']),
+            PHP_EOL
+        );
     }
     $actors = array_merge($actors, $workflowGroups['actors']);
 
@@ -1040,7 +1085,11 @@ function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo, array $rolesConf
             ]);
         }
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to synchronize migration_mapping_project_role_groups: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException(
+            'Failed to synchronize migration_mapping_project_role_groups: ' . $exception->getMessage(),
+            0,
+            $exception
+        );
     }
 }
 
@@ -1138,7 +1187,10 @@ SQL;
  * @param PDO $pdo
  * @param array<string, array<int, array{id: int, name: string}>> $redmineRoleLookup
  * @param RoleMapping $roleMapping
- * @return array{summary: array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int}, status_counts: array<string, int>}
+ * @return array{
+ *     summary: array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int},
+ *     status_counts: array<string, int>
+ * }
  */
 function runRoleDefinitionTransformation(PDO $pdo, array $redmineRoleLookup, RoleMapping $roleMapping): array
 {
@@ -1395,10 +1447,21 @@ SQL;
  * @param array<string, array<int, array{id: int, name: string}>> $redmineRoleLookup
  * @param array<int, array<int, array<int, bool>>> $existingAssignments
  * @param RoleMapping $roleMapping
- * @return array{summary: array{ready_for_assignment: int, already_recorded: int, awaiting_project: int, awaiting_group: int, awaiting_role: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int}, status_counts: array<string, int>}
+ * @return array{
+ *     summary: array{
+ *         ready_for_assignment: int, already_recorded: int, awaiting_project: int, awaiting_group: int, awaiting_role: int,
+ *         manual_review: int, manual_overrides: int, skipped: int, unchanged: int
+ *     },
+ *     status_counts: array<string, int>
+ * }
  */
-function runProjectRoleAssignmentTransformation(PDO $pdo, array $config, array $redmineRoleLookup, array $existingAssignments, RoleMapping $roleMapping): array
-{
+function runProjectRoleAssignmentTransformation(
+    PDO $pdo,
+    array $config,
+    array $redmineRoleLookup,
+    array $existingAssignments,
+    RoleMapping $roleMapping
+): array {
     $defaultRoleId = determineDefaultRedmineRoleId($config);
     $defaultRoleName = $defaultRoleId !== null ? fetchRedmineRoleName($pdo, $defaultRoleId) : null;
 
@@ -1420,7 +1483,15 @@ function runProjectRoleAssignmentTransformation(PDO $pdo, array $config, array $
         ];
     }
 
-    $allowedStatuses = ['PENDING_ANALYSIS', 'READY_FOR_ASSIGNMENT', 'AWAITING_PROJECT', 'AWAITING_GROUP', 'AWAITING_ROLE', 'ASSIGNMENT_RECORDED', 'IGNORED'];
+    $allowedStatuses = [
+        'PENDING_ANALYSIS',
+        'READY_FOR_ASSIGNMENT',
+        'AWAITING_PROJECT',
+        'AWAITING_GROUP',
+        'AWAITING_ROLE',
+        'ASSIGNMENT_RECORDED',
+        'IGNORED',
+    ];
 
     $summary = [
         'ready_for_assignment' => 0,
@@ -1528,7 +1599,10 @@ function runProjectRoleAssignmentTransformation(PDO $pdo, array $config, array $
             $newStatus = 'AWAITING_PROJECT';
             $newProjectId = null;
             $summary['awaiting_project']++;
-        } elseif ($row['project_migration_status'] !== null && !in_array($row['project_migration_status'], ['MATCH_FOUND', 'CREATION_SUCCESS'], true)) {
+        } elseif (
+            $row['project_migration_status'] !== null
+            && !in_array($row['project_migration_status'], ['MATCH_FOUND', 'CREATION_SUCCESS'], true)
+        ) {
             $manualReason = sprintf('Project mapping is not ready (status: %s).', $row['project_migration_status']);
             $newStatus = 'AWAITING_PROJECT';
             $newProjectId = null;
@@ -1543,7 +1617,10 @@ function runProjectRoleAssignmentTransformation(PDO $pdo, array $config, array $
                 $newStatus = 'AWAITING_GROUP';
                 $newGroupId = null;
                 $summary['awaiting_group']++;
-            } elseif ($row['group_migration_status'] !== null && !in_array($row['group_migration_status'], ['MATCH_FOUND', 'CREATION_SUCCESS'], true)) {
+            } elseif (
+                $row['group_migration_status'] !== null
+                && !in_array($row['group_migration_status'], ['MATCH_FOUND', 'CREATION_SUCCESS'], true)
+            ) {
                 $manualReason = sprintf('%s mapping is not ready (status: %s).', ucfirst($principalLabel), $row['group_migration_status']);
                 $newStatus = 'AWAITING_GROUP';
                 $newGroupId = null;
@@ -1822,7 +1899,9 @@ SQL;
             'mapped_redmine_group_id' => $row['mapped_redmine_group_id'] !== null ? (int)$row['mapped_redmine_group_id'] : null,
             'group_migration_status' => $row['group_migration_status'] !== null ? (string)$row['group_migration_status'] : null,
             'matched_redmine_role_id' => $row['matched_redmine_role_id'] !== null ? (int)$row['matched_redmine_role_id'] : null,
-            'matched_redmine_role_status' => $row['matched_redmine_role_status'] !== null ? (string)$row['matched_redmine_role_status'] : null,
+            'matched_redmine_role_status' => $row['matched_redmine_role_status'] !== null
+                ? (string)$row['matched_redmine_role_status']
+                : null,
         ];
     }
 
@@ -1844,8 +1923,13 @@ SQL;
  * @param RoleMapping $roleMapping
  * @return array{status: string, role_id: ?int, proposed_role_id: ?int, proposed_role_name: ?string, message: ?string}
  */
-function resolveTargetRedmineRole(array $row, array $redmineRoleLookup, ?int $defaultRoleId, ?string $defaultRoleName, RoleMapping $roleMapping): array
-{
+function resolveTargetRedmineRole(
+    array $row,
+    array $redmineRoleLookup,
+    ?int $defaultRoleId,
+    ?string $defaultRoleName,
+    RoleMapping $roleMapping
+): array {
     $targetRoleName = $roleMapping->redmineRoleName($row['jira_role_name']);
     $resolvedRoleId = $row['redmine_role_id'] ?? $row['matched_redmine_role_id'];
     if ($resolvedRoleId !== null) {
@@ -1896,7 +1980,11 @@ function resolveTargetRedmineRole(array $row, array $redmineRoleLookup, ?int $de
             'role_id' => null,
             'proposed_role_id' => $defaultRoleId,
             'proposed_role_name' => $defaultRoleName,
-            'message' => sprintf('No direct role match found; defaulting to Redmine role #%d (%s). Review before assignment.', $defaultRoleId, $defaultRoleName),
+            'message' => sprintf(
+                'No direct role match found; defaulting to Redmine role #%d (%s). Review before assignment.',
+                $defaultRoleId,
+                $defaultRoleName
+            ),
         ];
     }
 
@@ -1905,7 +1993,8 @@ function resolveTargetRedmineRole(array $row, array $redmineRoleLookup, ?int $de
         'role_id' => null,
         'proposed_role_id' => null,
         'proposed_role_name' => null,
-        'message' => 'No Redmine role resolved automatically. Set redmine_role_id manually or configure migration.roles.default_redmine_role_id.',
+        'message' => 'No Redmine role resolved automatically.'
+            . ' Set redmine_role_id manually or configure migration.roles.default_redmine_role_id.',
     ];
 }
 
@@ -1958,8 +2047,14 @@ SQL;
  * @return void
  * @throws Throwable
  */
-function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi, array $workflowsConfig = []): void
-{
+function runRolePushPhase(
+    PDO $pdo,
+    bool $confirmPush,
+    bool $isDryRun,
+    array $redmineConfig,
+    bool $useExtendedApi,
+    array $workflowsConfig = []
+): void {
     ensureWorkflowGroupRoles($pdo, $confirmPush, $isDryRun, $redmineConfig, $useExtendedApi, $workflowsConfig);
     $pendingAssignments = fetchPendingRoleAssignments($pdo);
     $pendingCount = count($pendingAssignments);
@@ -1987,7 +2082,11 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
         foreach ($pendingAssignments as $assignment) {
             printf(
                 "  - Project: %s | Jira role: %s | Jira %s: %s%s",
-                formatJiraProjectReference($assignment['jira_project_key'], $assignment['jira_project_name'], $assignment['jira_project_id']),
+                formatJiraProjectReference(
+                    $assignment['jira_project_key'],
+                    $assignment['jira_project_name'],
+                    $assignment['jira_project_id']
+                ),
                 $assignment['jira_role_name'] ?? ('Role #' . $assignment['jira_role_id']),
                 $assignment['principal_type'],
                 $assignment['jira_group_name'] ?? ('Group #' . $assignment['jira_group_id']),
@@ -2048,7 +2147,9 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
         SQL);
 
         if ($updateStatement === false) {
-            throw new RuntimeException('Failed to prepare update statement for migration_mapping_project_role_groups during the push phase.');
+            throw new RuntimeException(
+                'Failed to prepare update statement for migration_mapping_project_role_groups during the push phase.'
+            );
         }
 
         $createdCount = 0;
@@ -2300,8 +2401,14 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
  * @param array<string, mixed> $redmineConfig
  * @param array<string, mixed> $workflowsConfig migration.workflows
  */
-function ensureWorkflowGroupRoles(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi, array $workflowsConfig): void
-{
+function ensureWorkflowGroupRoles(
+    PDO $pdo,
+    bool $confirmPush,
+    bool $isDryRun,
+    array $redmineConfig,
+    bool $useExtendedApi,
+    array $workflowsConfig
+): void {
     $statement = $pdo->prepare(<<<SQL
         SELECT mapping_id, jira_role_name, redmine_project_id, redmine_group_id
         FROM migration_mapping_project_role_groups
@@ -2515,8 +2622,13 @@ SQL;
  * @param string|null $notes
  * @return string
  */
-function computeRoleDefinitionAutomationHash(?int $redmineRoleId, ?int $proposedRoleId, ?string $proposedRoleName, string $status, ?string $notes): string
-{
+function computeRoleDefinitionAutomationHash(
+    ?int $redmineRoleId,
+    ?int $proposedRoleId,
+    ?string $proposedRoleName,
+    string $status,
+    ?string $notes
+): string {
     return hash('sha256', implode('|', [
         $redmineRoleId ?? 'null',
         $proposedRoleId ?? 'null',
@@ -2548,8 +2660,15 @@ function redmineProjectRoleAssignmentExists(array $assignments, int $groupId, in
  * @param string|null $notes
  * @return string
  */
-function computeProjectRoleAssignmentAutomationHash(?int $projectId, ?int $groupId, ?int $roleId, ?int $proposedRoleId, ?string $proposedRoleName, string $status, ?string $notes): string
-{
+function computeProjectRoleAssignmentAutomationHash(
+    ?int $projectId,
+    ?int $groupId,
+    ?int $roleId,
+    ?int $proposedRoleId,
+    ?string $proposedRoleName,
+    string $status,
+    ?string $notes
+): string {
     return AssignmentHash::compute($projectId, $groupId, $roleId, $proposedRoleId, $proposedRoleName, $status, $notes);
 }
 

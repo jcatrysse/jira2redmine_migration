@@ -66,7 +66,10 @@ function main(array $config, array $cliOptions): void
     );
 
     $databaseConfig = ConfigValue::section($config, 'database', 'Missing or invalid configuration section: %s');
-    $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false]);
+    $pdo = ConnectionFactory::connect(
+        $databaseConfig,
+        [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false]
+    );
 
     if (in_array('jira', $phasesToRun, true)) {
         $jiraConfig = ConfigValue::section($config, 'jira', 'Missing or invalid configuration section: %s');
@@ -576,7 +579,9 @@ function mapRedmineStatusLabelToCode(string $statusLabel): int
  *     proposed_lastname: ?string,
  *     proposed_redmine_status: ?string
  * } $operation
- * @param array{login: string, mail: string, firstname: string, lastname: string, status_label: string, status_code: int}|null $preparedFields
+ * @param array{
+ *     login: string, mail: string, firstname: string, lastname: string, status_label: string, status_code: int
+ * }|null $preparedFields
  * @return array{
  *     mapping_id: int,
  *     redmine_user_id: ?int,
@@ -814,7 +819,10 @@ function determineRedmineUserAuthSourceId(array $config): ?int
 
 /**
  * @param string $defaultRedmineUserStatus Proposed default status for new Redmine accounts.
- * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int, status_counts: array<string, int>}
+ * @return array{
+ *     matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int,
+ *     status_counts: array<string, int>
+ * }
  */
 function runUserTransformationPhase(PDO $pdo, string $defaultRedmineUserStatus): array
 {
@@ -1080,7 +1088,10 @@ function synchronizeMigrationMappingUsers(PDO $pdo): void
 }
 
 /**
- * @return array{0: array<int, array<string, mixed>>, 1: array<string, array<int, array<string, mixed>>>, 2: array<string, array<int, array<string, mixed>>>}
+ * @return array{
+ *     0: array<int, array<string, mixed>>, 1: array<string, array<int, array<string, mixed>>>, 2: array<string, array<int, array<string,
+ *     mixed>>>
+ * }
  */
 function fetchRedmineUserLookups(PDO $pdo): array
 {
@@ -1162,7 +1173,9 @@ function fetchUserMappingsForTransform(PDO $pdo): array
  */
 function fetchMigrationStatusCounts(PDO $pdo): array
 {
-    $statement = $pdo->query('SELECT migration_status, COUNT(*) AS total FROM migration_mapping_users GROUP BY migration_status ORDER BY migration_status');
+    $statement = $pdo->query(
+        'SELECT migration_status, COUNT(*) AS total FROM migration_mapping_users GROUP BY migration_status ORDER BY migration_status'
+    );
     if ($statement === false) {
         throw new RuntimeException('Failed to count migration mapping statuses.');
     }
@@ -1330,7 +1343,8 @@ function fetchAndStoreJiraUsers(Client $client, PDO $pdo): int
     $totalProcessed = 0;
 
     $insertStatement = $pdo->prepare(<<<SQL
-        INSERT INTO staging_jira_users (account_id, account_type, display_name, email_address, is_active, group_memberships, raw_payload, extracted_at)
+        INSERT INTO staging_jira_users
+            (account_id, account_type, display_name, email_address, is_active, group_memberships, raw_payload, extracted_at)
         VALUES (:account_id, :account_type, :display_name, :email_address, :is_active, :group_memberships, :raw_payload, :extracted_at)
         ON DUPLICATE KEY UPDATE
             account_type = VALUES(account_type),
@@ -1415,7 +1429,10 @@ function fetchAndStoreJiraUsers(Client $client, PDO $pdo): int
                 $groupMemberships = null;
                 if (isset($user['groups']) && is_array($user['groups'])) {
                     try {
-                        $groupMemberships = json_encode($user['groups'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                        $groupMemberships = json_encode(
+                            $user['groups'],
+                            JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+                        );
                     } catch (JsonException $exception) {
                         throw new RuntimeException('Failed to encode Jira user groups payload: ' . $exception->getMessage(), 0, $exception);
                     }
@@ -1542,7 +1559,9 @@ function fetchAndStoreRedmineUsers(Client $client, PDO $pdo): int
                 $mail = normalizeString($userSummary['mail'] ?? null, 255);
             }
             if ($mail === null) {
-                throw new RuntimeException(sprintf('Redmine user %d is missing an email address. Ensure the API key belongs to an administrator.', $userId));
+                throw new RuntimeException(
+                    sprintf('Redmine user %d is missing an email address. Ensure the API key belongs to an administrator.', $userId)
+                );
             }
 
             $statusValue = $userDetails['status'] ?? null;
@@ -1554,7 +1573,11 @@ function fetchAndStoreRedmineUsers(Client $client, PDO $pdo): int
             try {
                 $rawPayload = json_encode($userDetails, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             } catch (JsonException $exception) {
-                throw new RuntimeException(sprintf('Failed to encode Redmine user payload for user %d: %s', $userId, $exception->getMessage()), 0, $exception);
+                throw new RuntimeException(
+                    sprintf('Failed to encode Redmine user payload for user %d: %s', $userId, $exception->getMessage()),
+                    0,
+                    $exception
+                );
             }
 
             $rowsToInsert[] = [
@@ -1625,7 +1648,11 @@ function fetchRedmineUserDetail(Client $client, int $userId): array
     try {
         $decoded = json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR);
     } catch (JsonException $exception) {
-        throw new RuntimeException(sprintf('Unable to decode Redmine user %d payload: %s', $userId, $exception->getMessage()), 0, $exception);
+        throw new RuntimeException(
+            sprintf('Unable to decode Redmine user %d payload: %s', $userId, $exception->getMessage()),
+            0,
+            $exception
+        );
     }
 
     if (!is_array($decoded) || !isset($decoded['user']) || !is_array($decoded['user'])) {

@@ -46,7 +46,10 @@ require_once __DIR__ . '/lib/description_conversion.php';
 
 /**
  * @param array<string, mixed> $candidate
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string}> $attachments
+ * @param array<int, array{
+ *     mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string,
+ *     sharepoint_url: ?string
+ * }> $attachments
  * @return array{endpoint: string, body: string}|null
  */
 function buildIssueCreationPayloadForPreview(
@@ -198,7 +201,9 @@ exit(Script::run(
 
 /**
  * @param array<string, mixed> $config
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool} $cliOptions
+ * @param array{
+ *     help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool
+ * } $cliOptions
  * @throws Throwable
  */
 function main(array $config, array $cliOptions): void
@@ -498,7 +503,9 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
         throw new RuntimeException('Failed to prepare insert statement for staging_jira_issues.');
     }
 
-    $insertLabelStatement = $pdo->prepare('INSERT INTO staging_jira_labels (label_name) VALUES (:label_name) ON DUPLICATE KEY UPDATE label_name = VALUES(label_name)');
+    $insertLabelStatement = $pdo->prepare(
+        'INSERT INTO staging_jira_labels (label_name) VALUES (:label_name) ON DUPLICATE KEY UPDATE label_name = VALUES(label_name)'
+    );
     if ($insertLabelStatement === false) {
         throw new RuntimeException('Failed to prepare insert statement for staging_jira_labels.');
     }
@@ -566,7 +573,9 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
         printf("  All projects already have issues staged (issues_extracted_at is set).%s", PHP_EOL);
     }
 
-    $updateProjectStatusStmt = $pdo->prepare('UPDATE migration_mapping_projects SET issues_extracted_at = :now WHERE jira_project_id = :id');
+    $updateProjectStatusStmt = $pdo->prepare(
+        'UPDATE migration_mapping_projects SET issues_extracted_at = :now WHERE jira_project_id = :id'
+    );
     if ($updateProjectStatusStmt === false) {
         throw new RuntimeException('Failed to prepare project status update statement.');
     }
@@ -582,7 +591,11 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
         }
 
         if ($projectKey === '') {
-            printf("  [WARN] Skipping Jira project %s because no key was found.%s", $jiraProjectId !== '' ? $jiraProjectId : '[unknown]', PHP_EOL);
+            printf(
+                "  [WARN] Skipping Jira project %s because no key was found.%s",
+                $jiraProjectId !== '' ? $jiraProjectId : '[unknown]',
+                PHP_EOL
+            );
             continue;
         }
 
@@ -663,14 +676,18 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
 
                 $issueTypeId = isset($fields['issuetype']['id']) ? (string)$fields['issuetype']['id'] : '';
                 $statusId = isset($fields['status']['id']) ? (string)$fields['status']['id'] : '';
-                $statusCategoryKey = isset($fields['status']['statusCategory']['key']) ? (string)$fields['status']['statusCategory']['key'] : null;
+                $statusCategoryKey = isset(
+                    $fields['status']['statusCategory']['key']
+                ) ? (string)$fields['status']['statusCategory']['key'] : null;
                 $priorityId = isset($fields['priority']['id']) ? (string)$fields['priority']['id'] : null;
                 $reporterAccountId = isset($fields['reporter']['accountId']) ? (string)$fields['reporter']['accountId'] : null;
                 $assigneeAccountId = isset($fields['assignee']['accountId']) ? (string)$fields['assignee']['accountId'] : null;
                 $parentIssueId = isset($fields['parent']['id']) ? (string)$fields['parent']['id'] : null;
                 $dueDate = isset($fields['duedate']) ? normalizeDateString($fields['duedate']) : null;
 
-                $timeOriginalEstimate = isset($fields['timeoriginalestimate']) ? normalizeInteger($fields['timeoriginalestimate'], 0) : null;
+                $timeOriginalEstimate = isset($fields['timeoriginalestimate'])
+                    ? normalizeInteger($fields['timeoriginalestimate'], 0)
+                    : null;
                 $timeRemainingEstimate = isset($fields['timeestimate']) ? normalizeInteger($fields['timeestimate'], 0) : null;
                 $timeSpent = isset($fields['timespent']) ? normalizeInteger($fields['timespent'], 0) : null;
 
@@ -897,7 +914,11 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
                         try {
                             $linkPayload = json_encode($issueLink, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                         } catch (JsonException $exception) {
-                            throw new RuntimeException('Failed to encode Jira issue link payload: ' . $exception->getMessage(), 0, $exception);
+                            throw new RuntimeException(
+                                'Failed to encode Jira issue link payload: ' . $exception->getMessage(),
+                                0,
+                                $exception
+                            );
                         }
 
                         $insertIssueLinkStatement->execute([
@@ -1104,13 +1125,25 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
     $cascadingFieldIndex = buildCascadingFieldIndex($pdo);
 
     $issueConfig = $config['migration']['issues'] ?? [];
-    $defaultProjectId = isset($issueConfig['default_redmine_project_id']) ? normalizeInteger($issueConfig['default_redmine_project_id'], 1) : null;
-    $defaultTrackerId = isset($issueConfig['default_redmine_tracker_id']) ? normalizeInteger($issueConfig['default_redmine_tracker_id'], 1) : null;
-    $defaultStatusId = isset($issueConfig['default_redmine_status_id']) ? normalizeInteger($issueConfig['default_redmine_status_id'], 1) : null;
-    $defaultPriorityId = isset($issueConfig['default_redmine_priority_id']) ? normalizeInteger($issueConfig['default_redmine_priority_id'], 1) : null;
+    $defaultProjectId = isset(
+        $issueConfig['default_redmine_project_id']
+    ) ? normalizeInteger($issueConfig['default_redmine_project_id'], 1) : null;
+    $defaultTrackerId = isset(
+        $issueConfig['default_redmine_tracker_id']
+    ) ? normalizeInteger($issueConfig['default_redmine_tracker_id'], 1) : null;
+    $defaultStatusId = isset(
+        $issueConfig['default_redmine_status_id']
+    ) ? normalizeInteger($issueConfig['default_redmine_status_id'], 1) : null;
+    $defaultPriorityId = isset(
+        $issueConfig['default_redmine_priority_id']
+    ) ? normalizeInteger($issueConfig['default_redmine_priority_id'], 1) : null;
     $defaultAuthorId = extractDefaultIssueAuthorId($config);
-    $defaultAssigneeId = isset($issueConfig['default_redmine_assignee_id']) ? normalizeInteger($issueConfig['default_redmine_assignee_id'], 1) : null;
-    $defaultIsPrivate = array_key_exists('default_is_private', $issueConfig) ? normalizeBooleanFlag($issueConfig['default_is_private']) : null;
+    $defaultAssigneeId = isset(
+        $issueConfig['default_redmine_assignee_id']
+    ) ? normalizeInteger($issueConfig['default_redmine_assignee_id'], 1) : null;
+    $defaultIsPrivate = array_key_exists('default_is_private', $issueConfig)
+        ? normalizeBooleanFlag($issueConfig['default_is_private'])
+        : null;
     $subtaskBehavior = normalizeSubtaskStatusBehavior($issueConfig['subtask_status_behavior'] ?? null);
     $subtaskCloseStatusId = isset($issueConfig['subtask_close_status_id'])
         ? normalizeInteger($issueConfig['subtask_close_status_id'], 1)
@@ -1259,7 +1292,9 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
         $issueCreatedAt = isset($row['jira_created_at']) ? (string)$row['jira_created_at'] : null;
         $issueDueDate = isset($row['jira_due_date']) ? (string)$row['jira_due_date'] : null;
         $issueStatusCategory = isset($row['jira_status_category_key']) ? (string)$row['jira_status_category_key'] : null;
-        $issueTimeOriginalEstimate = isset($row['jira_time_original_estimate']) ? normalizeInteger($row['jira_time_original_estimate'], 0) : null;
+        $issueTimeOriginalEstimate = isset($row['jira_time_original_estimate'])
+            ? normalizeInteger($row['jira_time_original_estimate'], 0)
+            : null;
         $issueRawPayload = isset($row['jira_raw_payload']) ? (string)$row['jira_raw_payload'] : null;
 
         $redmineProjectId = resolveRedmineProjectId($projectLookup, $jiraProjectId);
@@ -1287,8 +1322,14 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
 
         $issueAttachments = $attachmentMetadata[$row['jira_issue_id']] ?? [];
         $proposedSubject = truncateString($issueSummary, 255);
-        $proposedDescription = ($issueDescriptionHtml !== null && !str_contains($issueDescriptionHtml, "<!-- ADF macro (type = 'table') -->"))
-            ? convertJiraHtmlToMarkdown($issueDescriptionHtml, $issueAttachments, is_string($issueDescriptionAdf) ? $issueDescriptionAdf : null)
+        $proposedDescription = (
+            $issueDescriptionHtml !== null && !str_contains($issueDescriptionHtml, "<!-- ADF macro (type = 'table') -->")
+        )
+            ? convertJiraHtmlToMarkdown(
+                $issueDescriptionHtml,
+                $issueAttachments,
+                is_string($issueDescriptionAdf) ? $issueDescriptionAdf : null
+            )
             : null;
 
         //if ($proposedDescription === null && $issueDescriptionAdf !== null) {
@@ -1381,12 +1422,18 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
                     : null;
 
                 if ($customFieldWarnings !== []) {
-                    $message = sprintf('Custom field values could not be normalised for fields: %s.', implode(', ', array_unique($customFieldWarnings)));
+                    $message = sprintf(
+                        'Custom field values could not be normalised for fields: %s.',
+                        implode(', ', array_unique($customFieldWarnings))
+                    );
                     $notes[] = $message;
                     $blockingNotes[] = $message;
                 }
                 if ($cascadingWarnings !== []) {
-                    $message = sprintf('Cascading selection could not be mapped for fields: %s.', implode(', ', array_unique($cascadingWarnings)));
+                    $message = sprintf(
+                        'Cascading selection could not be mapped for fields: %s.',
+                        implode(', ', array_unique($cascadingWarnings))
+                    );
                     $notes[] = $message;
                     $blockingNotes[] = $message;
                 }
@@ -1426,7 +1473,12 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
                     $notes[] = 'Subtask status adjusted to closed status per configuration.';
                 } elseif ($subtaskBehavior === 'open_parent') {
                     $notes[] = OpenParentStatus::note($subtaskOpenParentStatusName, $jiraStatusNames[$jiraStatusId] ?? null);
-                    printf("  [open-parent] %s: Redmine status \"%s\" instead of the closed Jira status, because a subtask is open.%s", $row['jira_issue_key'], $subtaskOpenParentStatusName, PHP_EOL);
+                    printf(
+                        "  [open-parent] %s: Redmine status \"%s\" instead of the closed Jira status, because a subtask is open.%s",
+                        $row['jira_issue_key'],
+                        $subtaskOpenParentStatusName,
+                        PHP_EOL
+                    );
                 }
             }
 
@@ -2045,7 +2097,11 @@ function runIssuePushPhase(
                 'migration_status' => 'CREATION_SUCCESS',
                 'notes' => null,
             ]);
-            recordPushedDescription($pdo, $mappingId, $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null);
+            recordPushedDescription(
+                $pdo,
+                $mappingId,
+                $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null
+            );
             printf("  [skip] Jira issue %s: description and parent already up to date.%s", $jiraIssueKey, PHP_EOL);
             continue;
         }
@@ -2096,7 +2152,11 @@ function runIssuePushPhase(
                             'notes' => null,
                         ]);
 
-                        recordPushedDescription($pdo, $mappingId, $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null);
+                        recordPushedDescription(
+                            $pdo,
+                            $mappingId,
+                            $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null
+                        );
                         printf("  [updated] Jira issue %s → Redmine issue #%d%s", $jiraIssueKey, $redmineIssueId, PHP_EOL);
                         continue;
                     } catch (Throwable $retryException) {
@@ -2156,7 +2216,11 @@ function runIssuePushPhase(
             'notes' => null,
         ]);
 
-        recordPushedDescription($pdo, $mappingId, $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null);
+        recordPushedDescription(
+            $pdo,
+            $mappingId,
+            $candidate['proposed_description'] !== null ? (string)$candidate['proposed_description'] : null
+        );
         printf("  [updated] Jira issue %s → Redmine issue #%d%s", $jiraIssueKey, $redmineIssueId, PHP_EOL);
     }
 }
@@ -2551,7 +2615,12 @@ function summarizeAttachmentStatusesForIssue(PDO $pdo, string $jiraIssueId): arr
     }
 
     $statement->execute(['issue_id' => $jiraIssueId]);
-    /** @var list<array{migration_status: string, download_enabled: int|string, upload_enabled: int|string, redmine_upload_token: ?string, sharepoint_url: ?string}> $rows */
+    /**
+     * @var list<array{
+     *     migration_status: string, download_enabled: int|string, upload_enabled: int|string, redmine_upload_token: ?string,
+     *     sharepoint_url: ?string
+     * }> $rows
+     */
     $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $statement->closeCursor();
 
@@ -2584,7 +2653,10 @@ function countAssociationCandidates(PDO $pdo, string $jiraIssueId): int
 }
 
 /**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string}> $attachments
+ * @param array<int, array{
+ *     mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string,
+ *     sharepoint_url: ?string
+ * }> $attachments
  * @return array<int, array<string, mixed>>
  */
 function buildIssueUploadPayload(array $attachments, array $finalNames = []): array
@@ -2696,7 +2768,10 @@ function buildJiraIssueLinkBlock(?string $description, string $jiraIssueKey, ?st
 }
 
 /**
- * @param array<int, array{mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string, sharepoint_url: ?string}> $attachments
+ * @param array<int, array{
+ *     mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string,
+ *     sharepoint_url: ?string
+ * }> $attachments
  */
 function markSharePointAttachmentsAsLinked(PDO $pdo, array $attachments, int $redmineIssueId): void
 {
@@ -2709,8 +2784,14 @@ function markSharePointAttachmentsAsLinked(PDO $pdo, array $attachments, int $re
     }
 }
 
-function updateAttachmentMappingAfterPush(PDO $pdo, int $mappingId, ?int $redmineAttachmentId, string $status, ?string $notes, ?int $redmineIssueId = null): void
-{
+function updateAttachmentMappingAfterPush(
+    PDO $pdo,
+    int $mappingId,
+    ?int $redmineAttachmentId,
+    string $status,
+    ?string $notes,
+    ?int $redmineIssueId = null
+): void {
     $sql = <<<SQL
         UPDATE migration_mapping_attachments
         SET
@@ -3132,7 +3213,12 @@ function buildRedmineAttachmentFilename(string $jiraAttachmentId, string $origin
 }
 
 /**
- * @return array<string, array{parent_field_id: int, child_field_id: int, child_lookup: array<string, array{parent_option_id: int|null, child_option_id: int|null, parent_label: string, child_label: string}>, child_label_lookup: array<string, array<int,string>>, parent_options: array<string,int>, child_options: array<string,int>, parent_jira_options: array<string,int>}>|array{}
+ * @return array<string, array{
+ *     parent_field_id: int, child_field_id: int, child_lookup: array<string,
+ *     array{parent_option_id: int|null, child_option_id: int|null, parent_label: string, child_label: string}>,
+ *     child_label_lookup: array<string, array<int, string>>, parent_options: array<string, int>, child_options: array<string, int>,
+ *     parent_jira_options: array<string, int>
+ * }>|array{}
  */
 function buildCascadingFieldIndex(PDO $pdo): array
 {
@@ -3377,7 +3463,12 @@ function buildCustomFieldMappingIndex(PDO $pdo): array
 
 /**
  * @param array<string, mixed> $issuePayload
- * @param array<string, array{parent_field_id: int, child_field_id: int, child_lookup: array<string, array{parent_option_id: int|null, child_option_id: int|null, parent_label: string, child_label: string}>, child_label_lookup: array<string, array<int,string>>, parent_options: array<string,int>, child_options: array<string,int>, parent_jira_options: array<string,int>}> $cascadingIndex
+ * @param array<string, array{
+ *     parent_field_id: int, child_field_id: int, child_lookup: array<string,
+ *     array{parent_option_id: int|null, child_option_id: int|null, parent_label: string, child_label: string}>,
+ *     child_label_lookup: array<string, array<int, string>>, parent_options: array<string, int>, child_options: array<string, int>,
+ *     parent_jira_options: array<string, int>
+ * }> $cascadingIndex
  * @param array<int, string> $warnings
  * @return array<int, array{id: int, value: string}>
  */
@@ -3491,7 +3582,10 @@ function buildCascadingCustomFieldPayload(array $issuePayload, array $cascadingI
 
 /**
  * @param array<string, mixed> $issuePayload
- * @param array<string, array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, text_formatting: bool, is_multiple: bool, enumeration_lookup: array<string, string>}> $mappingIndex
+ * @param array<string, array{
+ *     jira_field_name: string, redmine_custom_field_id: int, field_format: string, text_formatting: bool, is_multiple: bool,
+ *     enumeration_lookup: array<string, string>
+ * }> $mappingIndex
  * @param array<int, string> $warnings
  * @return array<int, array{id: int, value: string|array<int, string>}>|array{}
  */
@@ -3601,7 +3695,10 @@ function buildFormattedCustomFieldValue(
 
 /**
  * @param array<string, mixed> $issuePayload
- * @param array<string, array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, text_formatting: bool, is_multiple: bool, enumeration_lookup: array<string, string>}> $mappingIndex
+ * @param array<string, array{
+ *     jira_field_name: string, redmine_custom_field_id: int, field_format: string, text_formatting: bool, is_multiple: bool,
+ *     enumeration_lookup: array<string, string>
+ * }> $mappingIndex
  * @param array<int, array{id: int, value: string|array<int, string>}> $currentPayload
  * @param array<int, string> $warnings
  * @return array<int, array{id: int, value: string|array<int, string>}>
@@ -3661,8 +3758,14 @@ function appendResolutionCustomFieldPayload(
 }
 
 /**
- * @param array<string, array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, text_formatting: bool, is_multiple: bool, enumeration_lookup: array<string, string>}> $mappingIndex
- * @return array{jira_field_name: string, redmine_custom_field_id: int, field_format: string, text_formatting: bool, is_multiple: bool, enumeration_lookup: array<string, string>}|null
+ * @param array<string, array{
+ *     jira_field_name: string, redmine_custom_field_id: int, field_format: string, text_formatting: bool, is_multiple: bool,
+ *     enumeration_lookup: array<string, string>
+ * }> $mappingIndex
+ * @return array{
+ *     jira_field_name: string, redmine_custom_field_id: int, field_format: string, text_formatting: bool, is_multiple: bool,
+ *     enumeration_lookup: array<string, string>
+ * }|null
  */
 function resolveCustomFieldMappingByName(array $mappingIndex, string $fieldName): ?array
 {
@@ -4594,7 +4697,9 @@ function fetchRedmineStatusClosedIndex(PDO $pdo): array
     }
 
     // The snapshot is taken before 05 creates the Jira statuses; their closed flag is in the status mapping.
-    $mapped = $pdo->query('SELECT redmine_status_id, proposed_is_closed FROM migration_mapping_statuses WHERE redmine_status_id IS NOT NULL');
+    $mapped = $pdo->query(
+        'SELECT redmine_status_id, proposed_is_closed FROM migration_mapping_statuses WHERE redmine_status_id IS NOT NULL'
+    );
     if ($mapped !== false) {
         foreach ($mapped->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
             $index[(int)$row['redmine_status_id']] ??= !empty($row['proposed_is_closed']);
@@ -4617,7 +4722,9 @@ function fetchRedmineStatusesForLookup(PDO $pdo): array
     $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $statement->closeCursor();
 
-    return array_values(array_map(static fn (array $r): array => ['id' => $r['id'], 'name' => (string)$r['name'], 'is_closed' => $r['is_closed']], $rows));
+    return array_values(
+        array_map(static fn (array $r): array => ['id' => $r['id'], 'name' => (string)$r['name'], 'is_closed' => $r['is_closed']], $rows)
+    );
 }
 
 /**
@@ -4868,7 +4975,11 @@ function printUsage(): void
     printf("\nOptions:%s", PHP_EOL);
     printf("  -h, --help               Show this help message.%s", PHP_EOL);
     printf("  -V, --version            Display the script version.%s", PHP_EOL);
-    printf("      --phases=<list>      Comma-separated list of phases to run (%s).%s", implode(', ', array_keys(AVAILABLE_PHASES)), PHP_EOL);
+    printf(
+        "      --phases=<list>      Comma-separated list of phases to run (%s).%s",
+        implode(', ', array_keys(AVAILABLE_PHASES)),
+        PHP_EOL
+    );
     printf("      --skip=<list>        Comma-separated list of phases to skip.%s", PHP_EOL);
     printf("      --confirm-push       Required to allow the push phase to create issues in Redmine.%s", PHP_EOL);
     printf("      --dry-run            Preview push payloads without contacting Redmine.%s", PHP_EOL);
@@ -5193,7 +5304,9 @@ function buildUploadUniqueName(string $attachmentId, string $originalFilename): 
  */
 function normalizeAttachmentsForMapping(PDO $pdo, int $mappingId, ?string $proposedDescription = null): ?string
 {
-    $selectSql = 'SELECT jira_issue_id' . ($proposedDescription === null ? ', proposed_description' : '') . ' FROM migration_mapping_issues WHERE mapping_id = :mid';
+    $selectSql = 'SELECT jira_issue_id' . (
+        $proposedDescription === null ? ', proposed_description' : ''
+    ) . ' FROM migration_mapping_issues WHERE mapping_id = :mid';
     $stmt = $pdo->prepare($selectSql);
     if ($stmt === false) {
         throw new RuntimeException('Failed to prepare mapping fetch statement.');

@@ -57,7 +57,10 @@ exit(Script::run(
 
 /**
  * @param array<string, mixed> $config
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_pull: bool, confirm_push: bool, dry_run: bool, download_limit: ?int, upload_limit: ?int, use_extended_api: bool} $cliOptions
+ * @param array{
+ *     help: bool, version: bool, phases: ?string, skip: ?string, confirm_pull: bool, confirm_push: bool, dry_run: bool,
+ *     download_limit: ?int, upload_limit: ?int, use_extended_api: bool
+ * } $cliOptions
  * @throws Throwable
  */
 function main(array $config, array $cliOptions): void
@@ -1051,7 +1054,14 @@ SQL);
 
         if ($uploadToSharePoint && $sharePointClient !== null && $sharePointConfig !== null) {
             try {
-                $sharePointUrl = uploadAttachmentToSharePoint($sharePointClient, $sharePointConfig, $handle, $fileSize, $filename, $uniqueName);
+                $sharePointUrl = uploadAttachmentToSharePoint(
+                    $sharePointClient,
+                    $sharePointConfig,
+                    $handle,
+                    $fileSize,
+                    $filename,
+                    $uniqueName
+                );
                 $updateStatement->execute([
                     'migration_status' => 'PENDING_ASSOCIATION',
                     'redmine_upload_token' => null,
@@ -1297,7 +1307,10 @@ function sanitizeAttachmentFileName(string $filename): string
 
 /**
  * @param array<string, mixed> $config
- * @return array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int}|null
+ * @return array{
+ *     offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string,
+ *     folder_path: string, graph_base_url: string, chunk_size_bytes: int
+ * }|null
  */
 function extractSharePointConfig(array $config): ?array
 {
@@ -1328,7 +1341,9 @@ function extractSharePointConfig(array $config): ?array
         }
     }
 
-    $graphBaseUrl = isset($sharePointConfig['graph_base_url']) ? (string)$sharePointConfig['graph_base_url'] : 'https://graph.microsoft.com/v1.0';
+    $graphBaseUrl = isset($sharePointConfig['graph_base_url'])
+        ? (string)$sharePointConfig['graph_base_url']
+        : 'https://graph.microsoft.com/v1.0';
     $chunkSize = (int)($sharePointConfig['chunk_size_bytes'] ?? (5 * 1024 * 1024));
     if ($chunkSize <= 0) {
         $chunkSize = 5 * 1024 * 1024;
@@ -1348,7 +1363,10 @@ function extractSharePointConfig(array $config): ?array
 }
 
 /**
- * @param array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int} $sharePointConfig
+ * @param array{
+ *     offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string,
+ *     folder_path: string, graph_base_url: string, chunk_size_bytes: int
+ * } $sharePointConfig
  */
 function createSharePointClient(array $sharePointConfig): Client
 {
@@ -1366,7 +1384,10 @@ function createSharePointClient(array $sharePointConfig): Client
 }
 
 /**
- * @param array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int} $sharePointConfig
+ * @param array{
+ *     offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string,
+ *     folder_path: string, graph_base_url: string, chunk_size_bytes: int
+ * } $sharePointConfig
  * @return array{access_token: string, expires_at: int}
  */
 function fetchSharePointAccessTokenWithExpiry(array $sharePointConfig): array
@@ -1409,7 +1430,10 @@ function fetchSharePointAccessTokenWithExpiry(array $sharePointConfig): array
 /**
  * Cache token in-memory for this script run, refresh a bit early.
  *
- * @param array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int} $sharePointConfig
+ * @param array{
+ *     offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string,
+ *     folder_path: string, graph_base_url: string, chunk_size_bytes: int
+ * } $sharePointConfig
  */
 function getCachedSharePointAccessToken(array $sharePointConfig, int $refreshSkewSeconds = 120): string
 {
@@ -1443,7 +1467,10 @@ function getCachedSharePointAccessToken(array $sharePointConfig, int $refreshSke
 }
 
 /**
- * @param array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int}|null $sharePointConfig
+ * @param array{
+ *     offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string,
+ *     folder_path: string, graph_base_url: string, chunk_size_bytes: int
+ * }|null $sharePointConfig
  */
 function shouldUploadToSharePoint(?array $sharePointConfig, ?Client $sharePointClient, ?int $reportedSize, int $actualSize): bool
 {
@@ -1462,10 +1489,19 @@ function shouldUploadToSharePoint(?array $sharePointConfig, ?Client $sharePointC
 }
 
 /**
- * @param array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int} $sharePointConfig
+ * @param array{
+ *     offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string,
+ *     folder_path: string, graph_base_url: string, chunk_size_bytes: int
+ * } $sharePointConfig
  */
-function uploadAttachmentToSharePoint(Client &$client, array $sharePointConfig, $handle, int $fileSize, string $filename, string $uniqueName): string
-{
+function uploadAttachmentToSharePoint(
+    Client &$client,
+    array $sharePointConfig,
+    $handle,
+    int $fileSize,
+    string $filename,
+    string $uniqueName
+): string {
     // ensure token is fresh before Graph call that creates session
     $client = createSharePointClient($sharePointConfig);
 
@@ -1585,7 +1621,10 @@ function uploadAttachmentToSharePoint(Client &$client, array $sharePointConfig, 
 }
 
 /**
- * @param array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int} $sharePointConfig
+ * @param array{
+ *     offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string,
+ *     folder_path: string, graph_base_url: string, chunk_size_bytes: int
+ * } $sharePointConfig
  */
 function createSharePointUploadSession(Client &$client, array $sharePointConfig, string $targetPath, int $attempt = 0): string
 {
@@ -1626,7 +1665,10 @@ function createSharePointUploadSession(Client &$client, array $sharePointConfig,
 }
 
 /**
- * @param array{offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string, folder_path: string, graph_base_url: string, chunk_size_bytes: int} $sharePointConfig
+ * @param array{
+ *     offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string,
+ *     folder_path: string, graph_base_url: string, chunk_size_bytes: int
+ * } $sharePointConfig
  */
 function buildSharePointTargetPath(array $sharePointConfig, string $filename): string
 {

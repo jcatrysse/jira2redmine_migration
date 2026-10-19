@@ -62,11 +62,11 @@ final class HistoryPhaseTest extends TestCase
         self::assertStringContainsString(
             "storeHistoryResult(\$pdo, (string)\$event['journal']['history_id'], \$jiraIssueId, 'history_journal_id', "
             . "\$answer['journal_ids'][\$index]);",
-            $eleven
+            sourceWithoutLayout($eleven)
         );
         self::assertStringContainsString(
             "storeHistoryResult(\$pdo, \$stamp['history_id'], \$jiraIssueId, 'history_attachment_id', \$answer['attachment_id']);",
-            $eleven
+            sourceWithoutLayout($eleven)
         );
         $schema = (string)file_get_contents(__DIR__ . '/../database/schema.sql');
         self::assertStringContainsString('`history_journal_id` INT NULL', $schema);

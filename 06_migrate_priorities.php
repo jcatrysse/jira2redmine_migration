@@ -51,7 +51,9 @@ exit(Script::run(
 
 /**
  * @param array<string, mixed> $config
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool} $cliOptions
+ * @param array{
+ *     help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool
+ * } $cliOptions
  * @throws Throwable
  */
 function main(array $config, array $cliOptions): void
@@ -346,7 +348,10 @@ function fetchAndStoreRedmineIssuePriorities(Client $client, PDO $pdo): int
 
 /**
  * @param array<string, mixed> $priorityConfig
- * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int, status_counts: array<string, int>}
+ * @return array{
+ *     matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int,
+ *     status_counts: array<string, int>
+ * }
  */
 function runPriorityTransformationPhase(PDO $pdo, array $priorityConfig = []): array
 {
@@ -447,7 +452,13 @@ function runPriorityTransformationPhase(PDO $pdo, array $priorityConfig = []): a
         }
 
         $defaultName = $jiraPriorityName !== null ? normalizeString($jiraPriorityName, 255) : null;
-        $proposal = $proposals->propose($jiraPriorityId, $defaultName, $currentProposedName, $currentProposedIsDefault, $currentProposedPosition);
+        $proposal = $proposals->propose(
+            $jiraPriorityId,
+            $defaultName,
+            $currentProposedName,
+            $currentProposedIsDefault,
+            $currentProposedPosition
+        );
         $newStatus = $proposal['status'];
         $newRedmineId = $proposal['redmine_id'];
         $proposedName = $proposal['name'];
@@ -540,7 +551,11 @@ function refreshPriorityMetadata(PDO $pdo): void
     try {
         $pdo->exec($sql);
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to refresh Jira priority metadata in migration_mapping_priorities: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException(
+            'Failed to refresh Jira priority metadata in migration_mapping_priorities: ' . $exception->getMessage(),
+            0,
+            $exception
+        );
     }
 }
 
@@ -658,7 +673,11 @@ function computeLegacyPriorityAutomationStateHash(
     try {
         $json = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     } catch (JsonException $exception) {
-        throw new RuntimeException('Failed to compute legacy automation hash for priority mapping: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException(
+            'Failed to compute legacy automation hash for priority mapping: ' . $exception->getMessage(),
+            0,
+            $exception
+        );
     }
 
     return hash('sha256', $json);
@@ -935,7 +954,11 @@ function runPriorityPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array
 
     if (!$confirmPush) {
         printf("  --confirm-push not supplied: mappings remain in READY_FOR_CREATION.%s", PHP_EOL);
-        printf("  After creating the priorities manually, update migration_mapping_priorities with the Redmine IDs and set migration_status to CREATION_SUCCESS.%s", PHP_EOL);
+        printf(
+            "  After creating the priorities manually, update migration_mapping_priorities with the Redmine IDs and set"
+                . " migration_status to CREATION_SUCCESS.%s",
+            PHP_EOL
+        );
         return;
     }
 
@@ -944,7 +967,11 @@ function runPriorityPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array
         return;
     }
 
-    printf("  Manual acknowledgement recorded. Remember to update redmine_priority_id, proposed_redmine_position, and migration_status once the priorities exist in Redmine.%s", PHP_EOL);
+    printf(
+        "  Manual acknowledgement recorded. Remember to update redmine_priority_id, proposed_redmine_position, and migration_status"
+            . " once the priorities exist in Redmine.%s",
+        PHP_EOL
+    );
 }
 
 /**

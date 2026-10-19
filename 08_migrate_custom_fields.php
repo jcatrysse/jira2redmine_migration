@@ -60,7 +60,9 @@ exit(Script::run(
 
 /**
  * @param array<string, mixed> $config
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool} $cliOptions
+ * @param array{
+ *     help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool
+ * } $cliOptions
  * @throws Throwable
  */
 function main(array $config, array $cliOptions): void
@@ -185,7 +187,8 @@ function main(array $config, array $cliOptions): void
         $transformSummary = runCustomFieldTransformationPhase($pdo, $config['migration']['custom_fields']['not_migrated'] ?? []);
 
         printf(
-            "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Ignored (unused): %d, Skipped: %d, Unchanged: %d.%s",
+            "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Ignored (unused): %d, Skipped:"
+                . " %d, Unchanged: %d.%s",
             Clock::atom(),
             $transformSummary['matched'],
             $transformSummary['ready_for_creation'],
@@ -480,7 +483,11 @@ function refreshJiraProjectIssueTypeFields(Client $client, PDO $pdo): void
                 try {
                     $rawField = json_encode($fieldData, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 } catch (JsonException $exception) {
-                    throw new RuntimeException(sprintf('Failed to encode Jira project field payload for %s: %s', $fieldId, $exception->getMessage()), 0, $exception);
+                    throw new RuntimeException(
+                        sprintf('Failed to encode Jira project field payload for %s: %s', $fieldId, $exception->getMessage()),
+                        0,
+                        $exception
+                    );
                 }
 
                 $allowedValuesDescriptor = extractAllowedValuesDescriptorFromField(
@@ -599,7 +606,11 @@ function fetchJiraProjectIssueTypeFields(Client $client, string $projectKeyOrId)
 
         throw new RuntimeException($message, 0, $exception);
     } catch (GuzzleException $exception) {
-        throw new RuntimeException(sprintf('Failed to fetch create metadata issue types for Jira project %s: %s', $projectKeyOrId, $exception->getMessage()), 0, $exception);
+        throw new RuntimeException(
+            sprintf('Failed to fetch create metadata issue types for Jira project %s: %s', $projectKeyOrId, $exception->getMessage()),
+            0,
+            $exception
+        );
     }
 
     $decodedIssueTypes = decodeJsonResponse($issueTypesResponse);
@@ -1397,7 +1408,11 @@ function summarizeAllowedValuesVariations(PDO $pdo): array
         try {
             $hash = json_encode($descriptor, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         } catch (JsonException $exception) {
-            throw new RuntimeException('Failed to encode allowed values descriptor for variation analysis: ' . $exception->getMessage(), 0, $exception);
+            throw new RuntimeException(
+                'Failed to encode allowed values descriptor for variation analysis: ' . $exception->getMessage(),
+                0,
+                $exception
+            );
         }
 
         if ($hash === false || $hash === null) {
@@ -1736,7 +1751,11 @@ function backfillProjectIssueTypeFieldsFromIssues(PDO $pdo, string $extractedAt)
             FROM staging_jira_project_issue_type_fields
         SQL);
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to read existing project/issue-type field assignments: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException(
+            'Failed to read existing project/issue-type field assignments: ' . $exception->getMessage(),
+            0,
+            $exception
+        );
     }
 
     if ($existingStatement === false) {
@@ -1968,7 +1987,11 @@ function collectValuesJiraNoLongerOffers(PDO $pdo): array
             WHERE f.allowed_values_json IS NOT NULL
         SQL);
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to read the field lists for the unoffered values report: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException(
+            'Failed to read the field lists for the unoffered values report: ' . $exception->getMessage(),
+            0,
+            $exception
+        );
     }
 
     $rows = [];
@@ -2027,7 +2050,9 @@ function printValuesJiraNoLongerOffers(array $lines): void
 function loadJiraFieldMetadata(PDO $pdo): array
 {
     try {
-        $statement = $pdo->query('SELECT id, name, schema_type, schema_custom, field_category FROM staging_jira_fields WHERE is_custom = 1');
+        $statement = $pdo->query(
+            'SELECT id, name, schema_type, schema_custom, field_category FROM staging_jira_fields WHERE is_custom = 1'
+        );
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to load Jira custom field metadata: ' . $exception->getMessage(), 0, $exception);
     }
@@ -2215,7 +2240,9 @@ function deriveAllowedValuesDescriptorFromIssues(PDO $pdo, string $fieldId, stri
         SQL);
 
         if ($statement === false) {
-            throw new RuntimeException('Failed to prepare staged issue field usage statement for deriveAllowedValuesDescriptorFromIssues().');
+            throw new RuntimeException(
+                'Failed to prepare staged issue field usage statement for deriveAllowedValuesDescriptorFromIssues().'
+            );
         }
     }
 
@@ -2925,7 +2952,11 @@ function fetchAndStoreRedmineCustomFields(Client $client, PDO $pdo, bool $useExt
                         JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
                     );
                 } catch (JsonException $exception) {
-                    throw new RuntimeException('Failed to encode Redmine custom field possible values: ' . $exception->getMessage(), 0, $exception);
+                    throw new RuntimeException(
+                        'Failed to encode Redmine custom field possible values: ' . $exception->getMessage(),
+                        0,
+                        $exception
+                    );
                 }
             }
 
@@ -3075,7 +3106,10 @@ function extractIdListFromRedmineCustomField(mixed $value): ?string
     }
 }
 /**
- * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, ignored_unused: int, skipped: int, unchanged: int, status_counts: array<string, int>}
+ * @return array{
+ *     matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, ignored_unused: int, skipped: int, unchanged: int,
+ *     status_counts: array<string, int>
+ * }
  */
 function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): array
 {
@@ -3270,7 +3304,9 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
         $currentProposedIsForAll = normalizeBooleanFlag($row['proposed_is_for_all'] ?? null);
         $currentProposedIsMultiple = normalizeBooleanFlag($row['proposed_is_multiple'] ?? null);
         $currentProposedPossibleValuesRaw = isset($row['proposed_possible_values']) ? (string)$row['proposed_possible_values'] : null;
-        $currentProposedValueDependenciesRaw = isset($row['proposed_value_dependencies']) ? (string)$row['proposed_value_dependencies'] : null;
+        $currentProposedValueDependenciesRaw = isset($row['proposed_value_dependencies'])
+            ? (string)$row['proposed_value_dependencies']
+            : null;
         $currentProposedDefaultValue = isset($row['proposed_default_value']) ? (string)$row['proposed_default_value'] : null;
         $currentProposedTrackerIdsRaw = isset($row['proposed_tracker_ids']) ? (string)$row['proposed_tracker_ids'] : null;
         $currentProposedRoleIdsRaw = isset($row['proposed_role_ids']) ? (string)$row['proposed_role_ids'] : null;
@@ -3911,7 +3947,12 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
 
         if ($classification['requires_possible_values'] && $proposedPossibleValues === null && !$isCascadingField) {
             $derivedValues = [];
-            if (isset($jiraAllowedValues['mode']) && $jiraAllowedValues['mode'] === 'flat' && isset($jiraAllowedValues['values']) && is_array($jiraAllowedValues['values'])) {
+            if (
+                isset($jiraAllowedValues['mode'])
+                && $jiraAllowedValues['mode'] === 'flat'
+                && isset($jiraAllowedValues['values'])
+                && is_array($jiraAllowedValues['values'])
+            ) {
                 foreach ($jiraAllowedValues['values'] as $option) {
                     if (!is_array($option)) {
                         continue;
@@ -4358,7 +4399,11 @@ function refreshCustomFieldMetadata(PDO $pdo): void
     try {
         $pdo->exec($sql);
     } catch (PDOException $exception) {
-        throw new RuntimeException('Failed to refresh Jira custom field metadata in migration_mapping_custom_fields: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException(
+            'Failed to refresh Jira custom field metadata in migration_mapping_custom_fields: ' . $exception->getMessage(),
+            0,
+            $exception
+        );
     }
 }
 
@@ -4369,7 +4414,8 @@ function logCustomFieldMappingStats(PDO $pdo): void
             COUNT(*) AS total_mappings,
             SUM(CASE WHEN jf.schema_type IN ('option', 'array', 'option-with-child') THEN 1 ELSE 0 END) AS list_like,
             SUM(CASE WHEN jf.schema_type = 'option-with-child' THEN 1 ELSE 0 END) AS cascading,
-            SUM(CASE WHEN map.jira_allowed_values IS NOT NULL AND JSON_LENGTH(map.jira_allowed_values) > 0 THEN 1 ELSE 0 END) AS with_allowed_values
+            SUM(CASE WHEN map.jira_allowed_values IS NOT NULL AND JSON_LENGTH(map.jira_allowed_values) > 0 THEN 1 ELSE 0 END)
+                AS with_allowed_values
         FROM migration_mapping_custom_fields map
         LEFT JOIN staging_jira_fields jf ON jf.id = map.jira_field_id
     SQL;
@@ -4908,7 +4954,13 @@ function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): ar
             return $result;
         }
 
-        if (str_contains($normalizedCustom, ':labels') || str_contains($normalizedCustom, ':multiselect') || str_contains($normalizedCustom, ':select') || str_contains($normalizedCustom, ':checkboxes') || str_contains($normalizedCustom, ':radiobuttons')) {
+        if (
+            str_contains($normalizedCustom, ':labels')
+            || str_contains($normalizedCustom, ':multiselect')
+            || str_contains($normalizedCustom, ':select')
+            || str_contains($normalizedCustom, ':checkboxes')
+            || str_contains($normalizedCustom, ':radiobuttons')
+        ) {
             $result['field_format'] = 'enumeration';
             $result['requires_possible_values'] = true;
             if (str_contains($normalizedCustom, ':multiselect') || str_contains($normalizedCustom, ':checkboxes')) {
@@ -4943,7 +4995,8 @@ function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): ar
             case 'sd-customerrequesttype':
                 $result['field_format'] = 'enumeration';
                 $result['requires_possible_values'] = true;
-                $result['note'] = 'App/Service Desk selector; will derive option labels from Jira allowed values. Consider a key/value list if you need stable IDs.';
+                $result['note'] = 'App/Service Desk selector; will derive option labels from Jira allowed values.'
+                    . ' Consider a key/value list if you need stable IDs.';
                 break;
             case 'option':
             case 'option2':
@@ -4953,7 +5006,8 @@ function classifyJiraCustomField(?string $schemaType, ?string $schemaCustom): ar
                 break;
             case 'sd-approvals':
                 $result['field_format'] = 'text';
-                $result['note'] = 'Service Desk approvals payload; defaulting to text. Consider manual mapping if approvals must be preserved.';
+                $result['note'] = 'Service Desk approvals payload; defaulting to text.'
+                    . ' Consider manual mapping if approvals must be preserved.';
                 break;
             case 'any':
                 $result['field_format'] = 'text';
@@ -5043,7 +5097,11 @@ function computeCustomFieldAutomationStateHash(
     try {
         $json = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     } catch (JsonException $exception) {
-        throw new RuntimeException('Failed to compute automation hash for custom field mapping: ' . $exception->getMessage(), 0, $exception);
+        throw new RuntimeException(
+            'Failed to compute automation hash for custom field mapping: ' . $exception->getMessage(),
+            0,
+            $exception
+        );
     }
 
     return hash('sha256', $json);
@@ -5130,7 +5188,9 @@ function normalizeStringForHash(?string $value): ?string
 function fetchCustomFieldMigrationStatusCounts(PDO $pdo): array
 {
     try {
-        $statement = $pdo->query('SELECT migration_status, COUNT(*) AS total FROM migration_mapping_custom_fields GROUP BY migration_status');
+        $statement = $pdo->query(
+            'SELECT migration_status, COUNT(*) AS total FROM migration_mapping_custom_fields GROUP BY migration_status'
+        );
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to compute custom field migration breakdown: ' . $exception->getMessage(), 0, $exception);
     }
@@ -5259,17 +5319,24 @@ function addValuesToExistingEnumerationFields(PDO $pdo, Client $client, string $
           AND m.migration_status IN ('CREATION_SUCCESS', 'MATCH_FOUND', 'READY_FOR_UPDATE')
     SQL);
     $allowed = $pdo->prepare('SELECT allowed_values_json FROM staging_jira_project_issue_type_fields WHERE jira_field_id = :field');
-    $updateMapping = $pdo->prepare('UPDATE migration_mapping_custom_fields SET redmine_custom_field_enumerations = :e WHERE mapping_id = :id');
+    $updateMapping = $pdo->prepare(
+        'UPDATE migration_mapping_custom_fields SET redmine_custom_field_enumerations = :e WHERE mapping_id = :id'
+    );
     $updateSnapshot = $pdo->prepare(
         // JSON_EXTRACT(:e, '$') passes the list as JSON on MySQL and MariaDB alike (MariaDB has no JSON cast)
-        "UPDATE staging_redmine_custom_fields SET raw_payload = JSON_SET(raw_payload, '$.custom_field.enumerations', JSON_EXTRACT(:e, '$')) WHERE id = :id"
+        "UPDATE staging_redmine_custom_fields"
+            . " SET raw_payload = JSON_SET(raw_payload, '$.custom_field.enumerations', JSON_EXTRACT(:e, '$')) WHERE id = :id"
     );
     if ($rows === false || $allowed === false || $updateMapping === false || $updateSnapshot === false) {
         throw new RuntimeException('Failed to prepare the statements to add values to existing fields.');
     }
 
     foreach ($rows->fetchAll(PDO::FETCH_ASSOC) as $row) {
-        if (normalizeRedmineFieldFormat(isset($row['proposed_field_format']) ? (string)$row['proposed_field_format'] : null) !== 'enumeration') {
+        if (
+            normalizeRedmineFieldFormat(
+                isset($row['proposed_field_format']) ? (string)$row['proposed_field_format'] : null
+            ) !== 'enumeration'
+        ) {
             continue;
         }
         $wanted = [];
@@ -5299,7 +5366,12 @@ function addValuesToExistingEnumerationFields(PDO $pdo, Client $client, string $
             continue;
         }
         if (!$apply) {
-            printf("  [values] Redmine custom field #%d lacks %s (held by the issues, B47); the push adds them.%s", $redmineId, implode(', ', $missing), PHP_EOL);
+            printf(
+                "  [values] Redmine custom field #%d lacks %s (held by the issues, B47); the push adds them.%s",
+                $redmineId,
+                implode(', ', $missing),
+                PHP_EOL
+            );
             continue;
         }
 
@@ -5311,7 +5383,12 @@ function addValuesToExistingEnumerationFields(PDO $pdo, Client $client, string $
             }
             $missing = EnumerationGap::missing($wanted, $live);
             if ($missing !== []) {
-                printf("  [values] Redmine custom field #%d: adding %s (held by the issues, B47).%s", $redmineId, implode(', ', $missing), PHP_EOL);
+                printf(
+                    "  [values] Redmine custom field #%d: adding %s (held by the issues, B47).%s",
+                    $redmineId,
+                    implode(', ', $missing),
+                    PHP_EOL
+                );
                 $position = count($live);
                 $new = array_map(static function (string $name) use (&$position): array {
                     return ['name' => $name, 'position' => ++$position, 'active' => true];
@@ -5331,7 +5408,12 @@ function addValuesToExistingEnumerationFields(PDO $pdo, Client $client, string $
             $updateMapping->execute(['e' => $encoded, 'id' => $row['mapping_id']]);
             $updateSnapshot->execute(['e' => $encoded, 'id' => $redmineId]);
         } catch (Throwable $exception) {
-            printf("  [failed] Adding values to Redmine custom field #%d: %s%s", $redmineId, ExtendedApi::summarizeError($exception), PHP_EOL);
+            printf(
+                "  [failed] Adding values to Redmine custom field #%d: %s%s",
+                $redmineId,
+                ExtendedApi::summarizeError($exception),
+                PHP_EOL
+            );
         }
     }
 }
@@ -5434,8 +5516,12 @@ function collectCustomFieldUpdatePlan(PDO $pdo): array
         );
 
         $inRedmine = $row['snapshot_id'] !== null;
-        $existingProjects = $inRedmine ? normalizeIntegerListColumn($row['redmine_project_ids'] ?? null) : $snapshot[$redmineId]['project_ids'];
-        $existingTrackers = $inRedmine ? normalizeIntegerListColumn($row['redmine_tracker_ids'] ?? null) : $snapshot[$redmineId]['tracker_ids'];
+        $existingProjects = $inRedmine
+            ? normalizeIntegerListColumn($row['redmine_project_ids'] ?? null)
+            : $snapshot[$redmineId]['project_ids'];
+        $existingTrackers = $inRedmine
+            ? normalizeIntegerListColumn($row['redmine_tracker_ids'] ?? null)
+            : $snapshot[$redmineId]['tracker_ids'];
         if ($inRedmine && (int)($row['redmine_is_for_all'] ?? 0) === 1) {
             // a field for all projects needs no project list
             $proposedProjects = $existingProjects;
@@ -5594,7 +5680,10 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                 return $leftDepending ? 1 : -1;
             }
 
-            return strcmp((string)($left['jira_field_name'] ?? $left['jira_field_id']), (string)($right['jira_field_name'] ?? $right['jira_field_id']));
+            return strcmp(
+                (string)($left['jira_field_name'] ?? $left['jira_field_id']),
+                (string)($right['jira_field_name'] ?? $right['jira_field_id'])
+            );
         }
     );
     $pendingCount = count($pendingFields);
@@ -5822,7 +5911,10 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
                     }
                 }
 
-                $isCascadingParent = isset($field['jira_field_id']) && str_starts_with((string)$field['jira_field_id'], 'cascading_parent:');
+                $isCascadingParent = isset($field['jira_field_id']) && str_starts_with(
+                    (string)$field['jira_field_id'],
+                    'cascading_parent:'
+                );
                 $effectiveName = $proposedName ?? ($jiraName ?? $jiraId);
                 $effectiveFormat = $isCascadingParent ? 'enumeration' : ($proposedFormat ?? 'string');
                 $isDependingField = !$isCascadingParent && $effectiveFormat === 'depending_enumeration';
@@ -6825,7 +6917,9 @@ function recordFieldScopeInSnapshot(PDO $pdo, int $redmineId, array $projects, a
     if ($statement === false) {
         throw new RuntimeException('Failed to prepare the snapshot update of a custom field scope.');
     }
-    $statement->execute(['p' => encodeJsonColumn(array_values($projects)), 't' => encodeJsonColumn(array_values($trackers)), 'id' => $redmineId]);
+    $statement->execute(
+        ['p' => encodeJsonColumn(array_values($projects)), 't' => encodeJsonColumn(array_values($trackers)), 'id' => $redmineId]
+    );
 }
 
 /**
@@ -6972,7 +7066,9 @@ function synchronizeCustomFieldAssociations(PDO $pdo, Client $client, string $ex
                         'mapping_id' => $mappingId,
                     ]);
 
-                    $failedParentLabel = $parentRedmineId !== null ? sprintf('#%d', $parentRedmineId) : sprintf('mapping #%d', $parentMappingId);
+                    $failedParentLabel = $parentRedmineId !== null
+                        ? sprintf('#%d', $parentRedmineId)
+                        : sprintf('mapping #%d', $parentMappingId);
                     printf("  [failed] Parent update for custom field %s: %s%s", $failedParentLabel, $errorMessage, PHP_EOL);
                     continue;
                 }

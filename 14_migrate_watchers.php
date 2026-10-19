@@ -459,7 +459,12 @@ function runWatcherPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $
                     'notes' => sprintf('Watcher sent but not verified on Redmine issue #%d: %s', $redmineIssueId, $exception->getMessage()),
                 ]);
             }
-            printf("  [error] Could not read back the watchers of Redmine issue #%d: %s%s", $redmineIssueId, $exception->getMessage(), PHP_EOL);
+            printf(
+                "  [error] Could not read back the watchers of Redmine issue #%d: %s%s",
+                $redmineIssueId,
+                $exception->getMessage(),
+                PHP_EOL
+            );
             continue;
         }
 
@@ -472,7 +477,10 @@ function runWatcherPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $
             if ($missing) {
                 $note = $members !== null && !in_array($redmineUserId, $members, true)
                     ? Watchers::noAccessNote($redmineUserId)
-                    : sprintf('Redmine answered 204 but did not store user #%d as watcher (missing permission such as view_watched_issues).', $redmineUserId);
+                    : sprintf(
+                        'Redmine answered 204 but did not store user #%d as watcher (missing permission such as view_watched_issues).',
+                        $redmineUserId
+                    );
             }
             $updateStatement->execute([
                 'mapping_id' => $mappingId,

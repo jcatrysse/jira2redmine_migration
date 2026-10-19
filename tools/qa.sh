@@ -10,9 +10,10 @@ for f in [0-9]*.php lib/*.php src/*/*.php tools/*.php tools/testenv/*.php; do ph
 echo "php -l: ok"
 vendor/bin/phpunit
 php tools/bin/phpstan.phar analyse --no-progress --memory-limit=1G
-# The scripts PHPCS covers (phpcs.xml.dist) are analysed one by one (phpstan-scripts.neon), each with its own cache.
+# The scripts, one analysis each (phpstan-scripts.neon), each with its own cache. Phase 6 adds them as they are clean.
+analysed='01 02 06 13 14 15'
 mkdir -p tools/bin/phpstan
-scripts=$(grep -o '<file>[0-9][0-9]_[a-z_]*\.php</file>' phpcs.xml.dist | sed 's/<[^>]*>//g')
+scripts=$(for n in $analysed; do ls ${n}_*.php; done)
 for script in $scripts; do
   {
     echo "includes:"

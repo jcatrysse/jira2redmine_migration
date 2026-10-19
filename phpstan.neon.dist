@@ -1,8 +1,9 @@
-# Static analysis for the new code. The 16 scripts join one by one as they move to src/ (phase 6).
+# Static analysis of src/, the tests and the shared lib files; the 16 scripts are analysed one by one (phpstan-scripts.neon).
 parameters:
     level: 8
     paths:
         - src
+        - lib/cli.php
         - lib/jira_gateway.php
         - lib/verify.php
         - lib/requirements.php

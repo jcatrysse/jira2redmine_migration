@@ -68,7 +68,9 @@ exit(Script::run(
 
 /**
  * @param array<string, mixed> $config
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool} $cliOptions
+ * @param array{
+ *     help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool
+ * } $cliOptions
  * @throws Throwable
  */
 function main(array $config, array $cliOptions): void
@@ -280,7 +282,9 @@ function fetchJiraJournals(Client $client, PDO $pdo, array $config): array
             'comments_migration_status' => isset($row['comments_migration_status']) ? (string)$row['comments_migration_status'] : 'PENDING',
             'comments_notes' => isset($row['comments_notes']) ? (string)$row['comments_notes'] : null,
             'changelog_extracted_at' => $row['changelog_extracted_at'] ?? null,
-            'changelog_migration_status' => isset($row['changelog_migration_status']) ? (string)$row['changelog_migration_status'] : 'PENDING',
+            'changelog_migration_status' => isset($row['changelog_migration_status'])
+                ? (string)$row['changelog_migration_status']
+                : 'PENDING',
             'changelog_notes' => isset($row['changelog_notes']) ? (string)$row['changelog_notes'] : null,
         ];
     }
@@ -482,7 +486,11 @@ function fetchJiraCommentsForIssue(Client $client, PDOStatement $statement, stri
             $message .= ': ' . extractErrorBody($response);
             throw new RuntimeException($message, $statusCode, $exception);
         } catch (GuzzleException $exception) {
-            throw new RuntimeException(sprintf('Failed to fetch comments for Jira issue %s: %s', $issueKey, $exception->getMessage()), 0, $exception);
+            throw new RuntimeException(
+                sprintf('Failed to fetch comments for Jira issue %s: %s', $issueKey, $exception->getMessage()),
+                0,
+                $exception
+            );
         }
 
         $payload = decodeJsonResponse($response);
@@ -569,7 +577,11 @@ function fetchJiraChangelogForIssue(Client $client, PDOStatement $statement, str
             $message .= ': ' . extractErrorBody($response);
             throw new RuntimeException($message, $statusCode, $exception);
         } catch (GuzzleException $exception) {
-            throw new RuntimeException(sprintf('Failed to fetch changelog for Jira issue %s: %s', $issueKey, $exception->getMessage()), 0, $exception);
+            throw new RuntimeException(
+                sprintf('Failed to fetch changelog for Jira issue %s: %s', $issueKey, $exception->getMessage()),
+                0,
+                $exception
+            );
         }
 
         $payload = decodeJsonResponse($response);
@@ -879,7 +891,10 @@ function populateProposedJournalNotes(PDO $pdo, int $commentWindow = 0): array
         $warningPrefix = 'WARN: Jira changelog ';
         if ($warningNote !== null) {
             if ($storedNotes === null || trim((string)$storedNotes) === '' || str_starts_with((string)$storedNotes, $warningPrefix)) {
-                $notesUpdate = $pdo->prepare('UPDATE migration_mapping_journals SET notes = :notes, last_updated_at = CURRENT_TIMESTAMP WHERE mapping_id = :mapping_id');
+                $notesUpdate = $pdo->prepare(
+                    'UPDATE migration_mapping_journals SET notes = :notes, last_updated_at = CURRENT_TIMESTAMP WHERE mapping_id ='
+                        . ' :mapping_id'
+                );
                 if ($notesUpdate === false) {
                     throw new RuntimeException('Failed to prepare journal warning note update statement.');
                 }
@@ -890,7 +905,9 @@ function populateProposedJournalNotes(PDO $pdo, int $commentWindow = 0): array
                 $notesUpdate->closeCursor();
             }
         } elseif ($storedNotes !== null && str_starts_with((string)$storedNotes, $warningPrefix)) {
-            $notesUpdate = $pdo->prepare('UPDATE migration_mapping_journals SET notes = NULL, last_updated_at = CURRENT_TIMESTAMP WHERE mapping_id = :mapping_id');
+            $notesUpdate = $pdo->prepare(
+                'UPDATE migration_mapping_journals SET notes = NULL, last_updated_at = CURRENT_TIMESTAMP WHERE mapping_id = :mapping_id'
+            );
             if ($notesUpdate === false) {
                 throw new RuntimeException('Failed to prepare journal warning clear statement.');
             }
@@ -968,7 +985,13 @@ function runJournalPushPhase(
         foreach (PushOrder::steps($timeline) as [$kind, $item]) {
             if ($kind === 'history') {
                 $first = $item[0];
-                printf("  - History, %d journal(s) on issue %s → Redmine #%d%s", count($item), $first['jira_issue_key'], $first['redmine_issue_id'], PHP_EOL);
+                printf(
+                    "  - History, %d journal(s) on issue %s → Redmine #%d%s",
+                    count($item),
+                    $first['jira_issue_key'],
+                    $first['redmine_issue_id'],
+                    PHP_EOL
+                );
                 if ($preview !== null && $history !== null) {
                     $fileIssueId = isset($pendingFiles[(string)$first['jira_issue_id']]) ? (string)$first['jira_issue_id'] : null;
                     unset($pendingFiles[(string)$first['jira_issue_id']]);
@@ -1045,7 +1068,14 @@ function runJournalPushPhase(
         foreach ($history['files'] as $jiraIssueId => $issueFile) {
             pushHistorySeries($redmineClient, $pdo, $extendedApiPrefix, [], $history, (string)$jiraIssueId);
         }
-        printf("[%s] History pushed: %d journal(s), %d file(s), %d failed request(s).%s", Clock::dateTime(), $history['pushed']['journals'], $history['pushed']['files'], $history['pushed']['failed'], PHP_EOL);
+        printf(
+            "[%s] History pushed: %d journal(s), %d file(s), %d failed request(s).%s",
+            Clock::dateTime(),
+            $history['pushed']['journals'],
+            $history['pushed']['files'],
+            $history['pushed']['failed'],
+            PHP_EOL
+        );
     }
 }
 
@@ -1139,7 +1169,10 @@ function fetchPushableChangelog(PDO $pdo): array
  * already (migration_mapping_journals, CHANGELOG: history_journal_id, history_attachment_id) is left out, so a rerun
  * sends only what is missing.
  *
- * @return array{events: list<array<string, mixed>>, files: array<string, array<string, mixed>>, histories: array<string, IssueHistory>, lookups: HistoryLookups, pushed: array{journals: int, files: int, failed: int}, disabled: bool}
+ * @return array{
+ *     events: list<array<string, mixed>>, files: array<string, array<string, mixed>>, histories: array<string, IssueHistory>,
+ *     lookups: HistoryLookups, pushed: array{journals: int, files: int, failed: int}, disabled: bool
+ * }
  * @throws Throwable
  */
 function prepareHistory(PDO $pdo, int $defaultAuthorId): array
@@ -1151,7 +1184,16 @@ function prepareHistory(PDO $pdo, int $defaultAuthorId): array
     $events = [];
     $files = [];
     $histories = [];
-    $totals = ['issues' => 0, 'journals' => 0, 'details' => 0, 'skipped' => 0, 'dropped' => 0, 'files' => 0, 'mismatches' => 0, 'open_parents' => 0];
+    $totals = [
+        'issues' => 0,
+        'journals' => 0,
+        'details' => 0,
+        'skipped' => 0,
+        'dropped' => 0,
+        'files' => 0,
+        'mismatches' => 0,
+        'open_parents' => 0,
+    ];
     foreach (fetchHistoryEntries($pdo, $issues) as $jiraIssueId => $entries) {
         $jiraIssueId = (string)$jiraIssueId;
         $issue = $issues[$jiraIssueId];
@@ -1199,7 +1241,8 @@ function prepareHistory(PDO $pdo, int $defaultAuthorId): array
     }
 
     printf(
-        "[%s] History: %d issue(s), %d journal(s), %d detail(s); %d item(s) skipped and connected, %d dropped as no change; %d file(s); status mismatches: %d (open parents: %d).%s",
+        "[%s] History: %d issue(s), %d journal(s), %d detail(s); %d item(s) skipped and connected, %d dropped as no change; %d"
+            . " file(s); status mismatches: %d (open parents: %d).%s",
         Clock::dateTime(),
         $totals['issues'],
         $totals['journals'],
@@ -1228,7 +1271,10 @@ function prepareHistory(PDO $pdo, int $defaultAuthorId): array
  * Extended API has no history endpoint, and the history is left out for the rest of the run.
  *
  * @param list<array<string, mixed>> $series
- * @param array{events: list<array<string, mixed>>, files: array<string, array<string, mixed>>, histories: array<string, IssueHistory>, lookups: HistoryLookups, pushed: array{journals: int, files: int, failed: int}, disabled: bool} $history
+ * @param array{
+ *     events: list<array<string, mixed>>, files: array<string, array<string, mixed>>, histories: array<string, IssueHistory>,
+ *     lookups: HistoryLookups, pushed: array{journals: int, files: int, failed: int}, disabled: bool
+ * } $history
  */
 function pushHistorySeries(Client $client, PDO $pdo, string $prefix, array $series, array &$history, ?string $fileIssueId = null): void
 {
@@ -1255,7 +1301,11 @@ function pushHistorySeries(Client $client, PDO $pdo, string $prefix, array $seri
         $history['pushed']['failed']++;
         if ($exception->getResponse()->getStatusCode() === 404) {
             $history['disabled'] = true;
-            printf("  [error] The Extended API has no history endpoint (POST .../issues/:id/history.json answered 404); the history is left out.%s", PHP_EOL);
+            printf(
+                "  [error] The Extended API has no history endpoint (POST .../issues/:id/history.json answered 404); the history is"
+                    . " left out.%s",
+                PHP_EOL
+            );
             return;
         }
         printf("  [error] History of %s: %s%s", $issue['jira_issue_key'], ExtendedApi::summarizeError($exception), PHP_EOL);
@@ -1267,7 +1317,13 @@ function pushHistorySeries(Client $client, PDO $pdo, string $prefix, array $seri
     }
 
     foreach ($series as $index => $event) {
-        storeHistoryResult($pdo, (string)$event['journal']['history_id'], $jiraIssueId, 'history_journal_id', $answer['journal_ids'][$index]);
+        storeHistoryResult(
+            $pdo,
+            (string)$event['journal']['history_id'],
+            $jiraIssueId,
+            'history_journal_id',
+            $answer['journal_ids'][$index]
+        );
     }
     $history['pushed']['journals'] += count($series);
     if ($token !== null && $stamp !== null) {
@@ -1308,7 +1364,8 @@ function storeHistoryResult(PDO $pdo, string $historyId, string $jiraIssueId, st
         throw new InvalidArgumentException($column);
     }
     $statement = $pdo->prepare(
-        "INSERT INTO migration_mapping_journals (jira_entity_id, jira_issue_id, entity_type, $column) VALUES (:id, :issue, 'CHANGELOG', :value)"
+        "INSERT INTO migration_mapping_journals (jira_entity_id, jira_issue_id, entity_type, $column)"
+        . " VALUES (:id, :issue, 'CHANGELOG', :value)"
         . " ON DUPLICATE KEY UPDATE $column = VALUES($column)"
     );
     $statement->execute(['id' => $historyId, 'issue' => $jiraIssueId, 'value' => $redmineId]);
@@ -1337,11 +1394,22 @@ function buildHistoryLookups(PDO $pdo, int $defaultAuthorId): HistoryLookups
 {
     $mapped = "migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')";
     $statuses = [];
-    foreach (historyRows($pdo, "SELECT jira_status_id, redmine_status_id FROM migration_mapping_statuses WHERE $mapped AND redmine_status_id IS NOT NULL") as $row) {
+    foreach (
+        historyRows(
+            $pdo,
+            "SELECT jira_status_id, redmine_status_id FROM migration_mapping_statuses WHERE $mapped AND redmine_status_id IS NOT NULL"
+        ) as $row
+    ) {
         $statuses[(string)$row['jira_status_id']] = (int)$row['redmine_status_id'];
     }
     $priorities = [];
-    foreach (historyRows($pdo, "SELECT jira_priority_id, redmine_priority_id FROM migration_mapping_priorities WHERE $mapped AND redmine_priority_id IS NOT NULL") as $row) {
+    foreach (
+        historyRows(
+            $pdo,
+            'SELECT jira_priority_id, redmine_priority_id'
+                . " FROM migration_mapping_priorities WHERE $mapped AND redmine_priority_id IS NOT NULL"
+        ) as $row
+    ) {
         $priorities[(string)$row['jira_priority_id']] = (int)$row['redmine_priority_id'];
     }
     $users = [];
@@ -1349,7 +1417,10 @@ function buildHistoryLookups(PDO $pdo, int $defaultAuthorId): HistoryLookups
         . ' FROM migration_mapping_users m LEFT JOIN staging_redmine_users r ON r.id = m.redmine_user_id'
         . " WHERE m.$mapped AND m.redmine_user_id IS NOT NULL";
     foreach (historyRows($pdo, $userSql) as $row) {
-        $users[(string)$row['jira_account_id']] = ['id' => (int)$row['redmine_user_id'], 'login' => $row['login'] !== null ? (string)$row['login'] : null];
+        $users[(string)$row['jira_account_id']] = [
+            'id' => (int)$row['redmine_user_id'],
+            'login' => $row['login'] !== null ? (string)$row['login'] : null,
+        ];
     }
 
     return new HistoryLookups($statuses, $priorities, $users, $defaultAuthorId);
@@ -1616,7 +1687,12 @@ function processCommentPush(
         printf("  [error] %s%s", $message, PHP_EOL);
         return;
     } catch (GuzzleException $exception) {
-        $message = sprintf('Failed to create journal for Jira comment %s on issue %s: %s', $jiraCommentId, $jiraIssueKey, $exception->getMessage());
+        $message = sprintf(
+            'Failed to create journal for Jira comment %s on issue %s: %s',
+            $jiraCommentId,
+            $jiraIssueKey,
+            $exception->getMessage()
+        );
         markJournalPushFailure($pdo, $mappingId, $message);
         printf("  [error] %s%s", $message, PHP_EOL);
         return;
@@ -1649,7 +1725,11 @@ function processCommentPush(
         }
 
         // Extended API did not return a journal id — treat as failure so it gets investigated
-        $msg = sprintf('Extended API did not return journal id for Jira %s on Redmine issue %s', 'comment ' . $jiraCommentId, $jiraIssueKey);
+        $msg = sprintf(
+            'Extended API did not return journal id for Jira %s on Redmine issue %s',
+            'comment ' . $jiraCommentId,
+            $jiraIssueKey
+        );
         markJournalPushFailure($pdo, $mappingId, $msg);
         printf("  [error] %s%s", $msg, PHP_EOL);
         return;
@@ -1814,7 +1894,12 @@ function processChangelogPush(
         printf("  [error] %s%s", $message, PHP_EOL);
         return;
     } catch (GuzzleException $exception) {
-        $message = sprintf('Failed to create journal for Jira %s on issue %s: %s', 'history ' . $historyId, $jiraIssueKey, $exception->getMessage());
+        $message = sprintf(
+            'Failed to create journal for Jira %s on issue %s: %s',
+            'history ' . $historyId,
+            $jiraIssueKey,
+            $exception->getMessage()
+        );
         markJournalPushFailure($pdo, $mappingId, $message);
         printf("  [error] %s%s", $message, PHP_EOL);
         return;
@@ -1870,8 +1955,13 @@ function processChangelogPush(
  * @param int $toleranceSeconds tolerance window for time-based match
  * @return int|null
  */
-function fetchLatestJournalId(Client $client, int $redmineIssueId, ?string $token, ?string $expectedCreatedAt = null, int $toleranceSeconds = 30): ?int
-{
+function fetchLatestJournalId(
+    Client $client,
+    int $redmineIssueId,
+    ?string $token,
+    ?string $expectedCreatedAt = null,
+    int $toleranceSeconds = 30
+): ?int {
     try {
         $response = $client->get(sprintf('/issues/%d.json', $redmineIssueId), ['query' => ['include' => 'journals']]);
     } catch (Throwable) {
@@ -1970,8 +2060,14 @@ function markJournalPushFailure(PDO $pdo, int $mappingId, string $message): void
     $statement->closeCursor();
 }
 
-function updateAttachmentMappingAfterPush(PDO $pdo, int $mappingId, ?int $redmineAttachmentId, string $status, ?string $notes, ?int $redmineIssueId = null): void
-{
+function updateAttachmentMappingAfterPush(
+    PDO $pdo,
+    int $mappingId,
+    ?int $redmineAttachmentId,
+    string $status,
+    ?string $notes,
+    ?int $redmineIssueId = null
+): void {
     $sql = <<<SQL
         UPDATE migration_mapping_attachments
         SET
@@ -2556,7 +2652,10 @@ function calculateRateLimitDelayMs(int $attempt, ?int $retryAfterSeconds): int
  * Read-only fetch of attachments that should be referenced for a given journal note.
  * Only returns attachments that are already uploaded (migration_status = 'SUCCESS') or have a sharepoint_url.
  *
- * @return array<int,array{mapping_id:int,jira_attachment_id:string,filename:string,sharepoint_url:string|null,redmine_attachment_id:int|null,created_at:string|null}>
+ * @return array<int,array{
+ *     mapping_id:int, jira_attachment_id:string, filename:string, sharepoint_url:string|null, redmine_attachment_id:int|null,
+ *     created_at:string|null
+ * }>
  */
 function fetchJournalAttachmentsForNote(PDO $pdo, string $jiraIssueId, ?string $journalCreatedAt, int $windowSeconds): array
 {
@@ -2594,8 +2693,12 @@ SQL;
             'mapping_id' => isset($r['mapping_id']) ? (int)$r['mapping_id'] : 0,
             'jira_attachment_id' => isset($r['jira_attachment_id']) ? (string)$r['jira_attachment_id'] : '',
             'filename' => isset($r['filename']) ? (string)$r['filename'] : '',
-            'sharepoint_url' => isset($r['sharepoint_url']) && trim((string)$r['sharepoint_url']) !== '' ? trim((string)$r['sharepoint_url']) : null,
-            'redmine_attachment_id' => isset($r['redmine_attachment_id']) && $r['redmine_attachment_id'] !== null ? (int)$r['redmine_attachment_id'] : null,
+            'sharepoint_url' => isset($r['sharepoint_url']) && trim((string)$r['sharepoint_url']) !== ''
+                ? trim((string)$r['sharepoint_url'])
+                : null,
+            'redmine_attachment_id' => isset($r['redmine_attachment_id']) && $r['redmine_attachment_id'] !== null
+                ? (int)$r['redmine_attachment_id']
+                : null,
             'created_at' => isset($r['created_at']) ? (string)$r['created_at'] : null,
         ];
     }
@@ -2609,7 +2712,10 @@ SQL;
  * > SharePoint attachment: [naam.pdf](https://...)
  * > attachment:1234__naam.pdf
  *
- * @param array<int,array{mapping_id:int,jira_attachment_id:string,filename:string,sharepoint_url:string|null,redmine_attachment_id:int|null,created_at:string|null}> $attachments
+ * @param array<int,array{
+ *     mapping_id:int, jira_attachment_id:string, filename:string, sharepoint_url:string|null, redmine_attachment_id:int|null,
+ *     created_at:string|null
+ * }> $attachments
  * @return string|null
  */
 function buildJournalAttachmentBlock(array $attachments): ?string
@@ -2692,8 +2798,12 @@ SQL;
             'mapping_id' => isset($r['mapping_id']) ? (int)$r['mapping_id'] : 0,
             'jira_attachment_id' => isset($r['jira_attachment_id']) ? (string)$r['jira_attachment_id'] : '',
             'filename' => isset($r['filename']) ? (string)$r['filename'] : '',
-            'sharepoint_url' => isset($r['sharepoint_url']) && trim((string)$r['sharepoint_url']) !== '' ? trim((string)$r['sharepoint_url']) : null,
-            'redmine_attachment_id' => isset($r['redmine_attachment_id']) && $r['redmine_attachment_id'] !== null ? (int)$r['redmine_attachment_id'] : null,
+            'sharepoint_url' => isset($r['sharepoint_url']) && trim((string)$r['sharepoint_url']) !== ''
+                ? trim((string)$r['sharepoint_url'])
+                : null,
+            'redmine_attachment_id' => isset($r['redmine_attachment_id']) && $r['redmine_attachment_id'] !== null
+                ? (int)$r['redmine_attachment_id']
+                : null,
             'created_at' => isset($r['created_at']) ? (string)$r['created_at'] : null,
         ];
     }
@@ -2723,7 +2833,10 @@ SQL;
         throw new RuntimeException('Failed to select migration_mapping_journals for canonicalization.');
     }
 
-    $upd = $pdo->prepare("UPDATE migration_mapping_journals SET proposed_notes = :notes, automation_hash = :ahash, last_updated_at = CURRENT_TIMESTAMP WHERE mapping_id = :mid");
+    $upd = $pdo->prepare(
+        "UPDATE migration_mapping_journals SET proposed_notes = :notes, automation_hash = :ahash, last_updated_at = CURRENT_TIMESTAMP"
+            . " WHERE mapping_id = :mid"
+    );
     if ($upd === false) {
         throw new RuntimeException('Failed to prepare update for migration_mapping_journals.');
     }

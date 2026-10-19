@@ -62,8 +62,8 @@ final class MediaWikiSourceTest extends TestCase
 
     public function testTenAndElevenGiveTheConverterTheAdf(): void
     {
-        $ten = (string)file_get_contents(__DIR__ . '/../10_migrate_issues.php');
-        $eleven = (string)file_get_contents(__DIR__ . '/../11_migrate_journals.php');
+        $ten = sourceWithoutLayout((string)file_get_contents(__DIR__ . '/../10_migrate_issues.php'));
+        $eleven = sourceWithoutLayout((string)file_get_contents(__DIR__ . '/../11_migrate_journals.php'));
 
         $description = 'convertJiraHtmlToMarkdown($issueDescriptionHtml, $issueAttachments, is_string($issueDescriptionAdf)';
         self::assertStringContainsString($description, $ten);

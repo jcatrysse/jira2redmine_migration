@@ -62,7 +62,10 @@ function main(array $config, array $cliOptions): void
     );
 
     $databaseConfig = ConfigValue::section($config, 'database', 'Missing or invalid configuration section: %s');
-    $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false]);
+    $pdo = ConnectionFactory::connect(
+        $databaseConfig,
+        [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false]
+    );
 
     if (in_array('jira', $phasesToRun, true)) {
         $jiraConfig = ConfigValue::section($config, 'jira', 'Missing or invalid configuration section: %s');
@@ -373,7 +376,11 @@ function fetchAndStoreRedmineProjects(Client $client, PDO $pdo): int
             try {
                 $rawPayload = json_encode($project, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             } catch (JsonException $exception) {
-                throw new RuntimeException(sprintf('Failed to encode Redmine project payload for project %d: %s', $projectId, $exception->getMessage()), 0, $exception);
+                throw new RuntimeException(
+                    sprintf('Failed to encode Redmine project payload for project %d: %s', $projectId, $exception->getMessage()),
+                    0,
+                    $exception
+                );
             }
 
             $rowsToInsert[] = [
@@ -426,7 +433,10 @@ function fetchAndStoreRedmineProjects(Client $client, PDO $pdo): int
 }
 
 /**
- * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int, status_counts: array<string, int>}
+ * @return array{
+ *     matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int,
+ *     status_counts: array<string, int>
+ * }
  */
 function runProjectTransformationPhase(PDO $pdo, mixed $notMigrated = []): array
 {
@@ -919,7 +929,11 @@ SQL;
 }
 
 /**
- * @param array<int, array{mapping_id: int, jira_project_id: string, project_key: ?string, project_name: ?string, jira_description: ?string, jira_is_private: ?int, proposed_identifier: ?string, proposed_name: ?string, proposed_description: ?string, proposed_is_public: ?int, automation_hash: ?string}> $operations
+ * @param array<int, array{
+ *     mapping_id: int, jira_project_id: string, project_key: ?string, project_name: ?string, jira_description: ?string,
+ *     jira_is_private: ?int, proposed_identifier: ?string, proposed_name: ?string, proposed_description: ?string, proposed_is_public: ?int,
+ *     automation_hash: ?string
+ * }> $operations
  */
 function outputProjectPushPreview(array $operations): void
 {
@@ -948,7 +962,11 @@ function outputProjectPushPreview(array $operations): void
 }
 
 /**
- * @param array{mapping_id: int, jira_project_id: string, project_key: ?string, project_name: ?string, jira_description: ?string, jira_is_private: ?int, proposed_identifier: ?string, proposed_name: ?string, proposed_description: ?string, proposed_is_public: ?int, automation_hash: ?string} $operation
+ * @param array{
+ *     mapping_id: int, jira_project_id: string, project_key: ?string, project_name: ?string, jira_description: ?string,
+ *     jira_is_private: ?int, proposed_identifier: ?string, proposed_name: ?string, proposed_description: ?string, proposed_is_public: ?int,
+ *     automation_hash: ?string
+ * } $operation
  * @return array{project: array{name: string, identifier: string, description: ?string, is_public: bool}}
  */
 function buildProjectCreationPayload(array $operation): array
@@ -1008,7 +1026,11 @@ function buildProjectCreationPayload(array $operation): array
 }
 
 /**
- * @param array{mapping_id: int, jira_project_id: string, project_key: ?string, project_name: ?string, jira_description: ?string, jira_is_private: ?int, proposed_identifier: ?string, proposed_name: ?string, proposed_description: ?string, proposed_is_public: ?int, automation_hash: ?string} $operation
+ * @param array{
+ *     mapping_id: int, jira_project_id: string, project_key: ?string, project_name: ?string, jira_description: ?string,
+ *     jira_is_private: ?int, proposed_identifier: ?string, proposed_name: ?string, proposed_description: ?string, proposed_is_public: ?int,
+ *     automation_hash: ?string
+ * } $operation
  * @param array{project: array{name: string, identifier: string, description: ?string, is_public: bool}}|null $payload
  * @param string $migrationStatus
  * @param int|null $redmineProjectId
@@ -1065,7 +1087,11 @@ function buildProjectPushUpdateValues(
 /**
  * @param PDO $pdo
  * @param Client $redmineClient
- * @param array<int, array{mapping_id: int, jira_project_id: string, project_key: ?string, project_name: ?string, jira_description: ?string, jira_is_private: ?int, proposed_identifier: ?string, proposed_name: ?string, proposed_description: ?string, proposed_is_public: ?int, automation_hash: ?string}> $operations
+ * @param array<int, array{
+ *     mapping_id: int, jira_project_id: string, project_key: ?string, project_name: ?string, jira_description: ?string,
+ *     jira_is_private: ?int, proposed_identifier: ?string, proposed_name: ?string, proposed_description: ?string, proposed_is_public: ?int,
+ *     automation_hash: ?string
+ * }> $operations
  * @return array{0: int, 1: int}
  */
 function executeRedmineProjectPush(PDO $pdo, Client $redmineClient, array $operations): array
