@@ -47,9 +47,9 @@ Placeholders are written `<like-this>`.
   snapshots (B8). Schijf (B2): één pull van alle bijlagen, `paths.tmp`
   leeg direct na 09's push; op dat moment ongeveer 116 GiB in `paths.tmp` en 116 GiB extra in Redmine's `files/`.
   Met minder ruimte draait 09 in rondes.
-- **Staging blijft bewaard** (beslissing 41): na de run wordt de staging-database versleuteld gedumpt, teruggelezen
-  als controle, opgeslagen en pas dan van de server gehaald (B9 stap 6). Eigenaar, bewaartermijn en opslagplaats
-  zijn nog open. Jira's geschiedenis van status, toegewezene en prioriteit komt na productie als journals uit die
+- **Staging blijft bewaard** (beslissing 41): na de run wordt de staging-database versleuteld gedumpt en als controle
+  teruggelezen; pas daarna, na Jans go, gaat de database weg (B9 stap 6). De dump is van Jan: hij blijft op de
+  server, Jan verplaatst en beveiligt hem zelf en beslist na de overdracht wanneer hij hem wist. Jira's geschiedenis van status, toegewezene en prioriteit komt na productie als journals uit die
   dump.
 - **Deel C** is de prompt voor de lokale Claude-sessie op de server: Jira alleen lezen, standaard rechten, Jans go
   voor elke schrijfstap in productie, rapport in het Nederlands.
@@ -330,7 +330,7 @@ in the rehearsal report: it sets the maintenance window.
 | Jira | the live Jira, read-only for the token (B4); the data is what Jira holds that day | read-only for the token, and for the users from the start of the window (decision 36) |
 | users | none on the clone | **one maintenance window** for B5 to B9 (decision 36): Redmine closed to users, the crontab off (B5) |
 | disk for attachments | the sample: a few GB | about 116 GiB in `paths.tmp` and 116 GiB more in `files/` at the end of 09's push (B2) |
-| afterwards | the clone is thrown away; findings go to Jan; B9 step 6 is practised on the clone's staging and that dump deleted | Redmine stays; staging is dumped, encrypted and stored, then removed from the server (B9 step 6, decision 41) |
+| afterwards | the clone is thrown away; findings go to Jan; B9 step 6 is practised on the clone's staging and that dump deleted | Redmine stays; staging is dumped and encrypted (Jan's dump, on the server for him to move), then the database is removed (B9 step 6, decision 41) |
 
 Everything else is the same: the run, the commands, the checks. The rehearsal is there to find what an
 existing Redmine does to the matching (B6) and to run the nine projects that never ran (DOC, LABO, ICT, LLE,
@@ -937,26 +937,23 @@ again (B10).
    ```
 
    MANUAL rows are links whose other issue is not migrated (2 in the test run).
-6. **Keep staging, then remove it from the server** (Jan, decision 41), once no rerun is needed. Staging is the
-   archive of everything Jira had that Redmine does not show, and the source of the history step built after
-   production (docs/research/JIRA-HISTORY.md): the whole database is dumped (it holds at least
-   `staging_jira_changelogs` and the mapping tables for users, statuses, priorities and issues), encrypted, read back,
-   stored, and only then dropped. It holds Jira data: never in the repository, never in a chat.
-
-   Open until Jan answers (the coordinator asks): **owner** `<OWNER: open>`, **retention** `<RETENTION: open>`,
-   **storage place** `<STORAGE PLACE: open>` (limited access). The passphrase is the owner's: the owner types it, it is
-   never written to a file, a log or the chat.
+6. **Keep staging as Jan's encrypted dump, then remove the database** (Jan, decision 41), once no rerun is needed.
+   Staging is the archive of everything Jira had that Redmine does not show, and the source of the history step built
+   after production (docs/research/JIRA-HISTORY.md). The whole database is dumped (it holds at least
+   `staging_jira_changelogs` and the mapping tables for users, statuses, priorities and issues), encrypted and read
+   back before anything is dropped. It holds Jira data: never in the repository, never in a chat. **Jan** owns the
+   dump: it stays on the production server, Jan moves and secures it himself, and decides after the handover when to
+   delete it. Jan types the passphrase; it is never written to a file, a log or the chat.
 
    ```bash
-   set -o pipefail   # a failed mysqldump must stop here, not leave a small encrypted file that checks out
-   D=<dump-dir>   # outside the checkout, on the server, readable by the operator only (chmod 700)
+   set -o pipefail   # a failed mysqldump must stop here, not leave a small encrypted file
+   D=<dump-dir>   # on the server, outside the checkout, readable by the operator only (chmod 700)
    F="$D/jira2redmine-$(date -u +%Y%m%d).sql.gz.gpg"
    mysqldump --single-transaction --quick --hex-blob --default-character-set=utf8mb4 jira2redmine \
-     | gzip | gpg --symmetric --cipher-algo AES256 -o "$F"      # the owner types the passphrase
-   sha256sum "$F" > "$F.sha256"
+     | gzip | gpg --symmetric --cipher-algo AES256 -o "$F"      # Jan types the passphrase
    # read it back before anything is dropped: decrypt into a scratch database and compare the counts
    mysql -e "CREATE DATABASE jira2redmine_check CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-   gpg --decrypt "$F" | gunzip | mysql jira2redmine_check  # the owner types the passphrase again
+   gpg --decrypt "$F" | gunzip | mysql jira2redmine_check  # Jan types the passphrase again
    for t in staging_jira_changelogs migration_mapping_users migration_mapping_statuses migration_mapping_priorities \
             migration_mapping_issues migration_mapping_journals; do
      echo "$t $(mysql -N jira2redmine -e "SELECT COUNT(*) FROM $t") $(mysql -N jira2redmine_check -e "SELECT COUNT(*) FROM $t")"
@@ -964,15 +961,15 @@ again (B10).
    mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'jira2redmine';
      SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'jira2redmine_check'"
    mysql -e "DROP DATABASE jira2redmine_check"
+   ls -l "$F"   # tell Jan where the dump is and its size, so he can move it
    ```
 
-   Check: each line shows the same count twice, and both databases have the same number of tables. Then copy `$F`
-   and `$F.sha256` to the storage place and check the copy there with `sha256sum -c`. **GO** (Jan) before anything is
-   dropped. Only then remove staging from the server: `mysql -e "DROP DATABASE jira2redmine; DROP USER
-   'jira2redmine'@'localhost';"`, `apt purge mariadb-server` if it was installed for this, empty `$J2R_TMP`, delete
-   `$F` and its `.sha256` from the server, delete the environment file with the secrets, and ask Jan to revoke the
-   Jira token. The rehearsal practises this step on the clone's staging (the read-back included) and then deletes its
-   dump.
+   Check: each line shows the same count twice, and both databases have the same number of tables. **GO** (Jan)
+   before anything is dropped. Then remove the staging database from the server: `mysql -e "DROP DATABASE
+   jira2redmine; DROP USER 'jira2redmine'@'localhost';"`, `apt purge mariadb-server` if it was installed for this,
+   empty `$J2R_TMP`, delete the environment file with the secrets, and ask Jan to revoke the Jira token. The dump `$F`
+   stays where it is for Jan. The rehearsal practises this step on the clone's staging (the read-back included) and
+   then deletes its dump.
 
 ### B10. When something fails: rerun or roll back
 
@@ -1057,8 +1054,8 @@ Rules, without exception:
 1. Jira is read-only. The credentials are in the environment, sourced from <env-file>: never print, echo, log,
    copy or write any secret, and never show one in a command (use the variables). Before your first Jira call
    in this session run the write probe of B4; continue only on HTTP 401 "scope does not match". Send nothing
-   but GET requests to Jira. The passphrase of the staging dump (B9 step 6) is typed by its owner: never ask for
-   it in the chat.
+   but GET requests to Jira. The passphrase of the staging dump (B9 step 6) is typed by Jan: never ask for it in
+   the chat.
 2. Stay in the default permission mode.
 3. Follow part A, then part B, in order, one step at a time: part B is one run of all 14 projects (B7); the
    batches of B11 only when Jan says so. On the clone, check A.1 before Redmine or cron starts. Before a step say

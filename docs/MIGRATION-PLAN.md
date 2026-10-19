@@ -23,8 +23,8 @@
   20; staat in de standaardconfig. Daarmee is er voor de scripts niets meer open tot de repetitie op je kloon.
 - **Jouw beslissing 41 (Jira-geschiedenis, 2026-10-19):** status, toegewezene en prioriteit worden na productie
   echte journals via een nieuw Extended API-endpoint; de rest blijft in het archief. Staging blijft bewaard als
-  versleutelde dump (PRODUCTION.md B9 stap 6, met een terugleestest vóór er iets verdwijnt); eigenaar, bewaartermijn
-  en opslagplaats zijn nog open. LABO's 7 ongebruikte statussen map je via een tabel. Werklijst item 18.
+  versleutelde dump (PRODUCTION.md B9 stap 6, met een terugleestest vóór er iets verdwijnt). Jij bent eigenaar: de
+  dump blijft op de server, jij verplaatst en beveiligt hem en wist hem na de overdracht. LABO's 7 ongebruikte statussen map je via een tabel. Werklijst item 18.
 - **Relatie DOC-448/449:** Jira heeft er twee, Redmine weigert de tweede als circulair; staat in B9 bij wat je na de
   run bekijkt.
 
@@ -555,9 +555,10 @@ Jan's answers to the Jira history research (2026-10-19, relayed by the coordinat
       new admin-only raw-insert endpoint of the Extended API (`POST /extended_api/issues/:id/history.json`,
       `insert_all`, no issue save); every other history item stays in the archive only; no JSON attachment (the
       research's option B).
-    - **Staging is kept after production**, as an encrypted dump with limited access, as the archive and the source of
-      the history step (docs/PRODUCTION.md B9 step 6). Owner, retention and storage place: **open**, the coordinator
-      asks Jan.
+    - **Staging is kept after production**, as an encrypted dump, as the archive and the source of the history step
+      (docs/PRODUCTION.md B9 step 6). Jan's answers (2026-10-19): **Jan** is the owner; the dump stays on the
+      production server, Jan moves and secures it himself; no fixed retention, Jan decides after the handover and
+      deletes it himself.
     - **LABO's 7 statuses that no project uses any more** (610 history items): mapped onto existing Redmine statuses
       through a table Jan fills in.
     - **Timing**: built after production and run from the kept staging; not part of the rehearsal or of the production
