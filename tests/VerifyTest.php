@@ -18,6 +18,21 @@ final class VerifyTest extends TestCase
         self::assertSame(['jane', 'doe', 'thanks'], verifyWords(verifyHtmlToText($html)));
     }
 
+    public function testTheRunsVerifySeparatesAnAttachmentChipFromTheWordBeforeIt(): void
+    {
+        // SURV-921 (one run, 2026-10-19): "looks stable" and the file right after it, no space in Jira's HTML;
+        // verify counted "stablesvs" missing in Redmine. The bench's corrected measure (decision 26) separates them.
+        $html = '<p>looks stable<span class="nobr"><a href="https://x/rest/api/3/attachment/content/1" '
+            . 'data-attachment-type="file" data-attachment-name="SVS_check.txt">SVS_check.txt</a></span></p>';
+        self::assertSame(['looks', 'stable', 'svs', 'check', 'txt'], verifyWords(verifyHtmlToText(verifySeparateAttachmentLinks($html))));
+        $tool = (string)file_get_contents(__DIR__ . '/../tools/verify.php');
+        self::assertStringContainsString('verifyWords(verifyHtmlToText(verifySeparateAttachmentLinks($html))),', $tool);
+        self::assertStringContainsString(
+            "verifyWords(verifyHtmlToText(verifySeparateAttachmentLinks((string)(\$comment['renderedBody'] ?? ''))));",
+            $tool
+        );
+    }
+
     public function testMarkdownToTextKeepsLinkLabelsAndAltText(): void
     {
         $markdown = "## Title\n\nSee [the manual](https://example.com/m) and ![diagram](diagram.png)\n\n| a | b |\n|---|---|\n| c | d |";

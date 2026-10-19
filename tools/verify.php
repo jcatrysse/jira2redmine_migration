@@ -259,7 +259,11 @@ foreach ($projectKeys as $projectKey) {
 
         // Description.
         $html = (string)($issue['renderedFields']['description'] ?? '');
-        $coverage = verifyWordCoverage(verifyWords(verifyHtmlToText($html)), verifyWords(verifyMarkdownToText($rm['description'] ?? '', $userName)));
+        // an attachment chip glued to a word reads as two words, as Jira and Redmine show them (decision 26, SURV-921)
+        $coverage = verifyWordCoverage(
+            verifyWords(verifyHtmlToText(verifySeparateAttachmentLinks($html))),
+            verifyWords(verifyMarkdownToText($rm['description'] ?? '', $userName))
+        );
         $record('description: words', $coverage['coverage'] >= 0.98, $issueKey,
             sprintf('%.1f%% of words; missing: %s', 100 * $coverage['coverage'], implode(' ', array_slice($coverage['missing'], 0, 12))));
         $jiraLinks = verifyHtmlLinkCounts($html);
@@ -278,7 +282,7 @@ foreach ($projectKeys as $projectKey) {
         do {
             $page = verifyGetJson($jira, sprintf('/rest/api/3/issue/%s/comment', $jiraId), ['expand' => 'renderedBody', 'startAt' => $startAt, 'maxResults' => 100]);
             foreach ($page['comments'] ?? [] as $comment) {
-                $words = verifyWords(verifyHtmlToText((string)($comment['renderedBody'] ?? '')));
+                $words = verifyWords(verifyHtmlToText(verifySeparateAttachmentLinks((string)($comment['renderedBody'] ?? ''))));
                 $best = ['coverage' => 0.0, 'missing' => $words];
                 foreach ($notes as $noteWords) {
                     $match = verifyWordCoverage($words, $noteWords);
