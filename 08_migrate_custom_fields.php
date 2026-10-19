@@ -3485,12 +3485,7 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
         $proposedFormat = $currentProposedFormat;
         $proposedIsRequired = $currentProposedIsRequired ?? false;
         $proposedIsFilter = $currentProposedIsFilter ?? true;
-        $proposedIsForAll = normalizeBooleanFlag($row['proposed_is_for_all'] ?? null);
-
-        if ($proposedIsForAll === null) {
-            // this read $currentProposedProjectIds, a variable that is never set: empty() of it is always true (B86)
-            $proposedIsForAll = true;
-        }
+        $proposedIsForAll = FieldScope::isForAll(normalizeBooleanFlag($row['proposed_is_for_all'] ?? null), $proposedProjectIds);
 
         $proposedIsMultiple = $currentProposedIsMultiple ?? false;
         $proposedDefaultValue = $currentProposedDefaultValue;

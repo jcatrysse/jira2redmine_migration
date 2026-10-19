@@ -27,4 +27,26 @@ final class FieldScopeTest extends TestCase
         // the plan printed after the push reads the snapshot: the push writes what it did into it
         self::assertSame(2, substr_count($script, 'recordFieldScopeInSnapshot($pdo, '), 'a pushed scope stays "to do"');
     }
+
+    public function testAFieldWithProposedProjectsIsNotForAllUnlessStoredSo(): void
+    {
+        // B86: 08 defaulted every field without a stored choice to "for all", whatever its projects
+        self::assertFalse(FieldScope::isForAll(null, [5, 7]));
+        self::assertTrue(FieldScope::isForAll(null, null));
+        self::assertTrue(FieldScope::isForAll(null, []));
+        self::assertTrue(FieldScope::isForAll(true, [5]));
+        self::assertFalse(FieldScope::isForAll(false, null));
+
+        $eight = (string)file_get_contents(__DIR__ . '/../08_migrate_custom_fields.php');
+        self::assertStringContainsString(
+            "\$proposedIsForAll = FieldScope::isForAll(normalizeBooleanFlag(\$row['proposed_is_for_all'] ?? null), \$proposedProjectIds);",
+            $eight
+        );
+        self::assertDoesNotMatchRegularExpression('/\$currentProposedProjectIds(?!Raw)/', $eight);
+        // the projects are decoded before the transform decides
+        self::assertLessThan(
+            strpos($eight, 'FieldScope::isForAll('),
+            strpos($eight, '$decodedProjectIds = decodeJsonColumn($currentProposedProjectIdsRaw);')
+        );
+    }
 }

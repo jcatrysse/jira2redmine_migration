@@ -32,4 +32,15 @@ final class FieldScope
 
         return $ids;
     }
+
+    /**
+     * Whether a field is for all projects: the stored proposal, else whether it has no proposed projects. B86: 08's
+     * transform defaulted to true for every field, reading a variable that was never set instead of the projects.
+     *
+     * @param list<int>|null $proposedProjectIds
+     */
+    public static function isForAll(?bool $stored, ?array $proposedProjectIds): bool
+    {
+        return $stored ?? ($proposedProjectIds === null || $proposedProjectIds === []);
+    }
 }
