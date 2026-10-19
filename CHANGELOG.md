@@ -72,7 +72,7 @@ All notable changes to this project. Steps to take before and after a migration 
   one run of all 14 projects with snapshots at its three pauses, decision 39; the four batches as the fallback;
   the prompt for the local session).
 - Jira's history of status, assignee and priority as Redmine journals (Jan, decision 41): 11's phase `history`
-  (a default phase) writes them with its push, through the Extended API's history endpoint (`e87ed79` or later).
+  (a default phase) writes them with its push, through the Extended API's history endpoint (`b423b4c` or later).
   A value Redmine does not have is left out with the chain kept connected; such an issue gets
   `jira-history.json`. New columns `migration_mapping_journals.history_journal_id` and `history_attachment_id`.
 - verify: the last updated user is the latest journal's, the history ends in Jira's status (decision 41).

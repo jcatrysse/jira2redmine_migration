@@ -2,7 +2,25 @@
 
 ## Samenvatting voor Jan (2026-10-19, B2)
 
-**Stand.** Alles staat op `redmine70-migration`, QA groen (336 tests). Jira bleef read-only: alleen GET-calls.
+**Stand.** Alles staat op `redmine70-migration`, QA groen (373 tests). Jira bleef read-only: alleen GET-calls.
+
+**Vandaag: jouw herziene beslissing 41 (Jira-geschiedenis tijdens de migratie), gebouwd en bewezen**
+- **Status, toegewezene en prioriteit** komen als echte journals mee in 11, met hun eigen auteur en tijd, via het
+  nieuwe history-endpoint van de Extended API (versie `b423b4c` of later). Geen mail, geen webhook, de
+  bijgewerkt-tijd, gesloten-tijd en watchers van het issue blijven gelijk.
+- **Waarden die Redmine niet kent** (LABO's 7 ongebruikte statussen, een toegewezene zonder account, geen
+  prioriteit): geen tabel. De stap valt weg en de keten sluit aan (A naar X, X naar B wordt A naar B). Alleen zo'n
+  issue krijgt `jira-history.json` met alle overgangen, met auteur en tijd van de laatste overgang.
+- **Bevinding: "Laatst bijgewerkt door"** is in Redmine de auteur van de journal met het hoogste id, niet de laatste
+  in tijd. History achteraf had dat bij de meeste issues verkeerd gezet. Daarom (keuze C, de coördinator voor jou)
+  pusht 11 nu per issue in Jira's tijdvolgorde, de history ertussen: daarna overal de laatste actor uit Jira. Dat
+  loste ook B84 op (55 issues stonden al verkeerd) en B85 (11 zette de bijgewerkt-tijd op die van de laatste
+  journal i.p.v. die van Jira: 647 issues; nu 0).
+- **Bewezen op 5.1 en 7.0** met GEOS, SIS, OAC en LABO: 4.370 journals, 189 bestanden (185 in LABO), 0 mails,
+  0 webhooks, 0 issues met andere bijgewerkt-tijd, gesloten-tijd of watchers; de cumulative flow van redmine_agile
+  toont LABO's issues nu door hun statussen heen. Duur: ongeveer 100 s extra voor deze 4 projecten; de run van
+  alle 14 projecten meet het totaal (PRODUCTION.md B8).
+- **Staging blijft je versleutelde dump** (B9 stap 6 ongewijzigd), het archief van de rest van de geschiedenis.
 
 **Vannacht**
 - **Eén run met alle 14 projecten (beslissing 39), getest op 7.0** op een Redmine die al eigen data had: 4 u 28 min,
@@ -21,10 +39,10 @@
   - B83: een nieuwe run van 15 probeerde een mislukte checklist niet opnieuw.
 - **Jouw beslissing 40 (B78):** het Jira-veld "Agent Sessions" (AI-agentsessies) gaat niet mee, zoals beslissing
   20; staat in de standaardconfig. Daarmee is er voor de scripts niets meer open tot de repetitie op je kloon.
-- **Jouw beslissing 41 (Jira-geschiedenis, 2026-10-19):** status, toegewezene en prioriteit worden na productie
-  echte journals via een nieuw Extended API-endpoint; de rest blijft in het archief. Staging blijft bewaard als
-  versleutelde dump (PRODUCTION.md B9 stap 6, met een terugleestest vóór er iets verdwijnt). Jij bent eigenaar: de
-  dump blijft op de server, jij verplaatst en beveiligt hem en wist hem na de overdracht. LABO's 7 ongebruikte statussen map je via een tabel. Werklijst item 18.
+- **Jouw beslissing 41 (Jira-geschiedenis, 2026-10-19), eerste versie:** na productie, LABO via een tabel. Dezelfde
+  dag herzien: zie boven. Staging blijft bewaard als versleutelde dump (PRODUCTION.md B9 stap 6, met een
+  terugleestest vóór er iets verdwijnt); jij bent eigenaar, de dump blijft op de server, jij verplaatst en
+  beveiligt hem en wist hem na de overdracht.
 - **Relatie DOC-448/449:** Jira heeft er twee, Redmine weigert de tweede als circulair; staat in B9 bij wat je na de
   run bekijkt.
 
@@ -553,8 +571,9 @@ Jan's answers to the Jira history research (2026-10-19, relayed by the coordinat
 41. **Jira's history: status, assignee and priority as Redmine journals, during the migration.**
     - **Approach**: real Redmine journals for `status_id`, `assigned_to_id` and `priority_id` only, written through
       the Extended API's admin-only raw-insert endpoint (`POST /extended_api/issues/:id/history.json`, `insert_all`,
-      no issue save: `updated_on`, `closed_on` and the watchers stay, no mail, no webhook); every other history item
-      stays in the staging dump only.
+      no issue save: `updated_on`, `closed_on` and the watchers stay, no mail, no webhook; redmine_extended_api
+      `b423b4c` or later, which also takes a file without journals); every other history item stays in the staging
+      dump only. Proven on 5.1 and 7.0 (Results, "Decision 41, the proofs"; B84, B85).
     - **Timing (revised)**: built now and part of the one run: 11's phase `history`, a default phase, goes with its
       push. Not after production.
     - **Values Redmine does not have** (revised): no mapping table. LABO's 7 statuses that no project uses (610
@@ -865,18 +884,18 @@ In this order. Each item records its result under "Results" when done.
 
 17. Full test run on both targets with the final code; verify report green; numbers in "Results".
 
-**After production (decision 41)**
+**Decision 41: Jira's history during the migration**
 
-18. Jira's history as journals, from the kept staging (decision 41; docs/research/JIRA-HISTORY.md):
-    - the Extended API endpoint `POST /extended_api/issues/:id/history.json` (admin only, raw insert, no issue save),
-      in redmine_extended_api's own session, with tests on 5.1, 6.1 and 7.0;
-    - a history step here (a phase after 11, or `tools/push_history.php`), reading `staging_jira_changelogs`, mapping
-      users (02), statuses (05) and priorities (06), off by default, with dry-run payloads and a test per mapping and
-      per skip;
-    - the LABO status table Jan fills in (the 7 statuses no project uses, 610 items);
-    - a proof run on 5.1 and 7.0: journals per issue, the last status detail equals the current status, redmine_agile's
-      charts, no watcher added, `updated_on` unchanged.
-    Not started; it waits for production and for the staging dump of docs/PRODUCTION.md B9 step 6.
+18. Jira's history of status, assignee and priority as journals (decision 41, revised 2026-10-19;
+    docs/research/JIRA-HISTORY.md):
+    - the Extended API endpoint `POST /extended_api/issues/:id/history.json` (redmine_extended_api's own session,
+      `b423b4c`, tests on 5.1, 6.1 and 7.0);
+    - 11's phase `history` in its push, per issue in Jira's time order (option C, B84), Jira's updated time kept
+      (B85), skip and connect with `jira-history.json`, a rerun sends only what is missing; verify checks the last
+      updated user and the history's last status;
+    - proven on 5.1 and 7.0 with GEOS, SIS, OAC and LABO (Results, "Decision 41, the proofs");
+    - the one run of the 14 projects on 7.0 with the history, for its run time: see Results and PRODUCTION.md B8.
+    Status 2026-10-19: built and proven; part of the rehearsal.
 
 ## Sessions
 
@@ -1316,6 +1335,8 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B81 | 11 logged a failed read of an issue's comments or history as `[warn] <message>`, without the issue's key, and its summary did not count it | a full disk during the decision 37 proof on 5.1 (a test script that downloaded all of SURV's files) left DOC-351 without two comments ("The table 'staging_jira_comments' is full"); 11 went on and the B7 log check (`[error]`, fatal, exception) did not see it; verify caught it only because DOC-351 was in its sample | **fixed**: such a read is an `[error]` with the issue key and "run 11 again" (a 401, 403 or 404 stays a warning), the summary counts the issues not read, and PRODUCTION.md B7 step 12 counts the comment and history reads (FAILED: run 11 again, it reads only those) |
 | B82 | The `workflows` step of `manual_steps.rb` appends what it opens to `tmp/j2r_added_workflows.json`, and `restore` removes every transition the list names; nothing checked that the list belongs to the database it is used on | on 5.1 a list left by an earlier test run without restore (the SIS reproduction of B76; the test reset drops the database, not the list) named the four transitions of the existing tracker "Task", and restore removed its global workflow (4 rows to 0: decision 34 broken by a stale list); in production the same follows a Redmine restored without its list (B10's pg_dump variant did not name it) | **fixed**: the step stops before adding anything when the list names a transition this Redmine lacks (a list of this Redmine always matches until restore); `reset.sh` deletes the list; B10 names the list in the rollback without VM snapshots. Checked on 5.1: a stale list stops the step with 0 transitions added; two passes then restore (the batch case) add 158,733 and 0 and remove 158,733 |
 | B83 | 15's transform kept every row whose checklist had not changed (automation hash), a FAILED row too | a rerun of 15 never retried a failed checklist, against PRODUCTION.md B10 ("FAILED rows are judged again"): DOC-292 (B80) stayed FAILED with 6 of its 9 items after the fix of B80 | **fixed**: an unchanged row is kept unless its push failed; on 5.1 15 then pushed DOC-292 again, all 9 items, the long one cut to 512 characters, the issue's updated time unchanged, no journal |
+| B84 | Redmine's "Last updated by" (`Issue#last_updated_by`, the issue list column; 5.1 and 7.0) is the author of the journal with the highest id, not of the latest one; 11 pushed every comment before every changelog entry | on 55 of the 721 issues with journals (GEOS, SIS, OAC, LABO; 222 of 1,870 in the earlier 7.0 run of DOC, GEOS, OAC, SIS, SURV) the last updated user was not the last person who acted in Jira; history written after 11 would have changed it on most issues (decision 41) | **fixed** (`868d07c`, decision 41 option C): 11 pushes per issue in Jira's time order, the history series in between: 0 on 5.1 and 7.0, the requests the same (record proxy, compared as a set) |
+| B85 | 11 sent each journal with the issue's updated time set to that journal's own time (the Extended API's `updated_on` override) | after 11 an issue showed the time of the last journal pushed instead of Jira's updated time that 10 had set: 647 of 1,013 issues (633 in time order) | **fixed** (`800b8d4`): every journal sends Jira's updated time of its issue: 0 |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
@@ -1827,3 +1848,40 @@ holds only the single vessels, SURV-1063 to 1066 created with six each. Found on
 proven on 5.1 (B80 and B83: DOC-292's checklist whole; B81: DOC-351's comments read again; B82: a stale list stops the
 workflows step, the batch case passes). The first 7.0 attempt filled the disk: the proof script left the attachment
 sample off and SURV's 98.7 GiB began to download; it ran again with the sample.
+
+**Decision 41, the proofs (B2, 2026-10-19).** Jira's history of status, assignee and priority in 11's push, option C.
+GEOS, SIS, OAC and LABO (1,013 issues, 2,493 comments, 9,472 Jira history entries), `run_all.sh` with `STOP_AT=S2`,
+then 11's jira and transform phases and a snapshot P0 (the Redmine database copied, the staging dumped); every step
+below starts from P0. redmine_extended_api `b423b4c` (the history endpoint with a file and no journal allowed). Mails to
+files; a proof user who wants every mail, Developer in the 4 projects and watcher of 30 issues with history, and a
+webhook for issue.created and issue.updated in the 4 projects (GEOxyz's 5.1 has 7.0's webhooks backported). The
+same numbers on 5.1 and 7.0:
+
+| step from P0 | requests | last updated by not the latest journal's author | updated_on not Jira's updated | other |
+|---|---|---|---|---|
+| 11's push before (`f68858e`) | 2,959 | 55 of 721 issues with journals | 647 | |
+| per issue in time order (`868d07c`, B84) | 2,959, **identical as a set** (record proxy; 2,957 in another order) | **0** | 633 | |
+| Jira's updated time with every journal (`800b8d4`, B85) | 2,959 | 0 | **0** | |
+| with the history in between (`dd62204`) | 7,515 (uploads and history series added) | **0**; 21 issues without journals (292 before) | **0** | 0 mails, 0 webhook calls (control: a plain PUT, 2 mails, 1 call) |
+
+With the history against the same push without it: `updated_on`, `closed_on`, status, watchers and the last notes
+unchanged on all 1,013 issues; the last updated user changed on 548 issues, each time to the latest journal's author.
+History: 982 issues, 4,370 journals, 4,391 details, 309 items skipped and connected, 12 dropped as no change, 189
+files, 0 failed requests; status mismatches 0, open parents 3 (`[note]`). Per project:
+
+| project | issues with history | journals | items skipped and connected | dropped | files |
+|---|---|---|---|---|---|
+| LABO | 574 | 2,791 | 305 (statuses no project uses; the other 305 of the 610 items start from such a status and are connected) | 12 | 185 |
+| SIS | 254 | 957 | 4 (assignees without an account) | 0 | 4 |
+| GEOS | 98 | 485 | 0 | 0 | 0 |
+| OAC | 56 | 137 | 0 | 0 | 0 |
+
+The 189 files carry the time of their issue's last transition (189 of 189), 0 journals carry the time of the run.
+redmine_agile's cumulative flow of LABO (584 issues, 29 months): without the history every issue counts in its final
+status from its creation on; with it the issues move through their statuses over the months, the same totals per
+period, no unknown status id; the one open parent counts in Jira's "Closed" (its history ends there, 10 gave it
+"Resolved"). verify on 7.0 (25 per project): "journals: last updated by the latest" and "history: last status as in
+Jira" 100 of 100; it counted the history file as an unexpected attachment (fixed in `baffd9d`, then 100 of 100). The
+push took 383 to 408 s against 280 to 298 s without the history. In the test configuration the default author is user
+1, the admin and migration account: 16 files whose last transition has no Redmine account carry it; production sets
+`J2R_DEFAULT_AUTHOR_ID`.

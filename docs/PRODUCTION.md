@@ -49,8 +49,13 @@ Placeholders are written `<like-this>`.
   Met minder ruimte draait 09 in rondes.
 - **Staging blijft bewaard** (beslissing 41): na de run wordt de staging-database versleuteld gedumpt en als controle
   teruggelezen; pas daarna, na Jans go, gaat de database weg (B9 stap 6). De dump is van Jan: hij blijft op de
-  server, Jan verplaatst en beveiligt hem zelf en beslist na de overdracht wanneer hij hem wist. Jira's geschiedenis van status, toegewezene en prioriteit komt na productie als journals uit die
-  dump.
+  server, Jan verplaatst en beveiligt hem zelf en beslist na de overdracht wanneer hij hem wist. De dump is het
+  archief van de rest van Jira's geschiedenis.
+- **Jira's geschiedenis van status, toegewezene en prioriteit komt mee in de run** (beslissing 41, herzien): 11
+  schrijft ze als journals met hun eigen auteur en tijd, per issue in Jira's tijdvolgorde tussen de commentaren, zodat
+  "Laatst bijgewerkt door" de laatste actor uit Jira is. Een waarde die Redmine niet kent valt weg en de keten sluit
+  aan; zo'n issue krijgt `jira-history.json`. Geen mail, geen webhook, de tijden van het issue blijven. Vereist de
+  Extended API `b423b4c` of later (B3).
 - **Deel C** is de prompt voor de lokale Claude-sessie op de server: Jira alleen lezen, standaard rechten, Jans go
   voor elke schrijfstap in productie, rapport in het Nederlands.
 
@@ -517,9 +522,9 @@ Then, once, on the upgraded Redmine 7.0. Each line is a check the local session 
 |---|---|---|
 | snapshot S0 | part B's rollback point (A.4 step 3 is the upgrade's). Rehearsal: the snapshot after A.5. Production: taken now, at the start of the window, after steps 1 to 4 above (users worked in Redmine since part A). B7 takes S1 to S3 (B10) | the snapshot exists and its time is noted |
 | REST API | Administration > Settings > Integrations: REST web service on (A.5 row 17; "API" on 5.1) | `curl -s -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/users/current.json"` gives the migration account, `admin: true` |
-| Extended API | the plugin is installed, version 8e7096c or later (tested: `ecc7dde`): the scripts send `skip_journal` (decision 37), which an older version ignores, so its journals would come back | `curl -sI -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/extended_api/issues.json"` has the header `X-Redmine-Extended-API`; `grep -c skip_journal <redmine-root>/plugins/redmine_extended_api/lib/redmine_extended_api/patches/api_helpers.rb` is above 0 |
+| Extended API | the plugin is installed, version `b423b4c` or later (tested: `b423b4c`): the scripts send `skip_journal` (decision 37, 8e7096c or later; an older version ignores it, so its journals would come back) and 11 writes Jira's history through its history endpoint (decision 41; without it 11 stops the history with one `[error]` and pushes the comments) | `curl -sI -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/extended_api/issues.json"` has the header `X-Redmine-Extended-API`; `grep -c skip_journal <redmine-root>/plugins/redmine_extended_api/lib/redmine_extended_api/patches/api_helpers.rb` is above 0; `ls <redmine-root>/plugins/redmine_extended_api/app/controllers/extended_api_issue_histories_controller.rb` exists |
 | text formatting | Administration, Settings, General: CommonMark Markdown (A.5 row 17) | `Setting.text_formatting` is `common_mark` |
-| no mail, no webhook from the migration | `redmine.extended_api.enabled` true (B3): 10, 11, 12, 13 (tags on 7.0) and the relink write issues and journals through it with notify=false, which silences the mails and Redmine 7's webhooks of the request (Jan, 2026-10-15), and 10's second pass, 12, 13 and the relink also with `skip_journal` (no journal, decision 37); 09's uploads and 14's watchers send none. The one exception: 15 saves the issue's done ratio through the plain API when redmine_checklists' setting "issue done ratio" is on (Administration, Plugins, Checklists; off by default): switch it off for the run. Safety net (production, cheap, B2's advice): stealth mode on for the migration account, `curl -s -X POST -H "X-Redmine-API-Key: $REDMINE_API_KEY" -d toggle=true "$REDMINE_URL/stealth/toggle.json"`; it silences the mails of anything the migration account writes outside the Extended API. Rehearsal: outgoing mail is off on the clone (A.1) | the checklists setting is off; production: the answer is `{"is_cloaked":true}` (signing in to the web interface as the migration account switches stealth off again: do not, or toggle it on after) |
+| no mail, no webhook from the migration | `redmine.extended_api.enabled` true (B3): 10, 11, 12, 13 (tags on 7.0) and the relink write issues and journals through it with notify=false, which silences the mails and Redmine 7's webhooks of the request (Jan, 2026-10-15), and 10's second pass, 12, 13 and the relink also with `skip_journal` (no journal, decision 37); 11's history (decision 41) goes through the history endpoint, a raw insert that runs no callback at all (measured: 0 mails, 0 webhook calls on 5.1 and 7.0); 09's uploads and 14's watchers send none. The one exception: 15 saves the issue's done ratio through the plain API when redmine_checklists' setting "issue done ratio" is on (Administration, Plugins, Checklists; off by default): switch it off for the run. Safety net (production, cheap, B2's advice): stealth mode on for the migration account, `curl -s -X POST -H "X-Redmine-API-Key: $REDMINE_API_KEY" -d toggle=true "$REDMINE_URL/stealth/toggle.json"`; it silences the mails of anything the migration account writes outside the Extended API. Rehearsal: outgoing mail is off on the clone (A.1) | the checklists setting is off; production: the answer is `{"is_cloaked":true}` (signing in to the web interface as the migration account switches stealth off again: do not, or toggle it on after) |
 | relation types | the GEOxyz relation types of `migration.relations.custom_mappings` in `redmine_issue_view_columns` (`tools/testenv/redmine_issue_view_columns.local.rb` is generated from them) | after part A they exist in 7.0 (12 refuses a relation type Redmine does not know) |
 | attachment prune and LDAP sync off | covered by the crontab being off (step 4 above; on the clone A.1): prune would delete uploads still waiting for their issue after 24 h, LDAP sync would lock or change accounts the migration activates | `crontab -l` for the Redmine user is empty |
 | webhooks | no change needed: every issue write goes through the Extended API with notify=false, and Redmine 7 fires no webhook for it. Only if the checklists setting of the row above must stay on: `UPDATE webhooks SET active = false;` for the duration of part B, after noting which were active (`SELECT id, url, active FROM webhooks;`); stealth mode does not silence webhooks. Rehearsal: inactive anyway (A.1, A.4 step 11) | |
@@ -758,6 +763,16 @@ checkout (the logs hold Jira data: never in the repository).
     nothing, and it goes through the Extended API with notify=false and `skip_journal`: no journal, the updated time
     kept. 14 reads nothing from Jira here: its jira phase ran in step 3. 10's second pass and 12 send `skip_journal` too (decision 37): the parents get no
     "Subtask added", the relations no journal on either issue.
+
+    11 writes Jira's history of status, assignee and priority too (decision 41): per issue in Jira's time order,
+    between the comments (Redmine's "Last updated by" is the journal with the highest id, so the last person who
+    acted in Jira stays last), with Jira's updated time of the issue kept. Check in its log:
+    `History: <n> issue(s), <n> journal(s), ...; status mismatches: 0 (open parents: <n>)` (a `[note]` line per open
+    parent: its history ends in Jira's status, 10 gave it "Resolved"; a `[warn]` line is a history that ends
+    elsewhere: report it) and at the end `History pushed: <n> journal(s), <n> file(s), 0 failed request(s)`. A value
+    Redmine does not have (LABO's 7 statuses no project uses, an assignee without an account) is left out and the
+    chain stays connected; such an issue gets `jira-history.json`. Expected from the test runs: about 4,400 journals
+    for GEOS, SIS, OAC and LABO, 185 files in LABO, a few elsewhere (B8). A rerun sends only what is missing.
 11. **Snapshot S3** (production; rehearsal as at S1). The migration itself is complete; B9 follows.
 12. **Counts** (staging):
 
@@ -768,7 +783,9 @@ checkout (the logs hold Jira data: never in the repository).
       UNION ALL SELECT 'relations', migration_status, COUNT(*) FROM migration_mapping_issue_relations GROUP BY 2
       UNION ALL SELECT 'watchers', migration_status, COUNT(*) FROM migration_mapping_watchers GROUP BY 2
       UNION ALL SELECT 'comment reads', comments_migration_status, COUNT(*) FROM staging_jira_journal_extract_state GROUP BY 2
-      UNION ALL SELECT 'history reads', changelog_migration_status, COUNT(*) FROM staging_jira_journal_extract_state GROUP BY 2"
+      UNION ALL SELECT 'history reads', changelog_migration_status, COUNT(*) FROM staging_jira_journal_extract_state GROUP BY 2
+      UNION ALL SELECT 'history journals', 'pushed', COUNT(history_journal_id) FROM migration_mapping_journals
+      UNION ALL SELECT 'history files', 'pushed', COUNT(history_attachment_id) FROM migration_mapping_journals"
     ```
 
     Expected: comment and history reads SUCCESS (WARNING only for an issue Jira refuses, 401, 403 or 404); a FAILED
@@ -784,7 +801,9 @@ checkout (the logs hold Jira data: never in the repository).
     php tools/verify.php --projects="${J2R_PROJECTS^^}" --sample=25 --report="$LOG/verify.md"
     ```
 
-    The last line must be **PASS**. The report holds issue keys and short Jira texts: it stays in `$LOG`.
+    The last line must be **PASS**. The report holds issue keys and short Jira texts: it stays in `$LOG`. Decision
+    41 adds two checks per sampled issue: "journals: last updated by the latest" and "history: last status as in
+    Jira"; `jira-history.json` is not counted as a Jira attachment.
 14. **GO: Jan looks** at a few migrated issues of every project in Redmine (description, comments, attachments,
     watchers, status) next to Jira, and gives the go for B9.
 15. **Errors in the logs:** `grep -ciE '\[error\]|fatal|exception' "$LOG"/*.log` is 0 for every log, or each hit is
@@ -938,8 +957,8 @@ again (B10).
 
    MANUAL rows are links whose other issue is not migrated (2 in the test run).
 6. **Keep staging as Jan's encrypted dump, then remove the database** (Jan, decision 41), once no rerun is needed.
-   Staging is the archive of everything Jira had that Redmine does not show, and the source of the history step built
-   after production (docs/research/JIRA-HISTORY.md). The whole database is dumped (it holds at least
+   Staging is the archive of everything Jira had that Redmine does not show (11 wrote only the status, assignee and
+   priority history, decision 41; docs/research/JIRA-HISTORY.md lists the rest). The whole database is dumped (it holds at least
    `staging_jira_changelogs` and the mapping tables for users, statuses, priorities and issues), encrypted and read
    back before anything is dropped. It holds Jira data: never in the repository, never in a chat. **Jan** owns the
    dump: it stays on the production server, Jan moves and secures it himself, and decides after the handover when to
