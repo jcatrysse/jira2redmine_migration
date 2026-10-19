@@ -16,8 +16,8 @@ final class HistoryLookups
      * @param array<array-key, int> $statuses Jira status id => Redmine status id (mapped rows only)
      * @param array<array-key, int> $priorities Jira priority id => Redmine priority id (mapped rows only)
      * @param array<array-key, array{id: int, login: ?string}> $users Jira account id => Redmine user (mapped rows only)
-     * @param int $fallbackAuthorId the author 11 gives a comment whose author has no account: the configured
-     *                              default author, else the API user
+     * @param int $fallbackAuthorId the author of content whose Jira author has no account: the configured default
+     *                              author (decision 42: Anonymous unless Jan sets another)
      */
     public function __construct(
         private readonly array $statuses,
@@ -60,7 +60,7 @@ final class HistoryLookups
         };
     }
 
-    /** The same rule as 11's comments: the mapped account, else the default author, else the API user. */
+    /** The same rule as 11's comments: the mapped account, else the configured default author (decision 42). */
     public function author(?string $jiraAccountId): int
     {
         if ($jiraAccountId !== null && isset($this->users[$jiraAccountId])) {

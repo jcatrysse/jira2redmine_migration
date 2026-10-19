@@ -18,6 +18,7 @@ use Jira2Redmine\Attachments\AttachmentSample;
 use Jira2Redmine\Attachments\PullRetry;
 use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Attachments\CreatedAt;
+use Jira2Redmine\Users\DefaultAuthor;
 const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
     'jira' => 'Synchronise Jira attachment metadata with the migration mapping table.',
@@ -272,9 +273,11 @@ function runAttachmentUploadPhase(
 
     $userLookup = buildRedmineUserLookup($pdo);
     $attachmentsConfig = $config['attachments'] ?? [];
-    $defaultAuthorId = isset($attachmentsConfig['default_redmine_author_id'])
-        ? normalizeInteger($attachmentsConfig['default_redmine_author_id'], 1)
-        : null;
+    // decision 42: an uploader without a Redmine account gets the configured user (Anonymous by default), never the
+    // API user
+    $defaultAuthorId = $useExtendedApi
+        ? DefaultAuthor::required($config, 'attachments')
+        : DefaultAuthor::configured($config, 'attachments');
     $sharePointConfig = extractSharePointConfig($config);
     $sharePointClient = $sharePointConfig !== null ? createSharePointClient($sharePointConfig) : null;
 

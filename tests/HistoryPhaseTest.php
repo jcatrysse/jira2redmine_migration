@@ -29,10 +29,7 @@ final class HistoryPhaseTest extends TestCase
             . '$withHistory);',
             $eleven
         );
-        self::assertStringContainsString(
-            '$history = prepareHistory($pdo, $redmineClient, extractDefaultJournalAuthorId($config));',
-            $eleven
-        );
+        self::assertStringContainsString("\$history = prepareHistory(\$pdo, DefaultAuthor::required(\$config, 'journals'));", $eleven);
     }
 
     public function testEachIssueIsBuiltThroughTheChainAndItsStatusChecked(): void
@@ -50,10 +47,8 @@ final class HistoryPhaseTest extends TestCase
         self::assertStringContainsString("\$mapped = \"migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')\";", $eleven);
         self::assertStringContainsString('FROM migration_mapping_statuses WHERE $mapped AND redmine_status_id IS NOT NULL', $eleven);
         self::assertStringContainsString('FROM migration_mapping_priorities WHERE $mapped AND redmine_priority_id IS NOT NULL', $eleven);
-        self::assertStringContainsString(
-            'return new HistoryLookups($statuses, $priorities, $users, $defaultAuthorId ?? fetchApiUserId($redmineClient));',
-            $eleven
-        );
+        // decision 42: authors without an account get the configured default author, no longer the API user
+        self::assertStringContainsString('return new HistoryLookups($statuses, $priorities, $users, $defaultAuthorId);', $eleven);
     }
 
     public function testWhatIsPushedIsKeptPerJiraEntryAndARerunSendsOnlyWhatIsMissing(): void

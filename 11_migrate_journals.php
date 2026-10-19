@@ -26,6 +26,7 @@ use Jira2Redmine\History\HistoryLookups;
 use Jira2Redmine\History\HistoryPush;
 use Jira2Redmine\History\HistoryRequest;
 use Jira2Redmine\History\IssueHistory;
+use Jira2Redmine\Users\DefaultAuthor;
 const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.1';
 const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
 const JIRA_RATE_LIMIT_BASE_DELAY_MS = 1000;
@@ -960,7 +961,7 @@ function runJournalPushPhase(
     if ($withHistory && !$useExtendedApi) {
         printf("  [warn] The Jira history needs the Extended API (--use-extended-api); left out.%s", PHP_EOL);
     } elseif ($withHistory) {
-        $history = prepareHistory($pdo, $redmineClient, extractDefaultJournalAuthorId($config));
+        $history = prepareHistory($pdo, DefaultAuthor::required($config, 'journals'));
     }
     $historyEvents = $history['events'] ?? [];
 
@@ -1021,7 +1022,9 @@ function runJournalPushPhase(
     }
 
     $userLookup = buildRedmineUserLookup($pdo);
-    $defaultAuthorId = extractDefaultJournalAuthorId($config);
+    // decision 42: an author without a Redmine account gets the configured user (Anonymous by default), never the API
+    // user
+    $defaultAuthorId = $useExtendedApi ? DefaultAuthor::required($config, 'journals') : extractDefaultJournalAuthorId($config);
     $attachmentMetadata = buildAttachmentMetadataIndex($pdo);
     $adfConverter = new AdfConverter();
 
@@ -1159,9 +1162,9 @@ function fetchPushableChangelog(PDO $pdo): array
  * @return array{events: list<array<string, mixed>>, files: array<string, array<string, mixed>>, histories: array<string, IssueHistory>, lookups: HistoryLookups, pushed: array{journals: int, files: int, failed: int}, disabled: bool}
  * @throws Throwable
  */
-function prepareHistory(PDO $pdo, Client $redmineClient, ?int $defaultAuthorId): array
+function prepareHistory(PDO $pdo, int $defaultAuthorId): array
 {
-    $lookups = buildHistoryLookups($pdo, $redmineClient, $defaultAuthorId);
+    $lookups = buildHistoryLookups($pdo, $defaultAuthorId);
     $issues = fetchHistoryIssues($pdo);
     $done = fetchPushedHistory($pdo);
 
@@ -1348,9 +1351,9 @@ function writeHistoryPreview($preview, array $issue, array $body): void
 
 /**
  * Statuses (05), priorities (06) and people (02) with a Redmine value, by the rule 10 uses; authors without an
- * account get 11's fallback: the default author, else the API user.
+ * account get the configured default author (decision 42: Anonymous unless Jan sets another).
  */
-function buildHistoryLookups(PDO $pdo, Client $redmineClient, ?int $defaultAuthorId): HistoryLookups
+function buildHistoryLookups(PDO $pdo, int $defaultAuthorId): HistoryLookups
 {
     $mapped = "migration_status IN ('MATCH_FOUND', 'CREATION_SUCCESS')";
     $statuses = [];
@@ -1369,7 +1372,7 @@ function buildHistoryLookups(PDO $pdo, Client $redmineClient, ?int $defaultAutho
         $users[(string)$row['jira_account_id']] = ['id' => (int)$row['redmine_user_id'], 'login' => $row['login'] !== null ? (string)$row['login'] : null];
     }
 
-    return new HistoryLookups($statuses, $priorities, $users, $defaultAuthorId ?? fetchApiUserId($redmineClient));
+    return new HistoryLookups($statuses, $priorities, $users, $defaultAuthorId);
 }
 
 /**
@@ -1383,17 +1386,6 @@ function historyRows(PDO $pdo, string $sql): array
     }
 
     return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
-}
-
-function fetchApiUserId(Client $redmineClient): int
-{
-    $answer = decodeJsonResponse($redmineClient->get('users/current.json'));
-    $id = $answer['user']['id'] ?? null;
-    if (!is_numeric($id)) {
-        throw new RuntimeException('Cannot read the API user (GET users/current.json).');
-    }
-
-    return (int)$id;
 }
 
 /**

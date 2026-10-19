@@ -26,6 +26,7 @@ use Jira2Redmine\Jira\ProjectSelection;
 use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\CustomFields\DecimalText;
 use Jira2Redmine\CustomFields\LabelManagerLabels;
+use Jira2Redmine\Users\DefaultAuthor;
 
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -291,7 +292,11 @@ function main(array $config, array $cliOptions): void
         $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
         $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
 
-        $defaultExtendedIssueAuthorId = extractDefaultIssueAuthorId($config);
+        // decision 42: an author without a Redmine account gets the configured user (Anonymous by default), never the
+        // API user
+        $defaultExtendedIssueAuthorId = $useExtendedApi
+            ? DefaultAuthor::required($config, 'issues')
+            : extractDefaultIssueAuthorId($config);
 
         $issueConfig = $config['migration']['issues'] ?? [];
         $subtaskBehavior = normalizeSubtaskStatusBehavior($issueConfig['subtask_status_behavior'] ?? null);
