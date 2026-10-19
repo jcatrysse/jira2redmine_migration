@@ -5,8 +5,9 @@ declare(strict_types=1);
 use PHPUnit\Framework\TestCase;
 
 /**
- * Decision 41 (Jan, 2026-10-19): the history step is a phase of 11, after its push, part of the one run (11's default
- * phases), and a rerun skips an issue whose history is in Redmine.
+ * Decision 41 (Jan, 2026-10-19): the history is a phase of 11 after its push, part of the one run (11's default
+ * phases). With the push it goes in between the comments, per issue in Jira's time order (option C: Redmine's "Last
+ * updated by" is the journal with the highest id), and a rerun sends only what is missing.
  */
 final class HistoryPhaseTest extends TestCase
 {
@@ -15,7 +16,7 @@ final class HistoryPhaseTest extends TestCase
         return (string)file_get_contents(__DIR__ . '/../11_migrate_journals.php');
     }
 
-    public function testHistoryIsADefaultPhaseAfterThePush(): void
+    public function testHistoryIsADefaultPhaseAfterThePushAndGoesWithIt(): void
     {
         $eleven = $this->eleven();
         $push = strpos($eleven, "    'push' => 'Create Redmine journals");
@@ -23,19 +24,23 @@ final class HistoryPhaseTest extends TestCase
         self::assertIsInt($push);
         self::assertIsInt($history);
         self::assertGreaterThan($push, $history);
-        self::assertGreaterThan(
-            strpos($eleven, 'runJournalPushPhase($pdo, $config, $confirmPush'),
-            strpos($eleven, 'runHistoryPhase($pdo, $config, $useExtendedApi);')
+        self::assertStringContainsString(
+            'runJournalPushPhase($pdo, $config, $confirmPush, $isDryRun, $useExtendedApi, $extendedApiPrefix, $withJournals, '
+            . '$withHistory);',
+            $eleven
+        );
+        self::assertStringContainsString(
+            '$history = prepareHistory($pdo, $redmineClient, extractDefaultJournalAuthorId($config));',
+            $eleven
         );
     }
 
-    public function testThePhaseBuildsEachIssueThroughTheChainAndChecksItsStatus(): void
+    public function testEachIssueIsBuiltThroughTheChainAndItsStatusChecked(): void
     {
         $eleven = $this->eleven();
         self::assertStringContainsString('$history = HistoryChain::build($entries, $lookups);', $eleven);
         self::assertStringContainsString("\$check = \$history->statusCheck(\$issue['status_id'], \$issue['jira_status_id']);", $eleven);
-        self::assertStringContainsString("'request' => HistoryRequest::body(\$history, \$file),", $eleven);
-        // Jira data goes to the attachment directory, never into the repository
+        // the dry run's requests go to the attachment directory, never into the repository
         self::assertStringContainsString("\$tmp = \$config['paths']['tmp'] ?? null;", $eleven);
     }
 
@@ -49,17 +54,37 @@ final class HistoryPhaseTest extends TestCase
             'return new HistoryLookups($statuses, $priorities, $users, $defaultAuthorId ?? fetchApiUserId($redmineClient));',
             $eleven
         );
-        self::assertStringContainsString('buildHistoryLookups($pdo, $redmineClient, extractDefaultJournalAuthorId($config));', $eleven);
     }
 
-    public function testARerunSkipsAnIssueWhoseHistoryIsInRedmine(): void
+    public function testWhatIsPushedIsKeptPerJiraEntryAndARerunSendsOnlyWhatIsMissing(): void
     {
+        $eleven = $this->eleven();
         self::assertStringContainsString(
-            'AND (j.history_journal_id IS NOT NULL OR j.history_attachment_id IS NOT NULL)',
-            $this->eleven()
+            "static fn (array \$journal): bool => !isset(\$done['journals'][\$journal['history_id']])",
+            $eleven
+        );
+        self::assertStringContainsString("\$needsFile = \$history->needsFile() && !isset(\$done['files'][\$jiraIssueId]);", $eleven);
+        self::assertStringContainsString(
+            "storeHistoryResult(\$pdo, (string)\$event['journal']['history_id'], \$jiraIssueId, 'history_journal_id', "
+            . "\$answer['journal_ids'][\$index]);",
+            $eleven
+        );
+        self::assertStringContainsString(
+            "storeHistoryResult(\$pdo, \$stamp['history_id'], \$jiraIssueId, 'history_attachment_id', \$answer['attachment_id']);",
+            $eleven
         );
         $schema = (string)file_get_contents(__DIR__ . '/../database/schema.sql');
         self::assertStringContainsString('`history_journal_id` INT NULL', $schema);
         self::assertStringContainsString('`history_attachment_id` INT NULL', $schema);
+    }
+
+    public function testAMissingEndpointStopsTheHistoryOnceAndLeavesTheCommentsAlone(): void
+    {
+        $eleven = $this->eleven();
+        self::assertStringContainsString(
+            "if (\$exception->getResponse()->getStatusCode() === 404) {\n            \$history['disabled'] = true;",
+            $eleven
+        );
+        self::assertStringContainsString("if (\$history['disabled']) {\n        return;\n    }", $eleven);
     }
 }

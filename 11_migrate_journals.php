@@ -23,7 +23,9 @@ use Jira2Redmine\Journals\ExtractionFailure;
 use Jira2Redmine\History\HistoryChain;
 use Jira2Redmine\History\HistoryFile;
 use Jira2Redmine\History\HistoryLookups;
+use Jira2Redmine\History\HistoryPush;
 use Jira2Redmine\History\HistoryRequest;
+use Jira2Redmine\History\IssueHistory;
 const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.1';
 const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
 const JIRA_RATE_LIMIT_BASE_DELAY_MS = 1000;
@@ -146,23 +148,18 @@ function main(array $config, array $cliOptions): void
         printf("[%s] Skipping transform phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
     }
 
-    if (in_array('push', $phasesToRun, true)) {
+    // push and history go together, per issue in Jira's time order (decision 41); history alone is appended
+    $withJournals = in_array('push', $phasesToRun, true);
+    $withHistory = in_array('history', $phasesToRun, true);
+    if ($withJournals || $withHistory) {
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         $redmineConfig = extractArrayConfig($config, 'redmine');
         $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
         $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
-        runJournalPushPhase($pdo, $config, $confirmPush, $isDryRun, $useExtendedApi, $extendedApiPrefix);
+        runJournalPushPhase($pdo, $config, $confirmPush, $isDryRun, $useExtendedApi, $extendedApiPrefix, $withJournals, $withHistory);
     } else {
-        printf("[%s] Skipping push phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
-    }
-
-    if (in_array('history', $phasesToRun, true)) {
-        $redmineConfig = extractArrayConfig($config, 'redmine');
-        $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
-        runHistoryPhase($pdo, $config, $useExtendedApi);
-    } else {
-        printf("[%s] Skipping history phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping push and history phases (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
     }
 }
 
@@ -940,6 +937,9 @@ function populateProposedJournalNotes(PDO $pdo, int $commentWindow = 0): array
 }
 
 /**
+ * Comments, changelog entries with attachments and the Jira history (decision 41), per issue in Jira's time order.
+ *
+ * @param array<string, mixed> $config
  * @throws Throwable
  */
 function runJournalPushPhase(
@@ -948,34 +948,68 @@ function runJournalPushPhase(
     bool $confirmPush,
     bool $isDryRun,
     bool $useExtendedApi,
-    string $extendedApiPrefix
+    string $extendedApiPrefix,
+    bool $withJournals = true,
+    bool $withHistory = false
 ): void
 {
-    $candidateComments = fetchPushableComments($pdo);
-    $candidateChangelogs = fetchPushableChangelog($pdo);
+    $candidateComments = $withJournals ? fetchPushableComments($pdo) : [];
+    $candidateChangelogs = $withJournals ? fetchPushableChangelog($pdo) : [];
+    $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
+    $history = null;
+    if ($withHistory && !$useExtendedApi) {
+        printf("  [warn] The Jira history needs the Extended API (--use-extended-api); left out.%s", PHP_EOL);
+    } elseif ($withHistory) {
+        $history = prepareHistory($pdo, $redmineClient, extractDefaultJournalAuthorId($config));
+    }
+    $historyEvents = $history['events'] ?? [];
 
-    $totalCandidates = count($candidateComments) + count($candidateChangelogs);
-
-    if ($totalCandidates === 0) {
+    if (count($candidateComments) + count($candidateChangelogs) + count($historyEvents) + count($history['files'] ?? []) === 0) {
         printf("[%s] No journals queued for push.%s", formatCurrentTimestamp(), PHP_EOL);
         return;
     }
 
-    printf("[%s] Journals ready for push: %d comment(s), %d changelog entr(y/ies).%s", formatCurrentTimestamp(), count($candidateComments), count($candidateChangelogs), PHP_EOL);
+    printf(
+        "[%s] Journals ready for push: %d comment(s), %d changelog entr(y/ies), %d history journal(s).%s",
+        formatCurrentTimestamp(),
+        count($candidateComments),
+        count($candidateChangelogs),
+        count($historyEvents),
+        PHP_EOL
+    );
 
     // per issue in Jira's time order, so the highest journal id is the latest journal ("Last updated by")
-    $timeline = PushOrder::timeline($candidateComments, $candidateChangelogs);
+    $timeline = PushOrder::timeline($candidateComments, $candidateChangelogs, $historyEvents);
 
     if ($isDryRun) {
-        foreach ($timeline as [$kind, $row]) {
+        $preview = $history !== null ? historyPreviewFile($config) : null;
+        $pendingFiles = $history['files'] ?? [];
+        foreach (PushOrder::steps($timeline) as [$kind, $item]) {
+            if ($kind === 'history') {
+                $first = $item[0];
+                printf("  - History, %d journal(s) on issue %s → Redmine #%d%s", count($item), $first['jira_issue_key'], $first['redmine_issue_id'], PHP_EOL);
+                if ($preview !== null && $history !== null) {
+                    $fileIssueId = isset($pendingFiles[(string)$first['jira_issue_id']]) ? (string)$first['jira_issue_id'] : null;
+                    unset($pendingFiles[(string)$first['jira_issue_id']]);
+                    writeHistoryPreview($preview, $first, historyRequestBody($item, $history, '(upload)', $fileIssueId));
+                }
+                continue;
+            }
             printf(
                 "  - %s %s on issue %s → Redmine #%d%s",
                 $kind === 'comment' ? 'Comment' : 'Changelog',
-                $row['jira_entity_id'],
-                $row['jira_issue_key'],
-                $row['redmine_issue_id'],
+                $item['jira_entity_id'],
+                $item['jira_issue_key'],
+                $item['redmine_issue_id'],
                 PHP_EOL
             );
+        }
+        if ($preview !== null && $history !== null) {
+            foreach ($pendingFiles as $jiraIssueId => $issueFile) {
+                writeHistoryPreview($preview, $issueFile, historyRequestBody([], $history, '(upload)', (string)$jiraIssueId));
+            }
+            fclose($preview);
+            printf("  History requests written to %s.%s", historyPreviewPath($config), PHP_EOL);
         }
         printf("  Dry-run active; no journal updates will be sent to Redmine.%s", PHP_EOL);
         return;
@@ -986,18 +1020,23 @@ function runJournalPushPhase(
         return;
     }
 
-    $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
     $userLookup = buildRedmineUserLookup($pdo);
     $defaultAuthorId = extractDefaultJournalAuthorId($config);
     $attachmentMetadata = buildAttachmentMetadataIndex($pdo);
     $adfConverter = new AdfConverter();
 
-    foreach ($timeline as [$kind, $row]) {
+    foreach (PushOrder::steps($timeline) as [$kind, $item]) {
+        if ($kind === 'history') {
+            if ($history !== null) {
+                pushHistorySeries($redmineClient, $pdo, $extendedApiPrefix, $item, $history);
+            }
+            continue;
+        }
         if ($kind === 'comment') {
             processCommentPush(
                 $redmineClient,
                 $pdo,
-                $row,
+                $item,
                 $attachmentMetadata,
                 $userLookup,
                 $defaultAuthorId,
@@ -1011,12 +1050,19 @@ function runJournalPushPhase(
         processChangelogPush(
             $redmineClient,
             $pdo,
-            $row,
+            $item,
             $userLookup,
             $defaultAuthorId,
             $useExtendedApi,
             $extendedApiPrefix
         );
+    }
+    if ($history !== null) {
+        // an issue whose history lost every change it had still gets its file
+        foreach ($history['files'] as $jiraIssueId => $issueFile) {
+            pushHistorySeries($redmineClient, $pdo, $extendedApiPrefix, [], $history, (string)$jiraIssueId);
+        }
+        printf("[%s] History pushed: %d journal(s), %d file(s), %d failed request(s).%s", formatCurrentTimestamp(), $history['pushed']['journals'], $history['pushed']['files'], $history['pushed']['failed'], PHP_EOL);
     }
 }
 
@@ -1104,37 +1150,38 @@ function fetchPushableChangelog(PDO $pdo): array
 }
 
 /**
- * Decision 41 (Jan, 2026-10-19): Jira's status, assignee and priority changes as Redmine journals, after 11's push. A
- * value Redmine does not have is skipped with the chain kept connected, and only such an issue gets jira-history.json
- * (src/History). This version builds the requests and writes them to history-preview.jsonl in the attachment
- * directory (Jira data: never in the repository); the push follows the Extended API's history endpoint.
+ * Decision 41 (Jan, 2026-10-19): Jira's status, assignee and priority changes as Redmine journals, written in 11's
+ * push between the comments (src/History). A value Redmine does not have is skipped with the chain kept connected,
+ * and only such an issue gets jira-history.json. Every migrated issue's chain is built in full; what is pushed
+ * already (migration_mapping_journals, CHANGELOG: history_journal_id, history_attachment_id) is left out, so a rerun
+ * sends only what is missing.
  *
- * @param array<string, mixed> $config
+ * @return array{events: list<array<string, mixed>>, files: array<string, array<string, mixed>>, histories: array<string, IssueHistory>, lookups: HistoryLookups, pushed: array{journals: int, files: int, failed: int}, disabled: bool}
  * @throws Throwable
  */
-function runHistoryPhase(PDO $pdo, array $config, bool $useExtendedApi): void
+function prepareHistory(PDO $pdo, Client $redmineClient, ?int $defaultAuthorId): array
 {
-    if (!$useExtendedApi) {
-        printf("  [warn] The history phase needs the Extended API (--use-extended-api); skipped.%s", PHP_EOL);
-        return;
-    }
-
-    $redmineClient = createRedmineClient(extractArrayConfig($config, 'redmine'));
-    $lookups = buildHistoryLookups($pdo, $redmineClient, extractDefaultJournalAuthorId($config));
+    $lookups = buildHistoryLookups($pdo, $redmineClient, $defaultAuthorId);
     $issues = fetchHistoryIssues($pdo);
-    $previewPath = historyPreviewPath($config);
-    $preview = fopen($previewPath, 'wb');
-    if ($preview === false) {
-        throw new RuntimeException(sprintf('Cannot write the history preview %s.', $previewPath));
-    }
+    $done = fetchPushedHistory($pdo);
 
+    $events = [];
+    $files = [];
+    $histories = [];
     $totals = ['issues' => 0, 'journals' => 0, 'details' => 0, 'skipped' => 0, 'dropped' => 0, 'files' => 0, 'mismatches' => 0, 'open_parents' => 0];
     foreach (fetchHistoryEntries($pdo, $issues) as $jiraIssueId => $entries) {
+        $jiraIssueId = (string)$jiraIssueId;
         $issue = $issues[$jiraIssueId];
         $history = HistoryChain::build($entries, $lookups);
-        if ($history->journals === [] && !$history->needsFile()) {
+        $journals = array_values(array_filter(
+            $history->journals,
+            static fn (array $journal): bool => !isset($done['journals'][$journal['history_id']])
+        ));
+        $needsFile = $history->needsFile() && !isset($done['files'][$jiraIssueId]);
+        if ($journals === [] && !$needsFile) {
             continue;
         }
+        $histories[$jiraIssueId] = $history;
         $check = $history->statusCheck($issue['status_id'], $issue['jira_status_id']);
         if ($check !== null) {
             $openParent = $check === 'open parent';
@@ -1149,28 +1196,24 @@ function runHistoryPhase(PDO $pdo, array $config, bool $useExtendedApi): void
                 PHP_EOL
             );
         }
-        $file = null;
-        $fileContent = null;
-        if ($history->needsFile()) {
-            $fileContent = HistoryFile::content($issue['key'], (string)$jiraIssueId, $history);
-            $stamp = HistoryFile::stamp($history, $lookups);
-            $file = ['token' => '(upload)', 'author_id' => $stamp['author_id'], 'created_on' => $stamp['created_on']];
+        $row = ['jira_issue_id' => $jiraIssueId, 'jira_issue_key' => $issue['key'], 'redmine_issue_id' => $issue['redmine_issue_id']];
+        foreach ($journals as $journal) {
+            $events[] = $row + [
+                'created_at' => substr(str_replace('T', ' ', $journal['created_on']), 0, 19),
+                'mapping_id' => (int)$journal['history_id'],
+                'journal' => $journal,
+            ];
+        }
+        if ($needsFile) {
+            $files[$jiraIssueId] = $row;
             $totals['files']++;
         }
-        fwrite($preview, json_encode([
-            'jira_key' => $issue['key'],
-            'redmine_issue_id' => $issue['redmine_issue_id'],
-            'path' => HistoryRequest::path($issue['redmine_issue_id']),
-            'request' => HistoryRequest::body($history, $file),
-            'file' => $fileContent,
-        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
         $totals['issues']++;
-        $totals['journals'] += count($history->journals);
-        $totals['details'] += $history->detailCount();
+        $totals['journals'] += count($journals);
+        $totals['details'] += array_sum(array_map(static fn (array $journal): int => count($journal['details']), $journals));
         $totals['skipped'] += $history->skipped;
         $totals['dropped'] += $history->dropped;
     }
-    fclose($preview);
 
     printf(
         "[%s] History: %d issue(s), %d journal(s), %d detail(s); %d item(s) skipped and connected, %d dropped as no change; %d file(s); status mismatches: %d (open parents: %d).%s",
@@ -1185,7 +1228,122 @@ function runHistoryPhase(PDO $pdo, array $config, bool $useExtendedApi): void
         $totals['open_parents'],
         PHP_EOL
     );
-    printf("  Preview written to %s; the push waits for the Extended API's history endpoint.%s", $previewPath, PHP_EOL);
+
+    return [
+        'events' => $events,
+        'files' => $files,
+        'histories' => $histories,
+        'lookups' => $lookups,
+        'pushed' => ['journals' => 0, 'files' => 0, 'failed' => 0],
+        'disabled' => false,
+    ];
+}
+
+/**
+ * One request to the history endpoint: a series of one issue's history journals, with the issue's file on its first
+ * request. An answer without one id per journal, or a refusal, leaves the series unmarked for a rerun; 404 means the
+ * Extended API has no history endpoint, and the history is left out for the rest of the run.
+ *
+ * @param list<array<string, mixed>> $series
+ * @param array{events: list<array<string, mixed>>, files: array<string, array<string, mixed>>, histories: array<string, IssueHistory>, lookups: HistoryLookups, pushed: array{journals: int, files: int, failed: int}, disabled: bool} $history
+ */
+function pushHistorySeries(Client $client, PDO $pdo, string $prefix, array $series, array &$history, ?string $fileIssueId = null): void
+{
+    if ($history['disabled']) {
+        return;
+    }
+    $issue = $series[0] ?? ($fileIssueId !== null ? ($history['files'][$fileIssueId] ?? null) : null);
+    if ($issue === null) {
+        return;
+    }
+    $jiraIssueId = (string)$issue['jira_issue_id'];
+    $token = null;
+    $stamp = null;
+    try {
+        if (isset($history['files'][$jiraIssueId])) {
+            $issueHistory = $history['histories'][$jiraIssueId];
+            $stamp = HistoryFile::stamp($issueHistory, $history['lookups']);
+            $content = HistoryFile::content((string)$issue['jira_issue_key'], $jiraIssueId, $issueHistory);
+            $token = HistoryPush::upload($client, $prefix, $content, $stamp);
+        }
+        $body = historyRequestBody($series, $history, $token, $jiraIssueId);
+        $answer = HistoryPush::send($client, $prefix, (int)$issue['redmine_issue_id'], $body);
+    } catch (BadResponseException $exception) {
+        $history['pushed']['failed']++;
+        if ($exception->getResponse()->getStatusCode() === 404) {
+            $history['disabled'] = true;
+            printf("  [error] The Extended API has no history endpoint (POST .../issues/:id/history.json answered 404); the history is left out.%s", PHP_EOL);
+            return;
+        }
+        printf("  [error] History of %s: %s%s", $issue['jira_issue_key'], ExtendedApi::summarizeError($exception), PHP_EOL);
+        return;
+    } catch (Throwable $exception) {
+        $history['pushed']['failed']++;
+        printf("  [error] History of %s: %s%s", $issue['jira_issue_key'], $exception->getMessage(), PHP_EOL);
+        return;
+    }
+
+    foreach ($series as $index => $event) {
+        storeHistoryResult($pdo, (string)$event['journal']['history_id'], $jiraIssueId, 'history_journal_id', $answer['journal_ids'][$index]);
+    }
+    $history['pushed']['journals'] += count($series);
+    if ($token !== null && $stamp !== null) {
+        if ($answer['attachment_id'] === null) {
+            printf("  [error] History of %s: the answer names no attachment for jira-history.json.%s", $issue['jira_issue_key'], PHP_EOL);
+        } else {
+            storeHistoryResult($pdo, $stamp['history_id'], $jiraIssueId, 'history_attachment_id', $answer['attachment_id']);
+            $history['pushed']['files']++;
+        }
+        unset($history['files'][$jiraIssueId]);
+    }
+}
+
+/**
+ * The body of one history request; the file goes along when it was uploaded (a token) for that issue.
+ *
+ * @param list<array<string, mixed>> $series
+ * @param array{histories: array<string, IssueHistory>, lookups: HistoryLookups} $history
+ * @return array<string, mixed>
+ */
+function historyRequestBody(array $series, array $history, ?string $token, ?string $fileIssueId): array
+{
+    $file = null;
+    if ($token !== null && $fileIssueId !== null && isset($history['histories'][$fileIssueId])) {
+        $stamp = HistoryFile::stamp($history['histories'][$fileIssueId], $history['lookups']);
+        $file = ['token' => $token, 'author_id' => $stamp['author_id'], 'created_on' => $stamp['created_on']];
+    }
+
+    return HistoryRequest::body(array_map(static fn (array $event): array => $event['journal'], $series), $file);
+}
+
+/**
+ * The rows of migration_mapping_journals keep what the history step pushed, on the Jira history entry it came from.
+ */
+function storeHistoryResult(PDO $pdo, string $historyId, string $jiraIssueId, string $column, int $redmineId): void
+{
+    if (!in_array($column, ['history_journal_id', 'history_attachment_id'], true)) {
+        throw new InvalidArgumentException($column);
+    }
+    $statement = $pdo->prepare(
+        "INSERT INTO migration_mapping_journals (jira_entity_id, jira_issue_id, entity_type, $column) VALUES (:id, :issue, 'CHANGELOG', :value)"
+        . " ON DUPLICATE KEY UPDATE $column = VALUES($column)"
+    );
+    $statement->execute(['id' => $historyId, 'issue' => $jiraIssueId, 'value' => $redmineId]);
+}
+
+/**
+ * @param resource $preview
+ * @param array<string, mixed> $issue
+ * @param array<string, mixed> $body
+ */
+function writeHistoryPreview($preview, array $issue, array $body): void
+{
+    fwrite($preview, json_encode([
+        'jira_key' => $issue['jira_issue_key'],
+        'redmine_issue_id' => $issue['redmine_issue_id'],
+        'path' => HistoryRequest::path((int)$issue['redmine_issue_id']),
+        'request' => $body,
+    ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
 }
 
 /**
@@ -1239,23 +1397,17 @@ function fetchApiUserId(Client $redmineClient): int
 }
 
 /**
- * The migrated issues whose history is not in Redmine yet: a rerun skips an issue once one of its Jira history
- * entries holds a history journal or the file (migration_mapping_journals, CHANGELOG).
+ * The migrated issues, with the status 10 gave them and the one their Jira status maps onto.
  *
  * @return array<string, array{key: string, redmine_issue_id: int, status_id: ?int, jira_status_id: ?int}>
  */
 function fetchHistoryIssues(PDO $pdo): array
 {
-    $rows = historyRows($pdo, <<<SQL
-        SELECT i.jira_issue_id, i.jira_issue_key, i.redmine_issue_id, i.redmine_status_id, i.proposed_status_id
-        FROM migration_mapping_issues i
-        WHERE i.redmine_issue_id IS NOT NULL
-          AND NOT EXISTS (
-              SELECT 1 FROM migration_mapping_journals j
-              WHERE j.jira_issue_id = i.jira_issue_id AND j.entity_type = 'CHANGELOG'
-                AND (j.history_journal_id IS NOT NULL OR j.history_attachment_id IS NOT NULL)
-          )
-    SQL);
+    $rows = historyRows(
+        $pdo,
+        'SELECT jira_issue_id, jira_issue_key, redmine_issue_id, redmine_status_id, proposed_status_id'
+        . ' FROM migration_mapping_issues WHERE redmine_issue_id IS NOT NULL'
+    );
     $issues = [];
     foreach ($rows as $row) {
         $issues[(string)$row['jira_issue_id']] = [
@@ -1268,6 +1420,28 @@ function fetchHistoryIssues(PDO $pdo): array
     }
 
     return $issues;
+}
+
+/**
+ * What the history step pushed before: the Jira history entries with their journal, the issues with their file.
+ *
+ * @return array{journals: array<string, true>, files: array<string, true>}
+ */
+function fetchPushedHistory(PDO $pdo): array
+{
+    $done = ['journals' => [], 'files' => []];
+    $sql = "SELECT jira_entity_id, jira_issue_id, history_journal_id, history_attachment_id FROM migration_mapping_journals"
+        . " WHERE entity_type = 'CHANGELOG' AND (history_journal_id IS NOT NULL OR history_attachment_id IS NOT NULL)";
+    foreach (historyRows($pdo, $sql) as $row) {
+        if ($row['history_journal_id'] !== null) {
+            $done['journals'][(string)$row['jira_entity_id']] = true;
+        }
+        if ($row['history_attachment_id'] !== null) {
+            $done['files'][(string)$row['jira_issue_id']] = true;
+        }
+    }
+
+    return $done;
 }
 
 /**
@@ -1326,6 +1500,20 @@ function historyPreviewPath(array $config): string
     }
 
     return rtrim($tmp, '/') . '/history-preview.jsonl';
+}
+
+/**
+ * @param array<string, mixed> $config
+ * @return resource
+ */
+function historyPreviewFile(array $config)
+{
+    $preview = fopen(historyPreviewPath($config), 'wb');
+    if ($preview === false) {
+        throw new RuntimeException(sprintf('Cannot write the history preview %s.', historyPreviewPath($config)));
+    }
+
+    return $preview;
 }
 
 /**

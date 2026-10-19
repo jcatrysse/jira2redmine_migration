@@ -59,11 +59,12 @@ final class HistoryChain
                     'to' => ['id' => $to, 'name' => self::name($field, $to, $item['toString'] ?? null, $lookups)],
                     'author' => ['jira_account_id' => $entry['author'], 'redmine_login' => $lookups->login($entry['author'])],
                 ];
-                foreach ([[$from, $item['fromString'] ?? null], [$to, $item['toString'] ?? null]] as [$value, $name]) {
-                    if (!$lookups->maps($field, $value)) {
+                foreach ([[$from, $item['fromString'] ?? null, false], [$to, $item['toString'] ?? null, true]] as [$value, $name, $new]) {
+                    // an empty old value is fine (no status yet); an empty new status or priority is not
+                    if (($value !== null || $new) && !$lookups->maps($field, $value)) {
                         $notInRedmine[$field . "\0" . $value] = [
                             'field' => $field,
-                            'id' => (string)$value,
+                            'id' => $value,
                             'name' => self::name($field, $value, $name, $lookups),
                         ];
                     }

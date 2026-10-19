@@ -27,10 +27,14 @@ final class HistoryLookups
     ) {
     }
 
+    /**
+     * Whether the value has a Redmine value. An empty assignee is "unassigned"; an issue always has a status and a
+     * priority, so an empty one has none (the endpoint refuses it as a new value).
+     */
     public function maps(string $field, ?string $jiraValue): bool
     {
         if ($jiraValue === null || $jiraValue === '') {
-            return true;
+            return $field === 'assignee';
         }
 
         return match ($field) {

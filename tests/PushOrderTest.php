@@ -35,11 +35,41 @@ final class PushOrderTest extends TestCase
         self::assertSame(['changelog', 'comment'], array_column($timeline, 0));
     }
 
+    public function testHistoryJournalsGoInBetweenAndASeriesWithoutACommentIsOneRequest(): void
+    {
+        $timeline = PushOrder::timeline(
+            [$this->row(7, '2024-01-03 10:00:00', 1)],
+            [$this->row(7, '2024-01-01 10:00:00', 2)],
+            [
+                $this->row(7, '2024-01-01 10:00:00', 100),
+                $this->row(7, '2024-01-02 10:00:00', 101),
+                $this->row(7, '2024-01-02 11:00:00', 102),
+                $this->row(7, '2024-01-04 10:00:00', 103),
+                $this->row(8, '2024-01-01 10:00:00', 104),
+            ]
+        );
+        // on the same second the history first, then the attachment entry
+        self::assertSame(
+            ['history', 'changelog', 'history', 'history', 'comment', 'history', 'history'],
+            array_column($timeline, 0)
+        );
+        $steps = array_map(
+            static fn (array $step): string => $step[0] === 'history'
+                ? 'history:' . implode(',', array_column($step[1], 'mapping_id'))
+                : $step[0] . ':' . $step[1]['mapping_id'],
+            PushOrder::steps($timeline)
+        );
+        self::assertSame(['history:100', 'changelog:2', 'history:101,102', 'comment:1', 'history:103', 'history:104'], $steps);
+    }
+
     public function testThe11PushesAndPreviewsInThatOrder(): void
     {
         $eleven = (string)file_get_contents(__DIR__ . '/../11_migrate_journals.php');
-        self::assertStringContainsString('$timeline = PushOrder::timeline($candidateComments, $candidateChangelogs);', $eleven);
-        self::assertSame(2, substr_count($eleven, 'foreach ($timeline as [$kind, $row]) {'));
+        self::assertStringContainsString(
+            '$timeline = PushOrder::timeline($candidateComments, $candidateChangelogs, $historyEvents);',
+            $eleven
+        );
+        self::assertSame(2, substr_count($eleven, 'foreach (PushOrder::steps($timeline) as [$kind, $item]) {'));
         self::assertStringNotContainsString('foreach ($candidateComments as $comment) {', $eleven);
     }
 }

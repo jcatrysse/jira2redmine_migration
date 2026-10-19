@@ -133,6 +133,25 @@ final class HistoryChainTest extends TestCase
         );
     }
 
+    public function testAnEmptyNewStatusOrPriorityIsSkippedButAnEmptyOldOneIsFine(): void
+    {
+        // Redmine refuses an issue without a priority; an issue that got its first priority starts from none
+        $history = HistoryChain::build([
+            $this->entry('1', '2024-01-01 08:00:00', 'acc-ann', [$this->item('priority', null, '3', null, 'Medium')]),
+            $this->entry('2', '2024-01-02 08:00:00', 'acc-ann', [$this->item('priority', '3', null, 'Medium', null)]),
+            $this->entry('3', '2024-01-03 08:00:00', 'acc-ann', [$this->item('priority', null, '2', null, 'High')]),
+        ], $this->lookups());
+        self::assertSame(
+            [
+                [['property' => 'attr', 'prop_key' => 'priority_id', 'old_value' => null, 'value' => '23']],
+                [['property' => 'attr', 'prop_key' => 'priority_id', 'old_value' => '23', 'value' => '22']],
+            ],
+            array_column($history->journals, 'details')
+        );
+        self::assertSame(1, $history->skipped);
+        self::assertSame([['field' => 'priority', 'id' => null, 'name' => null]], $history->notInRedmine);
+    }
+
     public function testAChangeThatIsNoChangeAfterTheMappingIsDropped(): void
     {
         // Jira statuses 6 and 7 map onto the same Redmine status
@@ -253,8 +272,9 @@ final class HistoryChainTest extends TestCase
             'user_id' => 31,
             'created_on' => '2024-01-01T08:00:00+00:00',
             'details' => [['property' => 'attr', 'prop_key' => 'status_id', 'old_value' => '11', 'value' => '13']],
-        ]]], HistoryRequest::body($history, null));
-        $body = HistoryRequest::body($history, ['token' => '7.abc', 'author_id' => 31, 'created_on' => '2024-01-01T08:00:00+00:00']);
+        ]]], HistoryRequest::body($history->journals, null));
+        $file = ['token' => '7.abc', 'author_id' => 31, 'created_on' => '2024-01-01T08:00:00+00:00'];
+        $body = HistoryRequest::body($history->journals, $file);
         self::assertSame([[
             'token' => '7.abc',
             'filename' => 'jira-history.json',
@@ -271,6 +291,9 @@ final class HistoryChainTest extends TestCase
         self::assertSame([5, 6], HistoryRequest::journalIds(['journal_ids' => [5, 6]]));
         self::assertNull(HistoryRequest::journalIds(['issue' => ['id' => 1]]));
         self::assertSame(9, HistoryRequest::attachmentId(['attachments' => [['id' => 9]]]));
+        // redmine_extended_api e87ed79
+        self::assertSame([5, 6], HistoryRequest::journalIds(['journal_ids' => [5, 6], 'attachment_ids' => [9]]));
+        self::assertSame(9, HistoryRequest::attachmentId(['journal_ids' => [5], 'attachment_ids' => [9]]));
         self::assertNull(HistoryRequest::attachmentId([]));
     }
 }

@@ -11,6 +11,7 @@ namespace Jira2Redmine\History;
  * new journal ids in the order sent.
  *
  * @phpstan-import-type Detail from IssueHistory
+ * @phpstan-import-type Journal from IssueHistory
  * @phpstan-type File array{token: string, filename: string, content_type: string, description: string, author_id: int, created_on: string}
  * @phpstan-type Body array{journals: list<array{user_id: int, created_on: string, details: list<Detail>}>, attachments?: list<File>}
  */
@@ -22,16 +23,17 @@ final class HistoryRequest
     }
 
     /**
+     * @param list<Journal> $journals one issue's journals of this request (IssueHistory::$journals or a series of them)
      * @param array{token: string, author_id: int, created_on: string}|null $file the uploaded jira-history.json
      * @return Body
      */
-    public static function body(IssueHistory $history, ?array $file): array
+    public static function body(array $journals, ?array $file): array
     {
         $body = ['journals' => array_map(static fn (array $journal): array => [
             'user_id' => $journal['user_id'],
             'created_on' => $journal['created_on'],
             'details' => $journal['details'],
-        ], $history->journals)];
+        ], $journals)];
         if ($file !== null) {
             $body['attachments'] = [[
                 'token' => $file['token'],
@@ -72,13 +74,15 @@ final class HistoryRequest
     }
 
     /**
-     * The id of the file in the answer ({"attachments": [{"id": 9}]}), null when it names none.
+     * The id of the file in the answer ({"attachment_ids": [9]} as redmine_extended_api e87ed79 answers, or
+     * {"attachments": [{"id": 9}]}), null when it names none.
      *
      * @param array<mixed> $answer
      */
     public static function attachmentId(array $answer): ?int
     {
-        $first = is_array($answer['attachments'] ?? null) ? ($answer['attachments'][0] ?? null) : null;
+        $list = $answer['attachment_ids'] ?? $answer['attachments'] ?? null;
+        $first = is_array($list) ? ($list[0] ?? null) : null;
         $id = is_array($first) ? ($first['id'] ?? null) : $first;
 
         return is_numeric($id) ? (int)$id : null;

@@ -19,7 +19,7 @@ final class IssueHistory
     /**
      * @param list<Journal> $journals one per Jira history entry with a detail left, in Jira's order
      * @param list<Transition> $transitions every status, assignee and priority item, in Jira's order
-     * @param list<array{field: string, id: string, name: ?string}> $notInRedmine the distinct values without a Redmine value
+     * @param list<array{field: string, id: ?string, name: ?string}> $notInRedmine the distinct values without a Redmine value
      * @param int $skipped items left out because their new value has no Redmine value
      * @param int $dropped items left out because nothing changed after the mapping (A to A)
      * @param array<string, ?int> $last per field with a detail: the Redmine value the journals end in
