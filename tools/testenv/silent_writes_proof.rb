@@ -5,7 +5,8 @@
 #   J2R_PROOF=cleanup J2R_HOOK_URL=...       removes the webhook and the proof user, webhooks back as they were
 # setup makes a user who wants every mail (active, Developer in the issues' projects, watcher of each issue) and a
 # webhook for issue.updated in those projects, and switches webhooks on; mails go to files (configuration.yml).
-# Redmine 5.1 has no webhooks: there only the mails are counted.
+# GEOxyz's 5.1 has 7.0's webhooks backported (5.1-stable-GEOxyz), and there a webhook needs its trackers; a Redmine
+# without webhooks counts the mails only.
 PROOF_LOGIN = 'j2r-mailproof'.freeze
 ids = ENV.fetch('J2R_PROOF_ISSUES', '').split(',').map(&:to_i)
 setting_file = Rails.root.join('tmp', 'j2r_webhooks_enabled_before')
@@ -19,8 +20,10 @@ when 'setup'
   if webhooks
     File.write(setting_file, Setting.webhooks_enabled.to_s)
     Setting.webhooks_enabled = '1'
-    Webhook.create!(url: ENV.fetch('J2R_HOOK_URL'), user: admin, active: true, events: %w[issue.created issue.updated],
-                    projects: projects)
+    attributes = { url: ENV.fetch('J2R_HOOK_URL'), user: admin, active: true, events: %w[issue.created issue.updated],
+                   projects: projects }
+    attributes[:trackers] = projects.flat_map(&:trackers).uniq if Webhook.reflect_on_association(:trackers)
+    Webhook.create!(attributes)
   end
   user = User.new(firstname: 'Mail', lastname: 'Proof', mail: 'j2r-mailproof@example.invalid', mail_notification: 'all')
   user.login = PROOF_LOGIN
@@ -54,6 +57,6 @@ when 'cleanup'
     Setting.webhooks_enabled = File.read(setting_file)
     File.delete(setting_file)
   end
-  puts "cleanup: webhooks #{webhooks ? Webhook.count : 'none (5.1)'}, proof user #{User.exists?(login: PROOF_LOGIN) ? 'left' : 'gone'}, " \
+  puts "cleanup: webhooks #{webhooks ? Webhook.count : 'none'}, proof user #{User.exists?(login: PROOF_LOGIN) ? 'left' : 'gone'}, " \
        "webhooks_enabled #{webhooks ? Setting.webhooks_enabled : '-'}"
 end
