@@ -7,13 +7,13 @@ namespace Jira2Redmine\Cli;
 use RuntimeException;
 
 /**
- * The option parsing of the 16 scripts (plan M1). Each script had its own copy; they agree on the valid command lines
- * (--help, --version, --phases=LIST, --skip=LIST and the script's own options) and differ on the rest. The parameters
- * keep each script's own rule, so moving the copies here changed nothing (tests/fixtures/command_lines.json, made from
- * the copies); ScriptCommandLines names the rule per script.
+ * The option parsing of the 16 scripts, one rule for all (decision 43): every script knows -h/--help, -V/--version,
+ * --phases=LIST, --skip=LIST and its own options (ScriptCommandLines); anything else stops the script with an error,
+ * --help or not: an unknown option, an option without its value, a positional or an empty argument. Until decision 43
+ * each script kept the rule of its own copy (phase 6, tests/fixtures/command_lines.json).
  *
- * Every script knows --help, --version, --phases=LIST and --skip=LIST. The result holds those four, then the script's
- * own options in the order given, with an option's dashes as underscores (confirm-push => confirm_push).
+ * The result holds help, version, phases and skip, then the script's own options in its order, with an option's
+ * dashes as underscores (confirm-push => confirm_push).
  */
 final class CommandLine
 {
@@ -22,106 +22,60 @@ final class CommandLine
 
     /**
      * @param array<string, self::FLAG|self::POSITIVE_INT> $options the script's own options, by name without dashes
-     * @param bool $shortOptions -h and -V as well (01 to 08, 10)
-     * @param bool $separateValues --phases LIST and --skip LIST as well (01 to 03)
-     * @param bool $trimValues the value of --phases and --skip without surrounding spaces (01 to 03)
-     * @param bool $falsyValueIsNull an empty --phases= or --skip= (or "0") counts as not given (10)
-     * @param string|null $unknownOption the message for an unknown option; null: it is a positional argument
-     * @param string $optionPrefix what makes an argument an option for that message: "-", or "--" in 04
-     * @param bool $doubleDash "--" ends the options, the rest is positional (01 to 07)
-     * @param bool $skipEmpty an empty argument is left out (10, 12)
-     * @param string|null $positionalError the message for any positional argument (04: there are none)
      */
-    public function __construct(
-        private readonly array $options,
-        private readonly bool $shortOptions = false,
-        private readonly bool $separateValues = false,
-        private readonly bool $trimValues = false,
-        private readonly bool $falsyValueIsNull = false,
-        private readonly ?string $unknownOption = null,
-        private readonly string $optionPrefix = '-',
-        private readonly bool $doubleDash = false,
-        private readonly bool $skipEmpty = false,
-        private readonly ?string $positionalError = null,
-    ) {
+    public function __construct(private readonly array $options)
+    {
     }
 
     /**
      * @param array<int, mixed> $argv the script's own name first, as in $_SERVER['argv']
-     * @return array{0: array<string, bool|int|string|null>, 1: list<string>} the options and the positional arguments
+     * @return array<string, bool|int|string|null>
      */
     public function parse(array $argv): array
     {
         $options = ['help' => false, 'version' => false, 'phases' => null, 'skip' => null];
+        $values = ['phases' => 'LIST', 'skip' => 'LIST'];
         foreach ($this->options as $name => $kind) {
             $options[self::key($name)] = $kind === self::FLAG ? false : null;
+            if ($kind === self::POSITIVE_INT) {
+                $values[$name] = 'N';
+            }
         }
         $arguments = array_map(static fn (mixed $argument): string => (string)$argument, array_values($argv));
-        $positional = [];
-        $count = count($arguments);
 
-        for ($index = 1; $index < $count; $index++) {
-            $argument = $arguments[$index];
-            if ($this->doubleDash && $argument === '--') {
-                $positional = array_merge($positional, array_slice($arguments, $index + 1));
-                break;
-            }
-            if ($this->skipEmpty && $argument === '') {
-                continue;
-            }
-            if ($argument === '--help' || ($this->shortOptions && $argument === '-h')) {
+        foreach (array_slice($arguments, 1) as $argument) {
+            if ($argument === '--help' || $argument === '-h') {
                 $options['help'] = true;
                 continue;
             }
-            if ($argument === '--version' || ($this->shortOptions && $argument === '-V')) {
+            if ($argument === '--version' || $argument === '-V') {
                 $options['version'] = true;
                 continue;
             }
-            foreach (['phases', 'skip'] as $name) {
-                if ($this->separateValues && $argument === '--' . $name) {
-                    if (++$index >= $count) {
-                        throw new RuntimeException(sprintf('The --%s option requires a value.', $name));
-                    }
-                    $options[$name] = $this->value($arguments[$index]);
-                    continue 2;
+            foreach ($values as $name => $placeholder) {
+                if ($argument === '--' . $name) {
+                    throw new RuntimeException(
+                        sprintf('The --%s option requires a value: --%s=%s', $name, $name, $placeholder)
+                    );
                 }
                 if (str_starts_with($argument, '--' . $name . '=')) {
-                    $options[$name] = $this->value(substr($argument, strlen($name) + 3));
+                    $value = substr($argument, strlen($name) + 3);
+                    $options[self::key($name)] = $placeholder === 'N' ? self::positiveInt($value, '--' . $name) : $value;
                     continue 2;
                 }
             }
-            foreach ($this->options as $name => $kind) {
-                if ($kind === self::FLAG && $argument === '--' . $name) {
-                    $options[self::key($name)] = true;
-                    continue 2;
-                }
-                if ($kind === self::POSITIVE_INT && str_starts_with($argument, '--' . $name . '=')) {
-                    $options[self::key($name)] = self::positiveInt(substr($argument, strlen($name) + 3), '--' . $name);
-                    continue 2;
-                }
+            if (str_starts_with($argument, '--') && ($this->options[substr($argument, 2)] ?? null) === self::FLAG) {
+                $options[self::key(substr($argument, 2))] = true;
+                continue;
             }
-            if ($this->unknownOption !== null && $argument !== '' && str_starts_with($argument, $this->optionPrefix)) {
-                throw new RuntimeException(sprintf($this->unknownOption, $argument));
+            if (str_starts_with($argument, '-')) {
+                throw new RuntimeException(sprintf('Unknown option: %s', $argument));
             }
-            if ($this->positionalError !== null) {
-                throw new RuntimeException(sprintf($this->positionalError, $argument));
-            }
-            $positional[] = $argument;
+
+            throw new RuntimeException(sprintf('Unexpected positional argument: "%s"', $argument));
         }
 
-        return [$options, $positional];
-    }
-
-    private function value(string $value): ?string
-    {
-        if ($this->trimValues) {
-            return trim($value);
-        }
-        if ($this->falsyValueIsNull) {
-            return $value ?: null;
-        }
-
-        return $value;
+        return $options;
     }
 
     private static function key(string $name): string

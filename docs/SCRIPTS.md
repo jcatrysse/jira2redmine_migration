@@ -231,29 +231,33 @@ This structure is intended to be reused by later migration scripts so that manua
 
 ## The command line and the shared code (phase 6)
 
-Every script starts the same way (`src/Cli/Script.php`): it reads the command line, answers `--help` and
-`--version` without loading the configuration, stops on a positional argument ("Unexpected positional arguments")
-and turns any error into one `[ERROR] ...` line on stderr and exit code 1. Every script takes `--phases=LIST` and
-`--skip=LIST` (`src/Cli/Phases.php`: an unknown phase, an empty list or nothing left to run stops the script) and its
-own flags, listed per script below.
+Every script starts the same way (`src/Cli/Script.php`): it reads the command line, answers `-h`/`--help` and
+`-V`/`--version` without loading the configuration, and turns any error into one `[ERROR] ...` line on stderr and exit
+code 1. Every script takes `--phases=LIST` and `--skip=LIST` (`src/Cli/Phases.php`: an unknown phase, an empty list or
+nothing left to run stops the script) and its own options:
 
-The 16 scripts had their own copy of the option parsing; `src/Cli/CommandLine.php` replaced them in phase 6 without
-changing what a script accepts. They agree on every command line the runbook uses and differ only on the rest, kept
-per script in `src/Cli/ScriptCommandLines.php` (`tests/fixtures/command_lines.json` holds what each old copy did):
+| script | its own options |
+|---|---|
+| 01 to 03, 12 to 15 | `--confirm-push`, `--dry-run` |
+| 04 to 08, 10, 11 | `--confirm-push`, `--dry-run`, `--use-extended-api` |
+| 09 | `--confirm-pull`, `--confirm-push`, `--dry-run`, `--use-extended-api`, `--download-limit=N`, `--upload-limit=N` |
+| 16 | none |
 
-| script | `-h`, `-V` | `--phases LIST` (space) | an unknown option | `--` | other differences |
-|---|---|---|---|---|---|
-| 01 to 03 | yes | yes, values trimmed | error "Unknown option provided" | ends the options | |
-| 04 | yes | no | error "Unknown option" (only `--x`) | ends the options | any other argument: "Unknown short option" |
-| 05 to 07 | yes | no | error "Unknown option" | ends the options | |
-| 08 | yes | no | error 'Unknown option "x".' | an unknown option | |
-| 09 | no | no | a positional argument | a positional argument | `--download-limit=N`, `--upload-limit=N` |
-| 10 | yes | no | a positional argument | a positional argument | empty arguments ignored; `--phases=` empty counts as not given |
-| 11, 13 to 16 | no | no | a positional argument | a positional argument | |
-| 12 | no | no | error "Unknown option" | an unknown option | empty arguments ignored |
+One rule for all 16 (decision 43, `src/Cli/CommandLine.php`); anything else stops the script with an error, also next
+to `--help`:
 
-A positional argument stops every script, so a typo never runs a phase by accident. One rule for all is a choice for
-Jan (plan, M1).
+| command line | error |
+|---|---|
+| an unknown option (`--bogus`, `-x`, `--`, `--dry-run=1`) | `Unknown option: --bogus` |
+| an option without its value (`--phases jira`, `--skip`) | `The --phases option requires a value: --phases=LIST` |
+| a positional or an empty argument (`a`, `""`) | `Unexpected positional argument: "a"` |
+| an empty list (`--phases=`, `--skip=`) | `The --phases option was given without a phase. Valid phases: ...` |
+
+Until decision 43 each script kept the rule of its own copy (phase 6; `tests/fixtures/command_lines.json` holds what
+each copy did, `tests/CommandLineCompatibilityTest.php` lists what decision 43 changed): `-h` and `-V` were positional
+arguments in 09 and 11 to 16, 01 to 03 also took `--phases LIST`, `--` ended the options in 01 to 07, 10 and 12 left an
+empty argument out, 10 ran every phase on an empty `--phases=`, and in most scripts `--help` won over a positional
+argument or an unknown option.
 
 Shared code the scripts use from `src/`: the configuration sections (`Cli/ConfigValue::section`), the staging
 database (`Database/ConnectionFactory`, each script with its own PDO attributes), the Jira and Redmine clients

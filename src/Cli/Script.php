@@ -8,8 +8,9 @@ use RuntimeException;
 use Throwable;
 
 /**
- * The start of every script (plan M1, the same lines in all 16): read the command line, answer --help and --version,
- * refuse positional arguments, run the script and turn any error into one "[ERROR]" line and exit code 1.
+ * The start of every script (plan M1, the same lines in all 16): read the command line (CommandLine refuses what it
+ * does not know), answer --help and --version, run the script and turn any error into one "[ERROR]" line and exit
+ * code 1.
  */
 final class Script
 {
@@ -37,7 +38,7 @@ final class Script
         }
 
         try {
-            [$options, $positional] = $commandLine->parse($argv);
+            $options = $commandLine->parse($argv);
             if (!empty($options['help'])) {
                 $printUsage();
 
@@ -48,10 +49,6 @@ final class Script
 
                 return 0;
             }
-            if ($positional !== []) {
-                throw new RuntimeException(sprintf('Unexpected positional arguments: %s', implode(', ', $positional)));
-            }
-
             $main($options);
         } catch (Throwable $exception) {
             fwrite($errors ?? STDERR, sprintf('[ERROR] %s%s', $exception->getMessage(), PHP_EOL));

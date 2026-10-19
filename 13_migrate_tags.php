@@ -98,8 +98,8 @@ function printUsage(): void
     printf("  --skip=LIST          Comma separated list of phases to skip.\n");
     printf("  --confirm-push       Required to execute the push phase.\n");
     printf("  --dry-run            Preview the push phase without modifying Redmine.\n");
-    printf("  --version            Display version information.\n");
-    printf("  --help               Display this help message.\n");
+    printf("  -V, --version        Display version information.\n");
+    printf("  -h, --help           Display this help message.\n");
 }
 
 function printVersion(): void

@@ -94,8 +94,8 @@ function printUsage(): void
     printf("Options:\n");
     printf("  --phases=LIST        Comma separated list of phases to run (default: jira).\n");
     printf("  --skip=LIST          Comma separated list of phases to skip.\n");
-    printf("  --version            Display version information.\n");
-    printf("  --help               Display this help message.\n");
+    printf("  -V, --version        Display version information.\n");
+    printf("  -h, --help           Display this help message.\n");
 }
 
 function printVersion(): void

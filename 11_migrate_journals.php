@@ -165,8 +165,8 @@ function printUsage(): void
     printf("  --confirm-push       Required to execute the push phase.\n");
     printf("  --dry-run            Preview the push phase without modifying Redmine.\n");
     printf("  --use-extended-api   Push journals through the redmine_extended_api plugin when enabled.\n");
-    printf("  --version            Display version information.\n");
-    printf("  --help               Display this help message.\n");
+    printf("  -V, --version        Display version information.\n");
+    printf("  -h, --help           Display this help message.\n");
 }
 
 function printVersion(): void

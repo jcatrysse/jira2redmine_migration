@@ -168,8 +168,8 @@ function printUsage(): void
     printf("  --download-limit=N   Limit the number of attachments processed during pull.\n");
     printf("  --upload-limit=N     Limit the number of attachments processed during push.\n");
     printf("  --dry-run            Preview pull/push activity without calling Jira or Redmine.\n");
-    printf("  --version            Display version information.\n");
-    printf("  --help               Display this help message.\n");
+    printf("  -V, --version        Display version information.\n");
+    printf("  -h, --help           Display this help message.\n");
 }
 
 function printVersion(): void
