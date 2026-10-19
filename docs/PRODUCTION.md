@@ -79,8 +79,11 @@ order (2026-10-15): upgrade first, check, then migrate Jira into 7.0 (Part B).
 Proven in the cloud test environment: a 5.1-stable-GEOxyz database with the 44 production plugins and
 seeded data (not production data), upgraded in place to 7.0-stable-GEOxyz `71b9479` with the 44 plugins on
 `redmine70-migration`. Since 2026-10-19 the tested core is `7310d11` (the merge of upstream 7.0-stable `37012d5`: no
-conflicts, no migrations, no gem changes; core suite 6,270 runs, 0 failures); the 44-plugin set is being run again on
-it, and the result goes here. `db:migrate` and `redmine:plugins:migrate` exit 0 with no manual workaround; the schema
+conflicts, no migrations, no gem changes; core suite 6,270 runs, 0 failures). The 44 plugins together on `7310d11`
+(PostgreSQL 16, Ruby 3.3.6, Rails 8.1.4, each on its `redmine70-migration` head, more_previews with its sandbox
+required): 8,289 minitest runs and 7,244 rspec examples, 0 failures (the issue_templates drag-and-drop timing spec
+passed on one retry). On the way redmine_view_issue_description `ad36481` fixed a per-request memo that broke 4 of
+redmine_agile's query-count tests. `db:migrate` and `redmine:plugins:migrate` exit 0 with no manual workaround; the schema
 equals a fresh 7.0 install apart from column details without effect (datetime precision); row counts equal;
 the workflow answers of 35 sample transitions identical before and after; 900 pages crawled as admin and as a
 manager, 0 server errors (5.1 itself had 16); 13 of 13 write actions pass. Each plugin's suite is green with
