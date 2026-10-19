@@ -15,6 +15,7 @@ use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 
 const MIGRATE_USERS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -54,7 +55,7 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        formatCurrentTimestamp(),
+        Clock::atom(),
         implode(', ', $phaseSummary),
         PHP_EOL
     );
@@ -66,20 +67,20 @@ function main(array $config, array $cliOptions): void
         $jiraConfig = ConfigValue::section($config, 'jira', 'Missing or invalid configuration section: %s');
         $jiraClient = ClientFactory::jira($jiraConfig, 30.0);
 
-        printf("[%s] Starting Jira user extraction...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Jira user extraction...%s", Clock::atom(), PHP_EOL);
 
         $totalJiraProcessed = fetchAndStoreJiraUsers($jiraClient, $pdo);
 
         printf(
             "[%s] Completed Jira extraction. %d user records processed.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $totalJiraProcessed,
             PHP_EOL
         );
     } else {
         printf(
             "[%s] Skipping Jira user extraction (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -88,20 +89,20 @@ function main(array $config, array $cliOptions): void
         $redmineConfig = ConfigValue::section($config, 'redmine', 'Missing or invalid configuration section: %s');
         $redmineClient = ClientFactory::redmine($redmineConfig, 30.0);
 
-        printf("[%s] Starting Redmine user snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Redmine user snapshot...%s", Clock::atom(), PHP_EOL);
 
         $totalRedmineProcessed = fetchAndStoreRedmineUsers($redmineClient, $pdo);
 
         printf(
             "[%s] Completed Redmine snapshot. %d user records processed.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $totalRedmineProcessed,
             PHP_EOL
         );
     } else {
         printf(
             "[%s] Skipping Redmine user snapshot (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -109,7 +110,7 @@ function main(array $config, array $cliOptions): void
     if (in_array('transform', $phasesToRun, true)) {
         printf(
             "[%s] Starting user reconciliation & transform phase...%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
 
@@ -119,7 +120,7 @@ function main(array $config, array $cliOptions): void
 
         printf(
             "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $transformSummary['matched'],
             $transformSummary['ready_for_creation'],
             $transformSummary['manual_review'],
@@ -138,7 +139,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping transform phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -151,7 +152,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -165,7 +166,7 @@ function main(array $config, array $cliOptions): void
  */
 function runPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isDryRun): void
 {
-    printf("[%s] Starting push phase (load)...%s", formatCurrentTimestamp(), PHP_EOL);
+    printf("[%s] Starting push phase (load)...%s", Clock::atom(), PHP_EOL);
 
     $pendingOperations = fetchPendingPushOperations($pdo);
     $pendingCount = count($pendingOperations);
@@ -183,7 +184,7 @@ function runPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isDryRun
             printf("  --confirm-push flag missing: no Redmine API calls were attempted.%s", PHP_EOL);
         }
 
-        printf("[%s] Push phase finished without contacting Redmine.%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Push phase finished without contacting Redmine.%s", Clock::atom(), PHP_EOL);
 
         return;
     }
@@ -194,7 +195,7 @@ function runPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isDryRun
         printf("  Dry-run preview of queued Redmine creations:%s", PHP_EOL);
         outputPushPreview($pendingOperations);
         printf("  --dry-run flag enabled: Redmine will not be modified.%s", PHP_EOL);
-        printf("[%s] Push phase finished without contacting Redmine.%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Push phase finished without contacting Redmine.%s", Clock::atom(), PHP_EOL);
 
         return;
     }
@@ -202,7 +203,7 @@ function runPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isDryRun
     if (!$confirmPush) {
         printf("  Re-run with --dry-run to preview the exact payloads before enabling the push.%s", PHP_EOL);
         printf("  --confirm-push flag missing: no Redmine API calls were attempted.%s", PHP_EOL);
-        printf("[%s] Push phase finished without contacting Redmine.%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Push phase finished without contacting Redmine.%s", Clock::atom(), PHP_EOL);
 
         return;
     }
@@ -222,7 +223,7 @@ function runPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isDryRun
     );
 
     printf("  Push summary: %d succeeded, %d failed.%s", $successCount, $failureCount, PHP_EOL);
-    printf("[%s] Push phase finished with Redmine API interactions.%s", formatCurrentTimestamp(), PHP_EOL);
+    printf("[%s] Push phase finished with Redmine API interactions.%s", Clock::atom(), PHP_EOL);
 }
 
 /**
@@ -807,18 +808,6 @@ function determineRedmineUserAuthSourceId(array $config): ?int
     throw new RuntimeException('Invalid configuration for migration.users.auth_source_id; expected a positive integer or null.');
 }
 
-function formatCurrentTimestamp(?string $format = null): string
-{
-    $format ??= DateTimeInterface::ATOM;
-
-    return date($format);
-}
-
-function formatCurrentUtcTimestamp(string $format): string
-{
-    return gmdate($format);
-}
-
 /**
  * @param string $defaultRedmineUserStatus Proposed default status for new Redmine accounts.
  * @return array{matched: int, ready_for_creation: int, manual_review: int, manual_overrides: int, skipped: int, unchanged: int, status_counts: array<string, int>}
@@ -1382,7 +1371,7 @@ function fetchAndStoreJiraUsers(Client $client, PDO $pdo): int
         $pdo->beginTransaction();
 
         try {
-            $extractedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
+            $extractedAt = Clock::dateTime();
 
             foreach ($decoded as $user) {
                 if (!is_array($user)) {
@@ -1572,7 +1561,7 @@ function fetchAndStoreRedmineUsers(Client $client, PDO $pdo): int
                 'mail' => $mail,
                 'status' => $status,
                 'raw_payload' => $rawPayload,
-                'retrieved_at' => formatCurrentUtcTimestamp('Y-m-d H:i:s'),
+                'retrieved_at' => Clock::dateTime(),
             ];
         }
 

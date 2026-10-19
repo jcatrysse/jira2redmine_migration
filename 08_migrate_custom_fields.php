@@ -24,6 +24,7 @@ use Jira2Redmine\CustomFields\LabelManagerLabels;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 
 const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -60,7 +61,7 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        formatCurrentTimestamp(),
+        Clock::atom(),
         implode(', ', $phasesToRun),
         PHP_EOL
     );
@@ -77,32 +78,32 @@ function main(array $config, array $cliOptions): void
         $jiraConfig = ConfigValue::section($config, 'jira', 'Missing configuration section "%s".');
         $jiraClient = ClientFactory::jira($jiraConfig);
 
-        printf("[%s] Starting Jira custom field extraction...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Jira custom field extraction...%s", Clock::atom(), PHP_EOL);
 
         $totalJiraProcessed = fetchAndStoreJiraCustomFields($jiraClient, $pdo);
 
         printf(
             "[%s] Completed Jira extraction. %d custom field records processed.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $totalJiraProcessed,
             PHP_EOL
         );
     } else {
         printf(
             "[%s] Skipping Jira custom field extraction (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
 
     if (in_array('usage', $phasesToRun, true)) {
-        printf("[%s] Starting Jira custom field usage analysis...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Jira custom field usage analysis...%s", Clock::atom(), PHP_EOL);
 
         $usageSummary = runCustomFieldUsagePhase($pdo);
 
         printf(
             "[%s] Completed usage analysis. Analysed: %d, With values: %d, With non-empty values: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $usageSummary['analysed_fields'],
             $usageSummary['fields_with_values'],
             $usageSummary['fields_with_non_empty_values'],
@@ -136,7 +137,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping Jira custom field usage analysis (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -147,7 +148,7 @@ function main(array $config, array $cliOptions): void
         $redmineExtendedApiPrefix ??= $redmineUseExtendedApi ? ExtendedApi::prefix($redmineConfig) : null;
         $redmineClient = ClientFactory::redmine($redmineConfig);
 
-        printf("[%s] Starting Redmine custom field snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Redmine custom field snapshot...%s", Clock::atom(), PHP_EOL);
 
         $totalRedmineProcessed = fetchAndStoreRedmineCustomFields(
             $redmineClient,
@@ -158,26 +159,26 @@ function main(array $config, array $cliOptions): void
 
         printf(
             "[%s] Completed Redmine snapshot. %d custom field records processed.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $totalRedmineProcessed,
             PHP_EOL
         );
     } else {
         printf(
             "[%s] Skipping Redmine custom field snapshot (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
 
     if (in_array('transform', $phasesToRun, true)) {
-        printf("[%s] Starting custom field reconciliation & transform phase...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting custom field reconciliation & transform phase...%s", Clock::atom(), PHP_EOL);
 
         $transformSummary = runCustomFieldTransformationPhase($pdo, $config['migration']['custom_fields']['not_migrated'] ?? []);
 
         printf(
             "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Ignored (unused): %d, Skipped: %d, Unchanged: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $transformSummary['matched'],
             $transformSummary['ready_for_creation'],
             $transformSummary['manual_review'],
@@ -212,7 +213,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping transform phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -227,7 +228,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -288,7 +289,7 @@ function fetchAndStoreJiraCustomFields(Client $client, PDO $pdo): int
     }
 
     $processed = 0;
-    $now = formatCurrentTimestamp('Y-m-d H:i:s');
+    $now = Clock::dateTime();
     $customFieldIds = [];
 
     foreach ($decoded as $field) {
@@ -400,7 +401,7 @@ function refreshJiraProjectIssueTypeFields(Client $client, PDO $pdo): void
         throw new RuntimeException('Failed to prepare insert statement for staging_jira_project_issue_type_fields.');
     }
 
-    $extractedAt = formatCurrentTimestamp('Y-m-d H:i:s');
+    $extractedAt = Clock::dateTime();
     $totalAssignments = 0;
 
     foreach ($projects as $project) {
@@ -2594,7 +2595,7 @@ function purgeOrphanedCustomFieldMappings(PDO $pdo): void
  */
 function runCustomFieldUsagePhase(PDO $pdo): array
 {
-    $analysisTimestamp = formatCurrentTimestamp('Y-m-d H:i:s');
+    $analysisTimestamp = Clock::dateTime();
 
     // The jira phase runs before 10 stages the issues (runbook order), so the field scopes and values the
     // issues hold are taken again here, once they are staged (B37).
@@ -2838,7 +2839,7 @@ function fetchAndStoreRedmineCustomFields(Client $client, PDO $pdo, bool $useExt
         throw new RuntimeException('Failed to prepare insert statement for staging_redmine_custom_fields.');
     }
 
-    $retrievedAt = formatCurrentTimestamp('Y-m-d H:i:s');
+    $retrievedAt = Clock::dateTime();
     $duplicateIds = [];
     $seenIds = [];
     $offset = 0;
@@ -5590,7 +5591,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
     $pendingCount = count($pendingFields);
 
     if ($useExtendedApi) {
-        printf("[%s] Starting push phase (Redmine extended API)...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting push phase (Redmine extended API)...%s", Clock::atom(), PHP_EOL);
 
         if ($pendingCount === 0) {
             printf("  No Jira custom fields are marked as READY_FOR_CREATION.%s", PHP_EOL);
@@ -6329,7 +6330,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
         return;
     }
 
-    printf("[%s] Starting push phase (manual custom field checklist)...%s", formatCurrentTimestamp(), PHP_EOL);
+    printf("[%s] Starting push phase (manual custom field checklist)...%s", Clock::atom(), PHP_EOL);
 
     if ($pendingCount === 0) {
         printf("  No Jira custom fields are marked as READY_FOR_CREATION.%s", PHP_EOL);
@@ -7292,13 +7293,6 @@ function fetchRedmineCustomFieldEnumerations(
     } catch (Throwable $exception) {
         return null;
     }
-}
-
-function formatCurrentTimestamp(?string $format = null): string
-{
-    $format ??= DateTimeInterface::ATOM;
-
-    return date($format);
 }
 
 function normalizeString(mixed $value, int $maxLength): ?string

@@ -30,6 +30,7 @@ use Jira2Redmine\Users\DefaultAuthor;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -198,7 +199,7 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        formatCurrentTimestamp(),
+        Clock::dateTime(),
         implode(', ', $phasesToRun),
         PHP_EOL
     );
@@ -210,14 +211,14 @@ function main(array $config, array $cliOptions): void
         $jiraConfig = ConfigValue::section($config, 'jira');
         $jiraClient = ClientFactory::jira($jiraConfig, 30.0);
 
-        printf("[%s] Starting Jira issue extraction...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Jira issue extraction...%s", Clock::dateTime(), PHP_EOL);
 
         $jiraSummary = fetchAndStoreJiraIssues($jiraClient, $pdo, $config);
         refreshIssueKeyAliases($jiraClient, $pdo);
 
         printf(
             "[%s] Completed Jira extraction. Issues: %d (updated %d), Labels captured: %d, Object samples: %d, Flattened rows: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             $jiraSummary['issues_processed'],
             $jiraSummary['issues_updated'],
             $jiraSummary['labels_processed'],
@@ -228,19 +229,19 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping Jira issue extraction (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             PHP_EOL
         );
     }
 
     if (in_array('transform', $phasesToRun, true)) {
-        printf("[%s] Starting issue reconciliation & transform phase...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting issue reconciliation & transform phase...%s", Clock::dateTime(), PHP_EOL);
 
         $transformSummary = runIssueTransformationPhase($pdo, $config);
 
         printf(
             "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             $transformSummary['matched'],
             $transformSummary['ready_for_creation'],
             $transformSummary['manual_review'],
@@ -259,7 +260,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping transform phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             PHP_EOL
         );
     }
@@ -304,7 +305,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             PHP_EOL
         );
     }
@@ -343,7 +344,7 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
     $totalLabelsProcessed = 0;
     $totalObjectSamples = 0;
     $totalObjectKvRows = 0;
-    $now = formatCurrentTimestamp('Y-m-d H:i:s');
+    $now = Clock::dateTime();
 
     $objectFieldDefinitions = loadObjectFieldDefinitions($pdo);
 
@@ -577,7 +578,7 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
             continue;
         }
 
-        printf("  [%s] Processing project %s%s", formatCurrentTimestamp(), $projectKey, PHP_EOL);
+        printf("  [%s] Processing project %s%s", Clock::dateTime(), $projectKey, PHP_EOL);
 
         $lastSeenIssueId = null;
         $projectFailed = false;
@@ -706,7 +707,7 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
                 $createdAt = isset($fields['created']) ? normalizeDateTimeString($fields['created']) : null;
                 $updatedAt = isset($fields['updated']) ? normalizeDateTimeString($fields['updated']) : null;
                 if ($createdAt === null) {
-                    $createdAt = formatCurrentTimestamp('Y-m-d H:i:s');
+                    $createdAt = Clock::dateTime();
                 }
                 if ($updatedAt === null) {
                     $updatedAt = $createdAt;
@@ -933,9 +934,9 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
                 'now' => $now,
                 'id' => $jiraProjectId,
             ]);
-            printf("  [%s] Finished project %s.%s", formatCurrentTimestamp(), $projectKey, PHP_EOL);
+            printf("  [%s] Finished project %s.%s", Clock::dateTime(), $projectKey, PHP_EOL);
         } else {
-            printf("  [%s] Project %s skipped due to errors.%s", formatCurrentTimestamp(), $projectKey, PHP_EOL);
+            printf("  [%s] Project %s skipped due to errors.%s", Clock::dateTime(), $projectKey, PHP_EOL);
         }
     }
 
@@ -4799,16 +4800,6 @@ function truncateString(string $value, int $maxLength): string
     }
 
     return substr($trimmed, 0, $maxLength);
-}
-
-/**
- * @param string $format
- * @return string
- * @throws DateMalformedStringException
- */
-function formatCurrentTimestamp(string $format = 'Y-m-d H:i:s'): string
-{
-    return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format($format);
 }
 
 function decodeJsonResponse(ResponseInterface $response): array

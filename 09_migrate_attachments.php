@@ -22,6 +22,7 @@ use Jira2Redmine\Users\DefaultAuthor;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
     'jira' => 'Synchronise Jira attachment metadata with the migration mapping table.',
@@ -55,7 +56,7 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        formatCurrentTimestamp(),
+        Clock::dateTime(),
         implode(', ', $phasesToRun),
         PHP_EOL
     );
@@ -64,21 +65,21 @@ function main(array $config, array $cliOptions): void
     $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 
     if (in_array('jira', $phasesToRun, true)) {
-        printf("[%s] Refreshing staged attachment metadata from staged issues...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Refreshing staged attachment metadata from staged issues...%s", Clock::dateTime(), PHP_EOL);
         $harvestSummary = stageAttachmentsFromStagedIssues($pdo);
         printf(
             "[%s] Attachment staging complete. Issues scanned: %d, Attachments indexed: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             $harvestSummary['issues_scanned'],
             $harvestSummary['attachments_indexed'],
             PHP_EOL
         );
 
-        printf("[%s] Synchronising attachment mappings...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Synchronising attachment mappings...%s", Clock::dateTime(), PHP_EOL);
         $summary = syncAttachmentMappings($pdo);
         printf(
             "[%s] Attachment mapping sync complete. New rows: %d, Updated rows: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             $summary['new_mappings'],
             $summary['relinked'],
             PHP_EOL
@@ -88,7 +89,7 @@ function main(array $config, array $cliOptions): void
         if ($sample['enabled']) {
             printf(
                 "[%s] Test sample (attachments.test_sample): %d selected, %d %s (%s not downloaded).%s",
-                formatCurrentTimestamp(),
+                Clock::dateTime(),
                 $sample['selected'],
                 $sample['skipped'],
                 AttachmentSample::NOTE,
@@ -97,7 +98,7 @@ function main(array $config, array $cliOptions): void
             );
         }
     } else {
-        printf("[%s] Skipping Jira sync phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping Jira sync phase (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
 
     if (in_array('pull', $phasesToRun, true)) {
@@ -106,15 +107,15 @@ function main(array $config, array $cliOptions): void
         $downloadLimit = $cliOptions['download_limit'] ?? null;
         runAttachmentPullPhase($pdo, $config, $confirmPull, $isDryRun, $downloadLimit);
     } else {
-        printf("[%s] Skipping pull phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping pull phase (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
 
     if (in_array('transform', $phasesToRun, true)) {
-        printf("[%s] Normalising attachment preparation state...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Normalising attachment preparation state...%s", Clock::dateTime(), PHP_EOL);
         $transformSummary = runAttachmentTransformPhase($pdo);
         printf(
             "[%s] Transform complete. Requeued failures: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             $transformSummary['requeued_failures'],
             PHP_EOL
         );
@@ -125,7 +126,7 @@ function main(array $config, array $cliOptions): void
             }
         }
     } else {
-        printf("[%s] Skipping transform phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping transform phase (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
 
     if (in_array('push', $phasesToRun, true)) {
@@ -137,7 +138,7 @@ function main(array $config, array $cliOptions): void
         $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
         runAttachmentUploadPhase($pdo, $config, $confirmPush, $isDryRun, $uploadLimit, $useExtendedApi, $extendedApiPrefix);
     } else {
-        printf("[%s] Skipping push phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping push phase (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
 }
 
@@ -170,7 +171,7 @@ function printVersion(): void
 function runAttachmentPullPhase(PDO $pdo, array $config, bool $confirmPull, bool $isDryRun, ?int $downloadLimit): void
 {
     $statusBreakdown = summariseAttachmentStatuses($pdo);
-    printf("[%s] Attachment queue status:%s", formatCurrentTimestamp(), PHP_EOL);
+    printf("[%s] Attachment queue status:%s", Clock::dateTime(), PHP_EOL);
     foreach ($statusBreakdown as $status => $count) {
         printf("  - %-24s %d%s", $status, $count, PHP_EOL);
     }
@@ -192,7 +193,7 @@ function runAttachmentPullPhase(PDO $pdo, array $config, bool $confirmPull, bool
         $passes++;
         printf(
             "[%s] Jira attachment download summary%s — queued: %d, downloaded: %d, failed: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             $passes > 1 ? sprintf(' (pass %d)', $passes) : '',
             $downloadSummary['queued'],
             $downloadSummary['downloaded'],
@@ -219,7 +220,7 @@ function runAttachmentUploadPhase(
     $statusBreakdown = summariseAttachmentStatuses($pdo);
     $enabledPendingUpload = countEnabledPendingUpload($pdo);
 
-    printf("[%s] Attachment queue status:%s", formatCurrentTimestamp(), PHP_EOL);
+    printf("[%s] Attachment queue status:%s", Clock::dateTime(), PHP_EOL);
     foreach ($statusBreakdown as $status => $count) {
         if ($status === 'PENDING_UPLOAD') {
             printf(
@@ -273,7 +274,7 @@ function runAttachmentUploadPhase(
     );
     printf(
         "[%s] Attachment upload summary — queued: %d, uploaded to Redmine: %d, uploaded to SharePoint: %d, failed: %d.%s",
-        formatCurrentTimestamp(),
+        Clock::dateTime(),
         $uploadSummary['queued'],
         $uploadSummary['uploaded'],
         $uploadSummary['sharepoint_uploaded'],
@@ -395,7 +396,7 @@ function stageAttachmentsFromStagedIssues(PDO $pdo): array
     $offset = 0;
     $issuesScanned = 0;
     $attachmentsIndexed = 0;
-    $now = formatCurrentTimestamp();
+    $now = Clock::dateTime();
 
     while (true) {
         $selectStatement->bindValue(':limit', $batchSize, PDO::PARAM_INT);
@@ -1073,7 +1074,7 @@ SQL);
 
         printf(
             "[%s] Uploading to Redmine: %s as %s (%s)%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             $originalName,
             $uniqueName,
             formatBytes($fileSize),
@@ -1703,11 +1704,6 @@ function normalizeInteger(mixed $value, int $min = PHP_INT_MIN, ?int $max = null
     return $intValue;
 }
 
-function formatCurrentTimestamp(): string
-{
-    return date('Y-m-d H:i:s');
-}
-
 function countEnabledPendingUpload(PDO $pdo): int
 {
     $sql = <<<SQL
@@ -1773,7 +1769,7 @@ function printUploadProgress(string $label, string $uniquelabel, int $uploaded, 
         if ($lastLabel !== null) {
             echo PHP_EOL;
         }
-        printf("[%s] Uploading to SharePoint: %s as %s%s", formatCurrentTimestamp(), $label, $uniquelabel, PHP_EOL);
+        printf("[%s] Uploading to SharePoint: %s as %s%s", Clock::dateTime(), $label, $uniquelabel, PHP_EOL);
         $lastLabel = $label;
     }
 

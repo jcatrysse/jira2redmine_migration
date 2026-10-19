@@ -16,6 +16,7 @@ use Jira2Redmine\Priorities\PriorityProposal;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 
 const MIGRATE_PRIORITIES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -50,7 +51,7 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        formatCurrentTimestamp(),
+        Clock::atom(),
         implode(', ', $phasesToRun),
         PHP_EOL
     );
@@ -65,20 +66,20 @@ function main(array $config, array $cliOptions): void
         $jiraConfig = ConfigValue::section($config, 'jira');
         $jiraClient = ClientFactory::jira($jiraConfig, 30.0);
 
-        printf("[%s] Starting Jira priority extraction...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Jira priority extraction...%s", Clock::atom(), PHP_EOL);
 
         $totalJiraProcessed = fetchAndStoreJiraIssuePriorities($jiraClient, $pdo);
 
         printf(
             "[%s] Completed Jira extraction. %d priority records processed.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $totalJiraProcessed,
             PHP_EOL
         );
     } else {
         printf(
             "[%s] Skipping Jira priority extraction (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -87,32 +88,32 @@ function main(array $config, array $cliOptions): void
         $redmineConfig ??= ConfigValue::section($config, 'redmine');
         $redmineClient = ClientFactory::redmine($redmineConfig, 30.0);
 
-        printf("[%s] Starting Redmine priority snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Redmine priority snapshot...%s", Clock::atom(), PHP_EOL);
 
         $totalRedmineProcessed = fetchAndStoreRedmineIssuePriorities($redmineClient, $pdo);
 
         printf(
             "[%s] Completed Redmine snapshot. %d priority records processed.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $totalRedmineProcessed,
             PHP_EOL
         );
     } else {
         printf(
             "[%s] Skipping Redmine priority snapshot (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
 
     if (in_array('transform', $phasesToRun, true)) {
-        printf("[%s] Starting priority reconciliation & transform phase...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting priority reconciliation & transform phase...%s", Clock::atom(), PHP_EOL);
 
         $transformSummary = runPriorityTransformationPhase($pdo, (array)($config['migration']['priorities'] ?? []));
 
         printf(
             "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $transformSummary['matched'],
             $transformSummary['ready_for_creation'],
             $transformSummary['manual_review'],
@@ -131,7 +132,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping transform phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -146,7 +147,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -190,7 +191,7 @@ function fetchAndStoreJiraIssuePriorities(Client $client, PDO $pdo): int
     }
 
     $totalInserted = 0;
-    $extractedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
+    $extractedAt = Clock::dateTime();
 
     $pdo->beginTransaction();
 
@@ -276,7 +277,7 @@ function fetchAndStoreRedmineIssuePriorities(Client $client, PDO $pdo): int
         throw new RuntimeException('Failed to prepare insert statement for staging_redmine_issue_priorities.');
     }
 
-    $retrievedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
+    $retrievedAt = Clock::dateTime();
     $totalInserted = 0;
 
     $pdo->beginTransaction();
@@ -688,7 +689,7 @@ function runPriorityPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array
     $pendingCount = count($pendingPriorities);
 
     if ($useExtendedApi) {
-        printf("[%s] Starting push phase (Redmine extended API)...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting push phase (Redmine extended API)...%s", Clock::atom(), PHP_EOL);
 
         if ($pendingCount === 0) {
             printf("  No Jira priorities are marked as READY_FOR_CREATION.%s", PHP_EOL);
@@ -875,7 +876,7 @@ function runPriorityPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array
         return;
     }
 
-    printf("[%s] Starting push phase (manual priority checklist)...%s", formatCurrentTimestamp(), PHP_EOL);
+    printf("[%s] Starting push phase (manual priority checklist)...%s", Clock::atom(), PHP_EOL);
 
     if ($pendingCount === 0) {
         printf("  No Jira priorities are marked as READY_FOR_CREATION.%s", PHP_EOL);
@@ -992,18 +993,6 @@ function decodeJsonResponse(ResponseInterface $response): mixed
     } catch (JsonException $exception) {
         throw new RuntimeException('Unable to decode JSON response: ' . $exception->getMessage(), 0, $exception);
     }
-}
-
-function formatCurrentTimestamp(?string $format = null): string
-{
-    $format ??= DateTimeInterface::ATOM;
-
-    return date($format);
-}
-
-function formatCurrentUtcTimestamp(string $format): string
-{
-    return gmdate($format);
 }
 
 function normalizeString(mixed $value, int $maxLength): ?string

@@ -14,6 +14,7 @@ use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 
 const MIGRATE_GROUPS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -53,7 +54,7 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        formatCurrentTimestamp(),
+        Clock::atom(),
         implode(', ', $phaseSummary),
         PHP_EOL
     );
@@ -65,20 +66,20 @@ function main(array $config, array $cliOptions): void
         $jiraConfig = ConfigValue::section($config, 'jira', 'Missing or invalid configuration section: %s');
         $jiraClient = ClientFactory::jira($jiraConfig, 30.0);
 
-        printf("[%s] Starting Jira group extraction...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Jira group extraction...%s", Clock::atom(), PHP_EOL);
 
         $totalJiraProcessed = fetchAndStoreJiraGroups($jiraClient, $pdo);
 
         printf(
             "[%s] Completed Jira extraction. %d group records processed.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $totalJiraProcessed,
             PHP_EOL
         );
     } else {
         printf(
             "[%s] Skipping Jira group extraction (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -87,20 +88,20 @@ function main(array $config, array $cliOptions): void
         $redmineConfig = ConfigValue::section($config, 'redmine', 'Missing or invalid configuration section: %s');
         $redmineClient = ClientFactory::redmine($redmineConfig, 30.0);
 
-        printf("[%s] Starting Redmine group snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Redmine group snapshot...%s", Clock::atom(), PHP_EOL);
 
         $totalRedmineProcessed = fetchAndStoreRedmineGroups($redmineClient, $pdo);
 
         printf(
             "[%s] Completed Redmine snapshot. %d group records processed.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $totalRedmineProcessed,
             PHP_EOL
         );
     } else {
         printf(
             "[%s] Skipping Redmine group snapshot (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -108,7 +109,7 @@ function main(array $config, array $cliOptions): void
     if (in_array('transform', $phasesToRun, true)) {
         printf(
             "[%s] Starting group reconciliation & transform phase...%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
 
@@ -116,7 +117,7 @@ function main(array $config, array $cliOptions): void
 
         printf(
             "[%s] Completed transform phase.\n  Group sync -> Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $transformSummary['matched'],
             $transformSummary['ready_for_creation'],
             $transformSummary['manual_review'],
@@ -159,7 +160,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping transform phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -172,7 +173,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -186,7 +187,7 @@ function main(array $config, array $cliOptions): void
  */
 function runGroupPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isDryRun): void
 {
-    printf("[%s] Starting push phase (load)...%s", formatCurrentTimestamp(), PHP_EOL);
+    printf("[%s] Starting push phase (load)...%s", Clock::atom(), PHP_EOL);
 
     $pendingGroupCreations = fetchPendingGroupPushOperations($pdo);
     $pendingMemberAssignments = fetchPendingGroupMemberAssignments($pdo);
@@ -207,7 +208,7 @@ function runGroupPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isD
             printf("  --confirm-push flag missing: no Redmine API calls were attempted.%s", PHP_EOL);
         }
 
-        printf("[%s] Push phase finished without contacting Redmine.%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Push phase finished without contacting Redmine.%s", Clock::atom(), PHP_EOL);
 
         return;
     }
@@ -236,7 +237,7 @@ function runGroupPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isD
         }
 
         printf("  --dry-run flag enabled: Redmine will not be modified.%s", PHP_EOL);
-        printf("[%s] Push phase finished without contacting Redmine.%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Push phase finished without contacting Redmine.%s", Clock::atom(), PHP_EOL);
 
         return;
     }
@@ -244,7 +245,7 @@ function runGroupPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isD
     if (!$confirmPush) {
         printf("  Re-run with --dry-run to preview the exact payloads before enabling the push.%s", PHP_EOL);
         printf("  --confirm-push flag missing: no Redmine API calls were attempted.%s", PHP_EOL);
-        printf("[%s] Push phase finished without contacting Redmine.%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Push phase finished without contacting Redmine.%s", Clock::atom(), PHP_EOL);
 
         return;
     }
@@ -263,7 +264,7 @@ function runGroupPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isD
         printf("  Membership assignment summary: %d succeeded, %d failed.%s", $memberResult[0], $memberResult[1], PHP_EOL);
     }
 
-    printf("[%s] Push phase finished with Redmine API interactions.%s", formatCurrentTimestamp(), PHP_EOL);
+    printf("[%s] Push phase finished with Redmine API interactions.%s", Clock::atom(), PHP_EOL);
 }
 
 /**
@@ -907,18 +908,6 @@ function printUsage(): void
 function printVersion(): void
 {
     printf('%s version %s%s', basename(__FILE__), MIGRATE_GROUPS_SCRIPT_VERSION, PHP_EOL);
-}
-
-function formatCurrentTimestamp(?string $format = null): string
-{
-    $format ??= DateTimeInterface::ATOM;
-
-    return date($format);
-}
-
-function formatCurrentUtcTimestamp(string $format): string
-{
-    return gmdate($format);
 }
 
 /**
@@ -1695,7 +1684,7 @@ function fetchAndStoreJiraGroups(Client $client, PDO $pdo): int
         $pdo->beginTransaction();
 
         try {
-            $extractedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
+            $extractedAt = Clock::dateTime();
 
             foreach ($groups as $group) {
                 if (!is_array($group)) {
@@ -1825,7 +1814,7 @@ function fetchAndStoreRedmineGroups(Client $client, PDO $pdo): int
         }
 
         $rowsToInsert = [];
-        $retrievedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
+        $retrievedAt = Clock::dateTime();
 
         foreach ($groups as $group) {
             if (!is_array($group)) {
@@ -1963,7 +1952,7 @@ function refreshJiraGroupMemberships(Client $client, PDO $pdo, array $groupIds):
                 break;
             }
 
-            $extractedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
+            $extractedAt = Clock::dateTime();
 
             $pdo->beginTransaction();
 
@@ -2111,7 +2100,7 @@ function refreshRedmineGroupMemberships(Client $client, PDO $pdo, array $groupId
             continue;
         }
 
-        $retrievedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
+        $retrievedAt = Clock::dateTime();
 
         $pdo->beginTransaction();
 

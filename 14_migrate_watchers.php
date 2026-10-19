@@ -14,6 +14,7 @@ use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 
 const MIGRATE_WATCHERS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -50,7 +51,7 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        formatCurrentTimestamp(),
+        Clock::dateTime(),
         implode(', ', $phasesToRun),
         PHP_EOL
     );
@@ -59,33 +60,33 @@ function main(array $config, array $cliOptions): void
     $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 
     if (in_array('jira', $phasesToRun, true)) {
-        printf("[%s] Fetching Jira watchers...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Fetching Jira watchers...%s", Clock::dateTime(), PHP_EOL);
         $jiraClient = ClientFactory::jira(ConfigValue::section($config, 'jira'));
         $summary = fetchJiraWatchers($jiraClient, $pdo);
         printf(
             "[%s] Jira watcher extraction complete. Watchers processed: %d (updated %d, warnings %d).%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             $summary['watchers_processed'],
             $summary['watchers_updated'],
             $summary['warnings'],
             PHP_EOL
         );
     } else {
-        printf("[%s] Skipping Jira extraction phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping Jira extraction phase (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
 
     if (in_array('transform', $phasesToRun, true)) {
-        printf("[%s] Reconciling watcher mappings...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Reconciling watcher mappings...%s", Clock::dateTime(), PHP_EOL);
         $summary = transformWatcherMappings($pdo);
         printf(
             "[%s] Transform complete. Ready: %d, Pending: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             $summary['ready'],
             $summary['pending'],
             PHP_EOL
         );
     } else {
-        printf("[%s] Skipping transform phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping transform phase (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
 
     if (in_array('push', $phasesToRun, true)) {
@@ -94,7 +95,7 @@ function main(array $config, array $cliOptions): void
         $redmineClient = ClientFactory::redmine(ConfigValue::section($config, 'redmine'));
         runWatcherPushPhase($pdo, $redmineClient, $confirmPush, $isDryRun);
     } else {
-        printf("[%s] Skipping push phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping push phase (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
 }
 
@@ -329,9 +330,6 @@ function summariseWatcherStatuses(PDO $pdo): array
     return $result;
 }
 
-/**
- * @throws DateMalformedStringException
- */
 function runWatcherPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $isDryRun): void
 {
     $statement = $pdo->query(<<<SQL
@@ -349,11 +347,11 @@ function runWatcherPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $
     $statement->closeCursor();
 
     if ($rows === []) {
-        printf("[%s] No watchers queued for push.%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] No watchers queued for push.%s", Clock::dateTime(), PHP_EOL);
         return;
     }
 
-    printf("[%s] %d watcher(s) queued for push.%s", formatCurrentTimestamp(), count($rows), PHP_EOL);
+    printf("[%s] %d watcher(s) queued for push.%s", Clock::dateTime(), count($rows), PHP_EOL);
 
     if ($isDryRun) {
         foreach ($rows as $row) {
@@ -642,12 +640,4 @@ function encodeJson(mixed $value): ?string
     } catch (JsonException $exception) {
         throw new RuntimeException('Failed to encode JSON payload: ' . $exception->getMessage(), 0, $exception);
     }
-}
-
-/**
- * @throws DateMalformedStringException
- */
-function formatCurrentTimestamp(string $format = 'Y-m-d H:i:s'): string
-{
-    return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format($format);
 }

@@ -16,6 +16,7 @@ use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 
 const MIGRATE_TAGS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -48,7 +49,7 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        formatCurrentTimestamp(),
+        Clock::dateTime(),
         implode(', ', $phasesToRun),
         PHP_EOL
     );
@@ -57,18 +58,18 @@ function main(array $config, array $cliOptions): void
     $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 
     if (in_array('transform', $phasesToRun, true)) {
-        printf("[%s] Building issue tag payloads...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Building issue tag payloads...%s", Clock::dateTime(), PHP_EOL);
         $summary = transformIssueTags($pdo);
         printf(
             "[%s] Transform complete. Ready: %d, Ignored: %d, Pending: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             $summary['ready'],
             $summary['ignored'],
             $summary['pending'],
             PHP_EOL
         );
     } else {
-        printf("[%s] Skipping transform phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping transform phase (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
 
     if (in_array('push', $phasesToRun, true)) {
@@ -80,7 +81,7 @@ function main(array $config, array $cliOptions): void
         $extendedApiPrefix = ExtendedApi::enabled($redmineConfig, false) ? ExtendedApi::prefix($redmineConfig) : null;
         runTagPushPhase($pdo, $redmineClient, $confirmPush, $isDryRun, $extendedApiPrefix);
     } else {
-        printf("[%s] Skipping push phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping push phase (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
 }
 
@@ -271,11 +272,11 @@ function runTagPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $isDr
     $statement->closeCursor();
 
     if ($rows === []) {
-        printf("[%s] No issue tags queued for push.%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] No issue tags queued for push.%s", Clock::dateTime(), PHP_EOL);
         return;
     }
 
-    printf("[%s] %d issue(s) queued for tag push.%s", formatCurrentTimestamp(), count($rows), PHP_EOL);
+    printf("[%s] %d issue(s) queued for tag push.%s", Clock::dateTime(), count($rows), PHP_EOL);
 
     if ($isDryRun) {
         foreach ($rows as $row) {
@@ -370,14 +371,6 @@ function extractErrorBody(ResponseInterface $response): string
     }
 
     return $body;
-}
-
-/**
- * @throws DateMalformedStringException
- */
-function formatCurrentTimestamp(string $format = 'Y-m-d H:i:s'): string
-{
-    return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format($format);
 }
 
 function decodeJsonColumn(mixed $value): mixed

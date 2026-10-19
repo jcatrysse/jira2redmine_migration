@@ -16,6 +16,7 @@ use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 
 const MIGRATE_PROJECTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -50,7 +51,7 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        formatCurrentTimestamp(),
+        Clock::atom(),
         implode(', ', $phasesToRun),
         PHP_EOL
     );
@@ -62,21 +63,21 @@ function main(array $config, array $cliOptions): void
         $jiraConfig = ConfigValue::section($config, 'jira', 'Missing or invalid configuration section: %s');
         $jiraClient = ClientFactory::jira($jiraConfig, 30.0);
 
-        printf("[%s] Starting Jira project extraction...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Jira project extraction...%s", Clock::atom(), PHP_EOL);
 
         $totalJiraProcessed = fetchAndStoreJiraProjects($jiraClient, $pdo);
         ExtractionGuard::requireProjects($totalJiraProcessed);
 
         printf(
             "[%s] Completed Jira extraction. %d project records processed.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $totalJiraProcessed,
             PHP_EOL
         );
     } else {
         printf(
             "[%s] Skipping Jira project extraction (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -85,20 +86,20 @@ function main(array $config, array $cliOptions): void
         $redmineConfig = ConfigValue::section($config, 'redmine', 'Missing or invalid configuration section: %s');
         $redmineClient = ClientFactory::redmine($redmineConfig, 30.0);
 
-        printf("[%s] Starting Redmine project snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Redmine project snapshot...%s", Clock::atom(), PHP_EOL);
 
         $totalRedmineProcessed = fetchAndStoreRedmineProjects($redmineClient, $pdo);
 
         printf(
             "[%s] Completed Redmine snapshot. %d project records processed.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $totalRedmineProcessed,
             PHP_EOL
         );
     } else {
         printf(
             "[%s] Skipping Redmine project snapshot (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -106,7 +107,7 @@ function main(array $config, array $cliOptions): void
     if (in_array('transform', $phasesToRun, true)) {
         printf(
             "[%s] Starting project reconciliation & transform phase...%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
 
@@ -114,7 +115,7 @@ function main(array $config, array $cliOptions): void
 
         printf(
             "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $transformSummary['matched'],
             $transformSummary['ready_for_creation'],
             $transformSummary['manual_review'],
@@ -133,7 +134,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping transform phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -146,7 +147,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -212,7 +213,7 @@ function fetchAndStoreJiraProjects(Client $client, PDO $pdo): int
         $pdo->beginTransaction();
 
         try {
-            $extractedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
+            $extractedAt = Clock::dateTime();
 
             foreach ($projects as $project) {
                 if (!is_array($project)) {
@@ -336,7 +337,7 @@ function fetchAndStoreRedmineProjects(Client $client, PDO $pdo): int
         }
 
         $rowsToInsert = [];
-        $retrievedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
+        $retrievedAt = Clock::dateTime();
 
         foreach ($projects as $project) {
             if (!is_array($project)) {
@@ -811,7 +812,7 @@ SQL;
  */
 function runProjectPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $isDryRun): void
 {
-    printf("[%s] Starting push phase (load)...%s", formatCurrentTimestamp(), PHP_EOL);
+    printf("[%s] Starting push phase (load)...%s", Clock::atom(), PHP_EOL);
 
     $pendingCreations = fetchPendingProjectPushOperations($pdo);
     $queueSize = count($pendingCreations);
@@ -829,7 +830,7 @@ function runProjectPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $i
             printf("  --confirm-push flag missing: no Redmine API calls were attempted.%s", PHP_EOL);
         }
 
-        printf("[%s] Push phase finished without contacting Redmine.%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Push phase finished without contacting Redmine.%s", Clock::atom(), PHP_EOL);
 
         return;
     }
@@ -840,7 +841,7 @@ function runProjectPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $i
         printf("  Dry-run preview of queued Redmine project creations:%s", PHP_EOL);
         outputProjectPushPreview($pendingCreations);
         printf("  --dry-run flag enabled: Redmine will not be modified.%s", PHP_EOL);
-        printf("[%s] Push phase finished without contacting Redmine.%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Push phase finished without contacting Redmine.%s", Clock::atom(), PHP_EOL);
 
         return;
     }
@@ -848,7 +849,7 @@ function runProjectPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $i
     if (!$confirmPush) {
         printf("  Re-run with --dry-run to preview the exact payloads before enabling the push.%s", PHP_EOL);
         printf("  --confirm-push flag missing: no Redmine API calls were attempted.%s", PHP_EOL);
-        printf("[%s] Push phase finished without contacting Redmine.%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Push phase finished without contacting Redmine.%s", Clock::atom(), PHP_EOL);
 
         return;
     }
@@ -859,7 +860,7 @@ function runProjectPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $i
     $result = executeRedmineProjectPush($pdo, $redmineClient, $pendingCreations);
     printf("  Project creation summary: %d succeeded, %d failed.%s", $result[0], $result[1], PHP_EOL);
 
-    printf("[%s] Push phase finished with Redmine API interactions.%s", formatCurrentTimestamp(), PHP_EOL);
+    printf("[%s] Push phase finished with Redmine API interactions.%s", Clock::atom(), PHP_EOL);
 }
 
 /**
@@ -1471,16 +1472,4 @@ function printUsage(): void
 function printVersion(): void
 {
     printf('%s version %s%s', basename(__FILE__), MIGRATE_PROJECTS_SCRIPT_VERSION, PHP_EOL);
-}
-
-function formatCurrentTimestamp(?string $format = null): string
-{
-    $format ??= DateTimeInterface::ATOM;
-
-    return date($format);
-}
-
-function formatCurrentUtcTimestamp(string $format): string
-{
-    return gmdate($format);
 }

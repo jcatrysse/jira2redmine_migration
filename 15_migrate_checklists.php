@@ -14,6 +14,7 @@ use Jira2Redmine\Redmine\ChecklistItem;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 
 const MIGRATE_CHECKLISTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -46,7 +47,7 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        formatCurrentTimestamp(),
+        Clock::dateTime(),
         implode(', ', $phasesToRun),
         PHP_EOL
     );
@@ -55,18 +56,18 @@ function main(array $config, array $cliOptions): void
     $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 
     if (in_array('transform', $phasesToRun, true)) {
-        printf("[%s] Parsing Jira checklists...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Parsing Jira checklists...%s", Clock::dateTime(), PHP_EOL);
         $summary = transformChecklists($pdo, $config);
         printf(
             "[%s] Transform complete. Ready: %d, Ignored: %d, Pending: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             $summary['ready'],
             $summary['ignored'],
             $summary['pending'],
             PHP_EOL
         );
     } else {
-        printf("[%s] Skipping transform phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping transform phase (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
 
     if (in_array('push', $phasesToRun, true)) {
@@ -75,7 +76,7 @@ function main(array $config, array $cliOptions): void
         $redmineClient = ClientFactory::redmine(ConfigValue::section($config, 'redmine'));
         runChecklistPushPhase($pdo, $redmineClient, $confirmPush, $isDryRun);
     } else {
-        printf("[%s] Skipping push phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping push phase (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
 }
 
@@ -300,9 +301,6 @@ function transformChecklists(PDO $pdo, array $config): array
     ];
 }
 
-/**
- * @throws DateMalformedStringException
- */
 function runChecklistPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $isDryRun): void
 {
     $statement = $pdo->query(<<<SQL
@@ -320,11 +318,11 @@ function runChecklistPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool
     $statement->closeCursor();
 
     if ($rows === []) {
-        printf("[%s] No checklists queued for push.%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] No checklists queued for push.%s", Clock::dateTime(), PHP_EOL);
         return;
     }
 
-    printf("[%s] %d issue(s) queued for checklist push.%s", formatCurrentTimestamp(), count($rows), PHP_EOL);
+    printf("[%s] %d issue(s) queued for checklist push.%s", Clock::dateTime(), count($rows), PHP_EOL);
 
     if ($isDryRun) {
         foreach ($rows as $row) {
@@ -556,14 +554,6 @@ function extractErrorBody(ResponseInterface $response): string
     }
 
     return $body;
-}
-
-/**
- * @throws DateMalformedStringException
- */
-function formatCurrentTimestamp(string $format = 'Y-m-d H:i:s'): string
-{
-    return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format($format);
 }
 
 function decodeJsonColumn(mixed $value): mixed

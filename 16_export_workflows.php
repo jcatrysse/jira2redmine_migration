@@ -17,6 +17,7 @@ use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 
 const EXPORT_WORKFLOWS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -51,13 +52,13 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        formatCurrentTimestamp(),
+        Clock::dateTime(),
         implode(', ', $phasesToRun),
         PHP_EOL
     );
 
     if (!in_array('jira', $phasesToRun, true)) {
-        printf("[%s] Skipping Jira export phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping Jira export phase (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
         return;
     }
 
@@ -79,7 +80,7 @@ function main(array $config, array $cliOptions): void
     exportFieldConfigurations($jiraClient, $pdo);
     exportFieldConfigurationItems($jiraClient, $pdo);
     exportFieldConfigurationSchemes($jiraClient, $pdo);
-    printf("[%s] %s%s", formatCurrentTimestamp(), AutomationRules::SKIPPED, PHP_EOL);
+    printf("[%s] %s%s", Clock::dateTime(), AutomationRules::SKIPPED, PHP_EOL);
 }
 
 function printUsage(): void
@@ -132,7 +133,7 @@ function exportWorkflows(Client $client, PDO $pdo): void
         $count++;
     }
 
-    printf("[%s] Workflows exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Workflows exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 function exportWorkflowSchemes(Client $client, PDO $pdo): void
@@ -188,7 +189,7 @@ function exportWorkflowSchemes(Client $client, PDO $pdo): void
         $count++;
     }
 
-    printf("[%s] Workflow schemes exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Workflow schemes exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 /**
@@ -234,7 +235,7 @@ function exportWorkflowSchemeProjects(Client $client, PDO $pdo): void
         }
     }
 
-    printf("[%s] Workflow schemes per project exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Workflow schemes per project exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 function exportProjects(Client $client, PDO $pdo): void
@@ -280,7 +281,7 @@ function exportProjects(Client $client, PDO $pdo): void
         $count++;
     }
 
-    printf("[%s] Projects exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Projects exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 function exportIssueTypes(Client $client, PDO $pdo): void
@@ -326,7 +327,7 @@ function exportIssueTypes(Client $client, PDO $pdo): void
         $count++;
     }
 
-    printf("[%s] Issue types exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Issue types exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 function exportIssueTypeSchemes(Client $client, PDO $pdo): void
@@ -385,7 +386,7 @@ function exportIssueTypeSchemes(Client $client, PDO $pdo): void
         $count++;
     }
 
-    printf("[%s] Issue type schemes exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Issue type schemes exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 function exportIssueTypeSchemeProjects(Client $client, PDO $pdo): void
@@ -450,7 +451,7 @@ function exportIssueTypeSchemeProjects(Client $client, PDO $pdo): void
         }
     }
 
-    printf("[%s] Issue type scheme projects exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Issue type scheme projects exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 function exportProjectRoles(Client $client, PDO $pdo): void
@@ -560,7 +561,7 @@ function exportProjectRoles(Client $client, PDO $pdo): void
         $count++;
     }
 
-    printf("[%s] Project roles exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Project roles exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 function exportFields(Client $client, PDO $pdo): void
@@ -606,7 +607,7 @@ function exportFields(Client $client, PDO $pdo): void
         $count++;
     }
 
-    printf("[%s] Fields exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Fields exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 function exportScreens(Client $client, PDO $pdo): void
@@ -729,7 +730,7 @@ function exportScreens(Client $client, PDO $pdo): void
         }
     }
 
-    printf("[%s] Screens exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Screens exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 function exportScreenSchemes(Client $client, PDO $pdo): void
@@ -770,7 +771,7 @@ function exportScreenSchemes(Client $client, PDO $pdo): void
         $count++;
     }
 
-    printf("[%s] Screen schemes exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Screen schemes exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 function exportIssueTypeScreenSchemes(Client $client, PDO $pdo): void
@@ -811,7 +812,7 @@ function exportIssueTypeScreenSchemes(Client $client, PDO $pdo): void
         $count++;
     }
 
-    printf("[%s] Issue type screen schemes exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Issue type screen schemes exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 function exportFieldConfigurations(Client $client, PDO $pdo): void
@@ -852,7 +853,7 @@ function exportFieldConfigurations(Client $client, PDO $pdo): void
         $count++;
     }
 
-    printf("[%s] Field configurations exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Field configurations exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 /**
@@ -888,7 +889,7 @@ function exportFieldConfigurationItems(Client $client, PDO $pdo): void
         }
     }
 
-    printf("[%s] Field configuration items exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Field configuration items exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 function exportFieldConfigurationSchemes(Client $client, PDO $pdo): void
@@ -929,7 +930,7 @@ function exportFieldConfigurationSchemes(Client $client, PDO $pdo): void
         $count++;
     }
 
-    printf("[%s] Field configuration schemes exported: %d%s", formatCurrentTimestamp(), $count, PHP_EOL);
+    printf("[%s] Field configuration schemes exported: %d%s", Clock::dateTime(), $count, PHP_EOL);
 }
 
 /**
@@ -1076,12 +1077,4 @@ function encodeJson(mixed $value): string
     } catch (JsonException $exception) {
         throw new RuntimeException('Failed to encode JSON payload: ' . $exception->getMessage(), 0, $exception);
     }
-}
-
-/**
- * @throws DateMalformedStringException
- */
-function formatCurrentTimestamp(string $format = 'Y-m-d H:i:s'): string
-{
-    return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format($format);
 }

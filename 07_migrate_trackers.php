@@ -16,6 +16,7 @@ use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 
 const MIGRATE_TRACKERS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -50,7 +51,7 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        formatCurrentTimestamp(),
+        Clock::atom(),
         implode(', ', $phasesToRun),
         PHP_EOL
     );
@@ -65,20 +66,20 @@ function main(array $config, array $cliOptions): void
         $jiraConfig = ConfigValue::section($config, 'jira');
         $jiraClient = ClientFactory::jira($jiraConfig, 30.0);
 
-        printf("[%s] Starting Jira issue type extraction...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Jira issue type extraction...%s", Clock::atom(), PHP_EOL);
 
         $totalJiraProcessed = fetchAndStoreJiraIssueTypes($jiraClient, $pdo);
 
         printf(
             "[%s] Completed Jira extraction. %d issue type records processed.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $totalJiraProcessed,
             PHP_EOL
         );
     } else {
         printf(
             "[%s] Skipping Jira issue type extraction (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -87,7 +88,7 @@ function main(array $config, array $cliOptions): void
         $redmineConfig ??= ConfigValue::section($config, 'redmine');
         $redmineClient = ClientFactory::redmine($redmineConfig, 30.0);
 
-        printf("[%s] Starting Redmine tracker snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Redmine tracker snapshot...%s", Clock::atom(), PHP_EOL);
 
         $useExtendedApi = ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
 
@@ -95,26 +96,26 @@ function main(array $config, array $cliOptions): void
 
         printf(
             "[%s] Completed Redmine snapshot. %d tracker records processed.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $totalRedmineProcessed,
             PHP_EOL
         );
     } else {
         printf(
             "[%s] Skipping Redmine tracker snapshot (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
 
     if (in_array('transform', $phasesToRun, true)) {
-        printf("[%s] Starting tracker reconciliation & transform phase...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting tracker reconciliation & transform phase...%s", Clock::atom(), PHP_EOL);
 
         $transformSummary = runTrackerTransformationPhase($pdo, $config);
 
         printf(
             "[%s] Completed transform phase. Matched: %d, Ready (create): %d, Ready (update): %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $transformSummary['matched'],
             $transformSummary['ready_for_creation'],
             $transformSummary['ready_for_update'],
@@ -134,7 +135,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping transform phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -149,7 +150,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -214,7 +215,7 @@ function fetchAndStoreJiraIssueTypes(Client $client, PDO $pdo): int
     }
 
     $totalInserted = 0;
-    $extractedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
+    $extractedAt = Clock::dateTime();
 
     $pdo->beginTransaction();
 
@@ -476,7 +477,7 @@ function fetchAndStoreRedmineTrackers(Client $client, PDO $pdo, array $redmineCo
         throw new RuntimeException('Failed to prepare insert statement for staging_redmine_trackers.');
     }
 
-    $retrievedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
+    $retrievedAt = Clock::dateTime();
     $totalInserted = 0;
 
     $pdo->beginTransaction();
@@ -1228,7 +1229,7 @@ function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array 
     $jiraToRedmineProjectLookup = buildJiraToRedmineProjectLookup($pdo);
 
     if ($useExtendedApi) {
-        printf("[%s] Starting push phase (Redmine extended API)...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting push phase (Redmine extended API)...%s", Clock::atom(), PHP_EOL);
 
         if ($pendingCount === 0) {
             printf("  No Jira issue types are marked as READY_FOR_CREATION.%s", PHP_EOL);
@@ -1436,7 +1437,7 @@ function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array 
         return;
     }
 
-    printf('[%s] Starting push phase (manual tracker checklist)...%s', formatCurrentTimestamp(), PHP_EOL);
+    printf('[%s] Starting push phase (manual tracker checklist)...%s', Clock::atom(), PHP_EOL);
 
     if ($pendingCount === 0) {
         printf("  No Jira issue types are marked as READY_FOR_CREATION.%s", PHP_EOL);
@@ -2037,18 +2038,6 @@ function decodeJsonResponse(ResponseInterface $response): mixed
     } catch (JsonException $exception) {
         throw new RuntimeException('Unable to decode JSON response: ' . $exception->getMessage(), 0, $exception);
     }
-}
-
-function formatCurrentTimestamp(?string $format = null): string
-{
-    $format ??= DateTimeInterface::ATOM;
-
-    return date($format);
-}
-
-function formatCurrentUtcTimestamp(string $format): string
-{
-    return gmdate($format);
 }
 
 function normalizeString(mixed $value, int $maxLength): ?string

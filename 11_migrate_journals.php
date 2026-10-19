@@ -30,6 +30,7 @@ use Jira2Redmine\Users\DefaultAuthor;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.1';
 const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
 const JIRA_RATE_LIMIT_BASE_DELAY_MS = 1000;
@@ -67,7 +68,7 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        formatCurrentTimestamp(),
+        Clock::dateTime(),
         implode(', ', $phasesToRun),
         PHP_EOL
     );
@@ -76,13 +77,13 @@ function main(array $config, array $cliOptions): void
     $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 
     if (in_array('jira', $phasesToRun, true)) {
-        printf("[%s] Fetching Jira comments and changelog entries...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Fetching Jira comments and changelog entries...%s", Clock::dateTime(), PHP_EOL);
         $jiraClient = ClientFactory::jira(ConfigValue::section($config, 'jira'));
         $jiraSummary = fetchJiraJournals($jiraClient, $pdo, $config);
         refreshIssueKeyAliases($jiraClient, $pdo);
         printf(
             "[%s] Jira journal extraction complete. Comments: %d (updated %d), Changelog entries: %d (updated %d), not read: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             $jiraSummary['comments_processed'],
             $jiraSummary['comments_updated'],
             $jiraSummary['changelog_processed'],
@@ -91,15 +92,15 @@ function main(array $config, array $cliOptions): void
             PHP_EOL
         );
     } else {
-        printf("[%s] Skipping Jira extraction phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping Jira extraction phase (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
 
     if (in_array('transform', $phasesToRun, true)) {
-        printf("[%s] Reconciling journal mappings...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Reconciling journal mappings...%s", Clock::dateTime(), PHP_EOL);
         $summary = transformJournalMappings($pdo);
         printf(
             "[%s] Transform phase complete. Ready: %d, Pending: %d, Failed: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::dateTime(),
             $summary['ready'],
             $summary['pending'],
             $summary['failed'],
@@ -125,7 +126,7 @@ function main(array $config, array $cliOptions): void
             }
         }
     } else {
-        printf("[%s] Skipping transform phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping transform phase (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
 
     // push and history go together, per issue in Jira's time order (decision 41); history alone is appended
@@ -139,7 +140,7 @@ function main(array $config, array $cliOptions): void
         $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
         runJournalPushPhase($pdo, $config, $confirmPush, $isDryRun, $useExtendedApi, $extendedApiPrefix, $withJournals, $withHistory);
     } else {
-        printf("[%s] Skipping push and history phases (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Skipping push and history phases (disabled via CLI option).%s", Clock::dateTime(), PHP_EOL);
     }
 }
 
@@ -359,7 +360,7 @@ function fetchJiraJournals(Client $client, PDO $pdo, array $config): array
                 $stateUpsertComments->execute([
                     'issue_id' => $issueId,
                     'issue_key' => $issueKey,
-                    'comments_extracted_at' => formatCurrentTimestamp(),
+                    'comments_extracted_at' => Clock::dateTime(),
                     'comments_migration_status' => 'SUCCESS',
                     'comments_notes' => null,
                 ]);
@@ -387,7 +388,7 @@ function fetchJiraJournals(Client $client, PDO $pdo, array $config): array
                 $stateUpsertChangelog->execute([
                     'issue_id' => $issueId,
                     'issue_key' => $issueKey,
-                    'changelog_extracted_at' => formatCurrentTimestamp(),
+                    'changelog_extracted_at' => Clock::dateTime(),
                     'changelog_migration_status' => 'SUCCESS',
                     'changelog_notes' => null,
                 ]);
@@ -945,13 +946,13 @@ function runJournalPushPhase(
     $historyEvents = $history['events'] ?? [];
 
     if (count($candidateComments) + count($candidateChangelogs) + count($historyEvents) + count($history['files'] ?? []) === 0) {
-        printf("[%s] No journals queued for push.%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] No journals queued for push.%s", Clock::dateTime(), PHP_EOL);
         return;
     }
 
     printf(
         "[%s] Journals ready for push: %d comment(s), %d changelog entr(y/ies), %d history journal(s).%s",
-        formatCurrentTimestamp(),
+        Clock::dateTime(),
         count($candidateComments),
         count($candidateChangelogs),
         count($historyEvents),
@@ -1044,7 +1045,7 @@ function runJournalPushPhase(
         foreach ($history['files'] as $jiraIssueId => $issueFile) {
             pushHistorySeries($redmineClient, $pdo, $extendedApiPrefix, [], $history, (string)$jiraIssueId);
         }
-        printf("[%s] History pushed: %d journal(s), %d file(s), %d failed request(s).%s", formatCurrentTimestamp(), $history['pushed']['journals'], $history['pushed']['files'], $history['pushed']['failed'], PHP_EOL);
+        printf("[%s] History pushed: %d journal(s), %d file(s), %d failed request(s).%s", Clock::dateTime(), $history['pushed']['journals'], $history['pushed']['files'], $history['pushed']['failed'], PHP_EOL);
     }
 }
 
@@ -1199,7 +1200,7 @@ function prepareHistory(PDO $pdo, int $defaultAuthorId): array
 
     printf(
         "[%s] History: %d issue(s), %d journal(s), %d detail(s); %d item(s) skipped and connected, %d dropped as no change; %d file(s); status mismatches: %d (open parents: %d).%s",
-        formatCurrentTimestamp(),
+        Clock::dateTime(),
         $totals['issues'],
         $totals['journals'],
         $totals['details'],
@@ -2549,14 +2550,6 @@ function calculateRateLimitDelayMs(int $attempt, ?int $retryAfterSeconds): int
     $jitter = random_int(0, (int)($base / 2));
 
     return $delay + $jitter;
-}
-
-/**
- * @throws DateMalformedStringException
- */
-function formatCurrentTimestamp(): string
-{
-    return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s');
 }
 
 /**

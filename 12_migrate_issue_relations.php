@@ -16,6 +16,7 @@ use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 
 const MIGRATE_RELATIONS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -57,7 +58,7 @@ function main(array $config, array $cliOptions): void
 {
     $phasesToRun = Phases::fromOptions(AVAILABLE_PHASES, $cliOptions);
 
-    printf('[%s] Selected phases: %s%s', formatCurrentTimestamp(), implode(', ', $phasesToRun), PHP_EOL);
+    printf('[%s] Selected phases: %s%s', Clock::dateTime(), implode(', ', $phasesToRun), PHP_EOL);
 
     $databaseConfig = ConfigValue::section($config, 'database', 'Missing %s configuration block.');
     $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
@@ -65,7 +66,7 @@ function main(array $config, array $cliOptions): void
     if (in_array('transform', $phasesToRun, true)) {
         runRelationTransformPhase($pdo, $config);
     } else {
-        printf('[%s] Skipping transform phase (disabled via CLI option).%s', formatCurrentTimestamp(), PHP_EOL);
+        printf('[%s] Skipping transform phase (disabled via CLI option).%s', Clock::dateTime(), PHP_EOL);
     }
 
     if (in_array('push', $phasesToRun, true)) {
@@ -73,7 +74,7 @@ function main(array $config, array $cliOptions): void
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         runRelationPushPhase($pdo, $config, $confirmPush, $isDryRun);
     } else {
-        printf('[%s] Skipping push phase (disabled via CLI option).%s', formatCurrentTimestamp(), PHP_EOL);
+        printf('[%s] Skipping push phase (disabled via CLI option).%s', Clock::dateTime(), PHP_EOL);
     }
 }
 
@@ -103,7 +104,7 @@ function runRelationTransformPhase(PDO $pdo, array $config): void
     $customMappings = normalizeCustomRelationMappings(extractCustomRelationMappings($config));
     $supportedRelationTypes = buildSupportedRelationTypes($customMappings);
 
-    printf('[%s] Synchronising Jira issue links...%s', formatCurrentTimestamp(), PHP_EOL);
+    printf('[%s] Synchronising Jira issue links...%s', Clock::dateTime(), PHP_EOL);
     $syncSummary = syncIssueRelationMappings($pdo);
     printf(
         "  Synchronized %d link record(s) from staging.%s",
@@ -275,11 +276,11 @@ function runRelationPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $
     $statement->closeCursor();
 
     if ($rows === []) {
-        printf("[%s] No issue relations queued for creation.%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] No issue relations queued for creation.%s", Clock::dateTime(), PHP_EOL);
         return;
     }
 
-    printf('[%s] %d issue relation(s) queued for creation.%s', formatCurrentTimestamp(), count($rows), PHP_EOL);
+    printf('[%s] %d issue relation(s) queued for creation.%s', Clock::dateTime(), count($rows), PHP_EOL);
 
     $redmineConfig = ConfigValue::section($config, 'redmine', 'Missing %s configuration block.');
     $useExtendedApi = ExtendedApi::enabled($redmineConfig, false);
@@ -753,11 +754,6 @@ function mergeNotes(?string $current, ?string $addition): ?string
     }
 
     return $current . ' ' . $addition;
-}
-
-function formatCurrentTimestamp(string $format = 'Y-m-d H:i:s'): string
-{
-    return (new DateTimeImmutable('now'))->format($format);
 }
 
 function decodeJsonResponse(ResponseInterface $response): array

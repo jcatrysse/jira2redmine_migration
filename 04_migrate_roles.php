@@ -24,6 +24,7 @@ use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Cli\Script;
 use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
+use Jira2Redmine\Time\Clock;
 
 const MIGRATE_ROLES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -58,7 +59,7 @@ function main(array $config, array $cliOptions): void
 
     printf(
         "[%s] Selected phases: %s%s",
-        formatCurrentTimestamp(),
+        Clock::atom(),
         implode(', ', $phasesToRun),
         PHP_EOL
     );
@@ -73,13 +74,13 @@ function main(array $config, array $cliOptions): void
         $jiraConfig = ConfigValue::section($config, 'jira');
         $jiraClient = ClientFactory::jira($jiraConfig, 30.0);
 
-        printf("[%s] Starting Jira project role extraction...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Jira project role extraction...%s", Clock::atom(), PHP_EOL);
 
         $jiraSummary = fetchAndStoreJiraProjectRoles($jiraClient, $pdo);
 
         printf(
             "[%s] Completed Jira extraction. Roles processed: %d, Projects processed: %d, Actor rows captured: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $jiraSummary['roles_processed'],
             $jiraSummary['projects_processed'],
             $jiraSummary['actor_rows'],
@@ -88,7 +89,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping Jira role extraction (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -97,14 +98,14 @@ function main(array $config, array $cliOptions): void
         $redmineConfig ??= ConfigValue::section($config, 'redmine');
         $redmineClient = ClientFactory::redmine($redmineConfig, 30.0);
 
-        printf("[%s] Starting Redmine role snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting Redmine role snapshot...%s", Clock::atom(), PHP_EOL);
 
         $totalRedmineRoles = fetchAndStoreRedmineRoles($redmineClient, $pdo);
         $builtinGroups = fetchAndStoreRedmineBuiltinGroups($redmineClient, $pdo);
 
         printf(
             "[%s] Completed Redmine snapshot. %d role records processed, %d built-in group(s).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $totalRedmineRoles,
             $builtinGroups,
             PHP_EOL
@@ -112,20 +113,20 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping Redmine role snapshot (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
 
     if (in_array('transform', $phasesToRun, true)) {
-        printf("[%s] Starting role reconciliation & transform phase...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting role reconciliation & transform phase...%s", Clock::atom(), PHP_EOL);
 
         $transformSummary = runRoleTransformationPhase($pdo, $config);
 
         $roleSummary = $transformSummary['roles'];
         printf(
             "[%s] Role mapping summary -> Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $roleSummary['matched'],
             $roleSummary['ready_for_creation'],
             $roleSummary['manual_review'],
@@ -145,7 +146,7 @@ function main(array $config, array $cliOptions): void
         $assignmentSummary = $transformSummary['assignments'];
         printf(
             "[%s] Project role assignment summary -> Ready: %d, Recorded: %d, Awaiting project: %d, Awaiting group: %d, Awaiting role: %d, Manual: %d, Overrides kept: %d, Skipped: %d, Unchanged: %d.%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             $assignmentSummary['ready_for_assignment'],
             $assignmentSummary['already_recorded'],
             $assignmentSummary['awaiting_project'],
@@ -167,7 +168,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping transform phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -183,7 +184,7 @@ function main(array $config, array $cliOptions): void
     } else {
         printf(
             "[%s] Skipping push phase (disabled via CLI option).%s",
-            formatCurrentTimestamp(),
+            Clock::atom(),
             PHP_EOL
         );
     }
@@ -283,7 +284,7 @@ function refreshJiraRoleDefinitions(Client $client, PDO $pdo): int
     }
 
     $roles = [];
-    $timestamp = formatCurrentUtcTimestamp('Y-m-d H:i:s');
+    $timestamp = Clock::dateTime();
 
     foreach ($decoded as $role) {
         if (!is_array($role)) {
@@ -526,7 +527,7 @@ function refreshJiraProjectRoleActors(Client $client, PDO $pdo): array
                     'actor_display' => $actorDisplay,
                     'actor_type' => $normalizedType,
                     'raw_payload' => $rawPayload,
-                    'extracted_at' => formatCurrentUtcTimestamp('Y-m-d H:i:s'),
+                    'extracted_at' => Clock::dateTime(),
                 ]);
 
                 $actorRows++;
@@ -733,7 +734,7 @@ function fetchAndStoreRedmineRoles(Client $client, PDO $pdo): int
     }
 
     $roles = [];
-    $retrievedAt = formatCurrentUtcTimestamp('Y-m-d H:i:s');
+    $retrievedAt = Clock::dateTime();
 
     foreach ($decoded['roles'] as $role) {
         if (!is_array($role)) {
@@ -1955,7 +1956,7 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
     $pendingCount = count($pendingAssignments);
 
     if ($useExtendedApi) {
-        printf("[%s] Starting push phase (Redmine extended API)...%s", formatCurrentTimestamp(), PHP_EOL);
+        printf("[%s] Starting push phase (Redmine extended API)...%s", Clock::atom(), PHP_EOL);
 
         if ($pendingCount === 0) {
             printf("  No project role assignments are marked as READY_FOR_ASSIGNMENT.%s", PHP_EOL);
@@ -2194,7 +2195,7 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
     // Klassieke push fase (manual)
     // -----------------------------
 
-    printf("[%s] Starting push phase (manual assignment preview)...%s", formatCurrentTimestamp(), PHP_EOL);
+    printf("[%s] Starting push phase (manual assignment preview)...%s", Clock::atom(), PHP_EOL);
 
     if ($pendingCount === 0) {
         printf("  No project role assignments are marked as READY_FOR_ASSIGNMENT.%s", PHP_EOL);
@@ -2371,7 +2372,7 @@ function ensureWorkflowGroupRoles(PDO $pdo, bool $confirmPush, bool $isDryRun, a
                 'name' => $name,
                 'assignable' => 0,
                 'raw_payload' => json_encode($role, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-                'retrieved_at' => formatCurrentUtcTimestamp('Y-m-d H:i:s'),
+                'retrieved_at' => Clock::dateTime(),
             ]);
             printf("  [created] Workflow role \"%s\" -> Redmine role #%d.%s", $name, $id, PHP_EOL);
         }
@@ -2680,26 +2681,6 @@ function decodeJsonResponse(ResponseInterface $response): mixed
     } catch (JsonException $exception) {
         throw new RuntimeException('Unable to decode JSON response: ' . $exception->getMessage(), 0, $exception);
     }
-}
-
-/**
- * @param ?string $format
- * @return string
- */
-function formatCurrentTimestamp(?string $format = null): string
-{
-    $format ??= DateTimeInterface::ATOM;
-
-    return date($format);
-}
-
-/**
- * @param string $format
- * @return string
- */
-function formatCurrentUtcTimestamp(string $format): string
-{
-    return gmdate($format);
 }
 
 /**
