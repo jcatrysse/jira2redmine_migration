@@ -1138,7 +1138,7 @@ function replaceIssueLinksWithRedmineIds(
  * Vervang Atlassian account-links door "user#redmine_user_id" waar mogelijk.
  *
  * @param string $text
- * @param array<string,array{redmine_user_id:int}> $userLookup   // keys = jira_account_id
+ * @param array<string,array<string,mixed>> $userLookup   // keys = jira_account_id; a row without redmine_user_id is skipped
  * @return string
  */
 function replaceJiraUserLinksWithRedmineIds(string $text, array $userLookup): string

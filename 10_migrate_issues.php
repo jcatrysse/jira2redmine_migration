@@ -791,6 +791,11 @@ function fetchAndStoreJiraIssues(Client $client, PDO $pdo, array $config): array
                 ]);
 
                 if ($objectFieldDefinitions !== []) {
+                    // prepared above under the same condition
+                    /** @var PDOStatement $deleteObjectSamples */
+                    /** @var PDOStatement $deleteObjectKv */
+                    /** @var PDOStatement $insertObjectSample */
+                    /** @var PDOStatement $insertObjectKv */
                     $deleteObjectSamples->execute(['issue_key' => $issueKey]);
                     $deleteObjectKv->execute(['issue_key' => $issueKey]);
 
@@ -1103,6 +1108,8 @@ function isListArray(mixed $value): bool
 }
 
 /**
+ * @param array<string, mixed> $config
+ * @return array<string, mixed> the counts per outcome and status_counts
  * @throws Throwable
  */
 function runIssueTransformationPhase(PDO $pdo, array $config): array
@@ -1117,7 +1124,7 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
     $userLookup = buildUserLookup($pdo);
     $redmineUserIds = [];
     foreach ($userLookup as $accountId => $user) {
-        if (isset($user['redmine_user_id']) && $user['redmine_user_id'] !== null) {
+        if (isset($user['redmine_user_id'])) {
             $redmineUserIds[(string)$accountId] = (int)$user['redmine_user_id'];
         }
     }
@@ -1412,7 +1419,8 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
                 $cascadingWarnings = [];
                 $cascadingCustomFields = buildCascadingCustomFieldPayload($decodedIssue, $cascadingFieldIndex, $cascadingWarnings);
 
-                $mergedCustomFields = array_values(array_merge($proposedCustomFields, $cascadingCustomFields));
+                // both are lists: array_merge() gives a list
+                $mergedCustomFields = array_merge($proposedCustomFields, $cascadingCustomFields);
 
                 // Clean empty/invalid custom field entries (remove id-less entries, empty arrays, empty strings, etc.)
                 $mergedCustomFields = cleanCustomFieldEntries($mergedCustomFields);
@@ -1572,6 +1580,7 @@ function runIssueTransformationPhase(PDO $pdo, array $config): array
     return $summary;
 }
 /**
+ * @param array<string, mixed> $redmineConfig
  * @throws Throwable
  */
 function runIssuePushPhase(
@@ -1793,7 +1802,7 @@ function runIssuePushPhase(
         $jiraIssueId = (string)$candidate['jira_issue_id'];
 
         $attachmentSummary = summarizeAttachmentStatusesForIssue($pdo, $jiraIssueId);
-        if (($attachmentSummary['blocked'] ?? 0) > 0) {
+        if ($attachmentSummary['blocked'] > 0) {
             $creationUpdateStatement->execute([
                 'mapping_id' => $mappingId,
                 'redmine_issue_id' => null,
@@ -2237,6 +2246,10 @@ function recordPushedDescription(PDO $pdo, int $mappingId, ?string $description)
     $statement->execute(['h' => Relink::hash($description), 'm' => $mappingId]);
 }
 
+/**
+ * @phpstan-assert-if-true !null $subtaskOpenParentStatusId
+ * @phpstan-assert-if-true !null $parentRedmineId
+ */
 function shouldRetryWithOpenedParent(
     string $message,
     ?string $subtaskBehavior,
@@ -2579,7 +2592,7 @@ function fetchPreparedAttachmentUploads(PDO $pdo, string $jiraIssueId): array
             continue;
         }
 
-        $redmineAttachmentId = isset($row['redmine_attachment_id']) && $row['redmine_attachment_id'] !== null
+        $redmineAttachmentId = isset($row['redmine_attachment_id'])
             ? (int)$row['redmine_attachment_id']
             : null;
 
@@ -2657,6 +2670,7 @@ function countAssociationCandidates(PDO $pdo, string $jiraIssueId): int
  *     mapping_id: int, jira_attachment_id: string, filename: string, mime_type: ?string, size_bytes: ?int, redmine_upload_token: string,
  *     sharepoint_url: ?string
  * }> $attachments
+ * @param array<array-key, string> $finalNames Jira attachment id => the name Redmine stores
  * @return array<int, array<string, mixed>>
  */
 function buildIssueUploadPayload(array $attachments, array $finalNames = []): array
@@ -2726,7 +2740,7 @@ function buildSharePointAttachmentBlock(?string $description, array $sharePointL
 
     $lines = [];
     foreach ($sharePointLinks as $attachment) {
-        $url = trim((string)($attachment['sharepoint_url'] ?? ''));
+        $url = trim($attachment['sharepoint_url']);
         if ($url === '') {
             continue;
         }
@@ -2776,7 +2790,7 @@ function buildJiraIssueLinkBlock(?string $description, string $jiraIssueKey, ?st
 function markSharePointAttachmentsAsLinked(PDO $pdo, array $attachments, int $redmineIssueId): void
 {
     foreach ($attachments as $attachment) {
-        $note = isset($attachment['sharepoint_url']) && $attachment['sharepoint_url'] !== null
+        $note = isset($attachment['sharepoint_url'])
             ? sprintf('Attachment stored on SharePoint: %s', $attachment['sharepoint_url'])
             : 'Attachment stored on SharePoint.';
 
@@ -3216,7 +3230,7 @@ function buildRedmineAttachmentFilename(string $jiraAttachmentId, string $origin
  * @return array<string, array{
  *     parent_field_id: int, child_field_id: int, child_lookup: array<string,
  *     array{parent_option_id: int|null, child_option_id: int|null, parent_label: string, child_label: string}>,
- *     child_label_lookup: array<string, array<int, string>>, parent_options: array<string, int>, child_options: array<string, int>,
+ *     child_label_lookup: array<string, list<string>>, parent_options: array<string, string>, child_options: array<string, string>,
  *     parent_jira_options: array<string, int>
  * }>|array{}
  */
@@ -3294,7 +3308,7 @@ function buildCascadingFieldIndex(PDO $pdo): array
                     continue;
                 }
                 $name = isset($e['name']) ? (string)$e['name'] : (string)$e['label'];
-                if (!isset($e['id']) || $e['id'] === null) {
+                if (!isset($e['id'])) {
                     continue;
                 }
                 $id = (string)$e['id'];
@@ -3312,7 +3326,7 @@ function buildCascadingFieldIndex(PDO $pdo): array
                     continue;
                 }
                 $name = isset($e['name']) ? (string)$e['name'] : (string)$e['label'];
-                if (!isset($e['id']) || $e['id'] === null) {
+                if (!isset($e['id'])) {
                     continue;
                 }
                 $id = (string)$e['id'];
@@ -3466,7 +3480,7 @@ function buildCustomFieldMappingIndex(PDO $pdo): array
  * @param array<string, array{
  *     parent_field_id: int, child_field_id: int, child_lookup: array<string,
  *     array{parent_option_id: int|null, child_option_id: int|null, parent_label: string, child_label: string}>,
- *     child_label_lookup: array<string, array<int, string>>, parent_options: array<string, int>, child_options: array<string, int>,
+ *     child_label_lookup: array<string, list<string>>, parent_options: array<string, string>, child_options: array<string, string>,
  *     parent_jira_options: array<string, int>
  * }> $cascadingIndex
  * @param array<int, string> $warnings
@@ -3587,6 +3601,7 @@ function buildCascadingCustomFieldPayload(array $issuePayload, array $cascadingI
  *     enumeration_lookup: array<string, string>
  * }> $mappingIndex
  * @param array<int, string> $warnings
+ * @param array<array-key, string> $issueAttachments Jira attachment id => upload-unique name
  * @return array<int, array{id: int, value: string|array<int, string>}>|array{}
  */
 function buildMappedCustomFieldPayload(
@@ -3648,6 +3663,10 @@ function buildMappedCustomFieldPayload(
     return $result;
 }
 
+/**
+ * @param array<string, mixed> $issuePayload
+ * @param array<array-key, string> $issueAttachments Jira attachment id => upload-unique name
+ */
 function buildFormattedCustomFieldValue(
     array $issuePayload,
     string $jiraFieldId,
@@ -3720,7 +3739,7 @@ function appendResolutionCustomFieldPayload(
 
     $redmineFieldId = $resolutionMeta['redmine_custom_field_id'];
     foreach ($currentPayload as $entry) {
-        if (isset($entry['id']) && (int)$entry['id'] === $redmineFieldId) {
+        if ((int)$entry['id'] === $redmineFieldId) {
             return $currentPayload;
         }
     }
@@ -3771,7 +3790,7 @@ function resolveCustomFieldMappingByName(array $mappingIndex, string $fieldName)
 {
     $target = strtolower($fieldName);
     foreach ($mappingIndex as $meta) {
-        $name = strtolower((string)($meta['jira_field_name'] ?? ''));
+        $name = strtolower($meta['jira_field_name']);
         if ($name === $target) {
             return $meta;
         }
@@ -3944,6 +3963,9 @@ function normalizeCustomFieldSingleValue(string $fieldFormat, array $enumeration
     }
 }
 
+/**
+ * @return array<mixed>
+ */
 function normalizeToList(mixed $value): array
 {
     if ($value === null) {
@@ -3958,7 +3980,7 @@ function normalizeToList(mixed $value): array
 }
 
 /**
- * @param array<int, array<string,mixed>> $enumerations
+ * @param array<mixed> $enumerations the decoded enumerations of the custom field (JSON)
  * @return array<string, string>  // normalized_jira_value => redmine_option_id_or_label
  */
 function buildEnumerationLookup(array $enumerations): array
@@ -3981,7 +4003,7 @@ function buildEnumerationLookup(array $enumerations): array
 
         // option id, if present
         $redmineOptionId = null;
-        if (isset($entry['id']) && ($entry['id'] !== null && $entry['id'] !== '')) {
+        if (isset($entry['id']) && $entry['id'] !== '') {
             // store as string for consistency
             $redmineOptionId = (string)$entry['id'];
         }
@@ -4190,6 +4212,9 @@ function extractJiraCascadingSelection(mixed $rawValue): ?array
 
     return null;
 }
+/**
+ * @param array<array-key, array<string, mixed>> $lookup
+ */
 function resolveRedmineProjectId(array $lookup, string $jiraProjectId): ?int
 {
     if (!isset($lookup[$jiraProjectId])) {
@@ -4205,6 +4230,9 @@ function resolveRedmineProjectId(array $lookup, string $jiraProjectId): ?int
     return $row['redmine_project_id'] !== null ? (int)$row['redmine_project_id'] : null;
 }
 
+/**
+ * @param array<array-key, array<string, mixed>> $lookup
+ */
 function resolveRedmineTrackerId(array $lookup, string $jiraIssueTypeId): ?int
 {
     if (!isset($lookup[$jiraIssueTypeId])) {
@@ -4220,6 +4248,9 @@ function resolveRedmineTrackerId(array $lookup, string $jiraIssueTypeId): ?int
     return $row['redmine_tracker_id'] !== null ? (int)$row['redmine_tracker_id'] : null;
 }
 
+/**
+ * @param array<array-key, array<string, mixed>> $lookup
+ */
 function resolveRedmineStatusId(array $lookup, string $jiraStatusId): ?int
 {
     if (!isset($lookup[$jiraStatusId])) {
@@ -4235,6 +4266,9 @@ function resolveRedmineStatusId(array $lookup, string $jiraStatusId): ?int
     return $row['redmine_status_id'] !== null ? (int)$row['redmine_status_id'] : null;
 }
 
+/**
+ * @param array<array-key, array<string, mixed>> $lookup
+ */
 function resolveRedminePriorityId(array $lookup, string $jiraPriorityId): ?int
 {
     if (!isset($lookup[$jiraPriorityId])) {
@@ -4250,6 +4284,9 @@ function resolveRedminePriorityId(array $lookup, string $jiraPriorityId): ?int
     return $row['redmine_priority_id'] !== null ? (int)$row['redmine_priority_id'] : null;
 }
 
+/**
+ * @param array<array-key, array<string, mixed>> $lookup
+ */
 function resolveRedmineUserId(array $lookup, string $jiraAccountId): ?int
 {
     if ($jiraAccountId === '' || !isset($lookup[$jiraAccountId])) {
@@ -4326,6 +4363,7 @@ function computeIssueAutomationStateHash(
 }
 
 /**
+ * @return array<mixed>|null
  * @throws JsonException
  */
 function decodeCustomFieldPayload(mixed $payload): ?array
@@ -4341,7 +4379,7 @@ function decodeCustomFieldPayload(mixed $payload): ?array
 
 /**
  * @param array<string, mixed> $allowedValues
- * @return array|null
+ * @return array<string, mixed>|null
  */
 function parseCascadingAllowedValues(array $allowedValues): ?array
 {
@@ -4482,6 +4520,9 @@ function encodeJsonColumn(mixed $value): ?string
     }
 }
 
+/**
+ * @param array<mixed> $value
+ */
 function encodeJsonIfNotNull(array $value): ?string
 {
     if ($value === []) {
@@ -4830,6 +4871,9 @@ function buildExtendedIssueUpdateOverrides(array $candidate, ?int $defaultAuthor
     );
 }
 
+/**
+ * @param array<string, mixed> $config
+ */
 function extractDefaultIssueAuthorId(array $config): ?int
 {
     $migrationConfig = $config['migration'] ?? [];
@@ -4851,6 +4895,9 @@ function extractDefaultIssueAuthorId(array $config): ?int
     return $intValue > 0 ? $intValue : null;
 }
 
+/**
+ * @param array<string, mixed> $config
+ */
 function resolveJiraIssueBaseUrl(array $config): ?string
 {
     $migrationConfig = $config['migration'] ?? [];
@@ -4939,6 +4986,9 @@ function truncateString(string $value, int $maxLength): string
     return substr($trimmed, 0, $maxLength);
 }
 
+/**
+ * @return array<mixed>
+ */
 function decodeJsonResponse(ResponseInterface $response): array
 {
     $body = (string)$response->getBody();
@@ -5061,6 +5111,9 @@ function normalizeJiraEmptyValue(mixed $v): mixed
     return $v;
 }
 
+/**
+ * @param array<string, mixed> $node
+ */
 function renderAdfNodeToMarkdown(array $node): string
 {
     $type = $node['type'] ?? null;
@@ -5134,6 +5187,9 @@ function renderAdfNodeToMarkdown(array $node): string
     }
 }
 
+/**
+ * @param array<string, mixed> $node
+ */
 function renderAdfChildren(array $node, string $listPrefix): string
 {
     $content = $node['content'] ?? null;
@@ -5176,6 +5232,9 @@ function renderAdfChildren(array $node, string $listPrefix): string
     return $out;
 }
 
+/**
+ * @param array<string, mixed> $tableNode
+ */
 function renderAdfTableToMarkdown(array $tableNode): string
 {
     $rows = $tableNode['content'] ?? null;
@@ -5396,6 +5455,9 @@ SQL;
     return $new;
 }
 
+/**
+ * @param array<array-key, string> $issueAttachments Jira attachment id => upload-unique name
+ */
 function descriptionContainsAttachmentReference(string $description, array $issueAttachments): bool
 {
     $desc = $description;
@@ -5472,7 +5534,7 @@ function normalizeLabelKey(string $s): string
  * - if value is scalar: remove if null/empty-string
  * - ensure multi-values are arrays of non-empty strings, single-values are strings
  *
- * @param array<int,array{id:int, value: mixed}> $entries
+ * @param array<mixed> $entries
  * @return array<int,array{id:int, value: string|array<int,string>}>
  */
 function cleanCustomFieldEntries(array $entries): array
