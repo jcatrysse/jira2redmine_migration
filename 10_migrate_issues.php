@@ -27,6 +27,8 @@ use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\CustomFields\DecimalText;
 use Jira2Redmine\CustomFields\LabelManagerLabels;
 use Jira2Redmine\Users\DefaultAuthor;
+use Jira2Redmine\Cli\Script;
+use Jira2Redmine\Cli\ScriptCommandLines;
 
 const MIGRATE_ISSUES_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -34,10 +36,6 @@ const AVAILABLE_PHASES = [
     'transform' => 'Reconcile Jira issues with Redmine dependencies to populate migration mappings.',
     'push' => 'Create missing Redmine issues based on the mapping proposals.',
 ];
-
-if (PHP_SAPI !== 'cli') {
-    throw new RuntimeException('This script is intended to be run from the command line.');
-}
 
 require_once __DIR__ . '/lib/description_conversion.php';
 
@@ -174,39 +172,19 @@ function buildIssueUpdatePayloadForPreview(
     ];
 }
 
-$cliArguments = $_SERVER['argv'] ?? ($GLOBALS['argv'] ?? null);
-if (!is_array($cliArguments)) {
-    throw new RuntimeException('Unable to access the command-line arguments.');
-}
+require_once __DIR__ . '/lib/cli.php';
 
-try {
-    [$cliOptions, $positionalArguments] = parseCommandLineOptions($cliArguments);
-
-    if (!empty($cliOptions['help'])) {
-        printUsage();
-        exit(0);
+exit(Script::run(
+    $_SERVER['argv'] ?? ($GLOBALS['argv'] ?? null),
+    ScriptCommandLines::for(basename(__FILE__)),
+    'printUsage',
+    'printVersion',
+    static function (array $cliOptions): void {
+        /** @var array<string, mixed> $config */
+        $config = require __DIR__ . '/bootstrap.php';
+        main($config, $cliOptions);
     }
-
-    if (!empty($cliOptions['version'])) {
-        printVersion();
-        exit(0);
-    }
-
-    if ($positionalArguments !== []) {
-        throw new RuntimeException(sprintf(
-            'Unexpected positional arguments: %s',
-            implode(', ', $positionalArguments)
-        ));
-    }
-
-    /** @var array<string, mixed> $config */
-    $config = require __DIR__ . '/bootstrap.php';
-
-    main($config, $cliOptions);
-} catch (Throwable $exception) {
-    fwrite(STDERR, sprintf('[ERROR] %s%s', $exception->getMessage(), PHP_EOL));
-    exit(1);
-}
+));
 
 /**
  * @param array<string, mixed> $config
@@ -215,7 +193,7 @@ try {
  */
 function main(array $config, array $cliOptions): void
 {
-    $phasesToRun = determinePhasesToRun($cliOptions);
+    $phasesToRun = Phases::fromOptions(AVAILABLE_PHASES, $cliOptions);
 
     printf(
         "[%s] Selected phases: %s%s",
@@ -4861,81 +4839,6 @@ function extractErrorBody(ResponseInterface $response): string
 
     return $body;
 }
-/**
- * @param array<int, string> $argv
- * @return array{0: array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool}, 1: array<int, string>}
- */
-function parseCommandLineOptions(array $argv): array
-{
-    $options = [
-        'help' => false,
-        'version' => false,
-        'phases' => null,
-        'skip' => null,
-        'confirm_push' => false,
-        'dry_run' => false,
-        'use_extended_api' => false,
-    ];
-
-    $positional = [];
-    $argCount = count($argv);
-
-    for ($i = 1; $i < $argCount; $i++) {
-        $argument = $argv[$i];
-        if (!is_string($argument) || $argument === '') {
-            continue;
-        }
-
-        if ($argument === '-h' || $argument === '--help') {
-            $options['help'] = true;
-            continue;
-        }
-
-        if ($argument === '-V' || $argument === '--version') {
-            $options['version'] = true;
-            continue;
-        }
-
-        if (str_starts_with($argument, '--phases=')) {
-            $options['phases'] = substr($argument, 9) ?: null;
-            continue;
-        }
-
-        if (str_starts_with($argument, '--skip=')) {
-            $options['skip'] = substr($argument, 7) ?: null;
-            continue;
-        }
-
-        if ($argument === '--confirm-push') {
-            $options['confirm_push'] = true;
-            continue;
-        }
-
-        if ($argument === '--dry-run') {
-            $options['dry_run'] = true;
-            continue;
-        }
-
-        if ($argument === '--use-extended-api') {
-            $options['use_extended_api'] = true;
-            continue;
-        }
-
-        $positional[] = $argument;
-    }
-
-    return [$options, $positional];
-}
-
-/**
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool} $cliOptions
- * @return array<int, string>
- */
-function determinePhasesToRun(array $cliOptions): array
-{
-    return Phases::select(array_keys(AVAILABLE_PHASES), $cliOptions['phases'] ?? null, $cliOptions['skip'] ?? null);
-}
-
 function printUsage(): void
 {
     $script = basename(__FILE__);

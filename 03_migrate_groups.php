@@ -11,6 +11,8 @@ use Psr\Http\Message\ResponseInterface;
 use Jira2Redmine\Http\ClientFactory;
 use Jira2Redmine\Database\ConnectionFactory;
 use Jira2Redmine\Cli\Phases;
+use Jira2Redmine\Cli\Script;
+use Jira2Redmine\Cli\ScriptCommandLines;
 
 const MIGRATE_GROUPS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -20,43 +22,19 @@ const AVAILABLE_PHASES = [
     'push' => 'Create groups and assign missing members in Redmine via the REST API.',
 ];
 
-if (PHP_SAPI !== 'cli') {
-    throw new RuntimeException('This script is intended to be run from the command line.');
-}
+require_once __DIR__ . '/lib/cli.php';
 
-$cliArguments = $_SERVER['argv'] ?? ($GLOBALS['argv'] ?? null);
-if (!is_array($cliArguments)) {
-    throw new RuntimeException('Unable to access the command-line arguments.');
-}
-
-try {
-    [$cliOptions, $positionalArguments] = parseCommandLineOptions($cliArguments);
-
-    if (!empty($cliOptions['help'])) {
-        printUsage();
-        exit(0);
+exit(Script::run(
+    $_SERVER['argv'] ?? ($GLOBALS['argv'] ?? null),
+    ScriptCommandLines::for(basename(__FILE__)),
+    'printUsage',
+    'printVersion',
+    static function (array $cliOptions): void {
+        /** @var array<string, mixed> $config */
+        $config = require __DIR__ . '/bootstrap.php';
+        main($config, $cliOptions);
     }
-
-    if (!empty($cliOptions['version'])) {
-        printVersion();
-        exit(0);
-    }
-
-    if ($positionalArguments !== []) {
-        throw new RuntimeException(sprintf(
-            'Unexpected positional arguments: %s',
-            implode(', ', $positionalArguments)
-        ));
-    }
-
-    /** @var array<string, mixed> $config */
-    $config = require __DIR__ . '/bootstrap.php';
-
-    main($config, $cliOptions);
-} catch (Throwable $exception) {
-    fwrite(STDERR, sprintf('[ERROR] %s%s', $exception->getMessage(), PHP_EOL));
-    exit(1);
-}
+));
 
 /**
  * @param array<string, mixed> $config
@@ -65,7 +43,7 @@ try {
  */
 function main(array $config, array $cliOptions): void
 {
-    $phasesToRun = determinePhasesToRun($cliOptions);
+    $phasesToRun = Phases::fromOptions(AVAILABLE_PHASES, $cliOptions);
 
     $phaseSummary = [];
     foreach ($phasesToRun as $phaseKey) {
@@ -890,114 +868,6 @@ function extractRedmineErrorMessage(?ResponseInterface $response, string $fallba
     }
 
     return sprintf('HTTP %d: %s', $statusCode, $message);
-}
-
-/**
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool} $cliOptions
- * @return array<int, string>
- */
-function determinePhasesToRun(array $cliOptions): array
-{
-    return Phases::select(array_keys(AVAILABLE_PHASES), $cliOptions['phases'] ?? null, $cliOptions['skip'] ?? null);
-}
-
-/**
- * @param array<int, string> $argv
- * @return array{0: array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool}, 1: array<int, string>}
- */
-function parseCommandLineOptions(array $argv): array
-{
-    $options = [
-        'help' => false,
-        'version' => false,
-        'phases' => null,
-        'skip' => null,
-        'confirm_push' => false,
-        'dry_run' => false,
-    ];
-
-    $positionalArguments = [];
-    $argumentCount = count($argv);
-
-    for ($index = 1; $index < $argumentCount; $index++) {
-        $argument = $argv[$index];
-
-        if ($argument === '--') {
-            for ($nextIndex = $index + 1; $nextIndex < $argumentCount; $nextIndex++) {
-                $positionalArguments[] = $argv[$nextIndex];
-            }
-
-            break;
-        }
-
-        if ($argument === '-h' || $argument === '--help') {
-            $options['help'] = true;
-            continue;
-        }
-
-        if ($argument === '-V' || $argument === '--version') {
-            $options['version'] = true;
-            continue;
-        }
-
-        if ($argument === '--confirm-push') {
-            $options['confirm_push'] = true;
-            continue;
-        }
-
-        if ($argument === '--dry-run') {
-            $options['dry_run'] = true;
-            continue;
-        }
-
-        if ($argument === '--phases') {
-            $index++;
-            if ($index >= $argumentCount) {
-                throw new RuntimeException('The --phases option requires a value.');
-            }
-
-            $phaseValue = $argv[$index];
-            if (!is_string($phaseValue)) {
-                throw new RuntimeException('The --phases option expects string arguments.');
-            }
-
-            $options['phases'] = trim($phaseValue);
-            continue;
-        }
-
-        if (str_starts_with($argument, '--phases=')) {
-            $options['phases'] = trim(substr($argument, 9));
-            continue;
-        }
-
-        if ($argument === '--skip') {
-            $index++;
-            if ($index >= $argumentCount) {
-                throw new RuntimeException('The --skip option requires a value.');
-            }
-
-            $skipValue = $argv[$index];
-            if (!is_string($skipValue)) {
-                throw new RuntimeException('The --skip option expects string arguments.');
-            }
-
-            $options['skip'] = trim($skipValue);
-            continue;
-        }
-
-        if (str_starts_with($argument, '--skip=')) {
-            $options['skip'] = trim(substr($argument, 7));
-            continue;
-        }
-
-        if ($argument !== '' && $argument[0] === '-') {
-            throw new RuntimeException(sprintf('Unknown option provided: %s', $argument));
-        }
-
-        $positionalArguments[] = $argument;
-    }
-
-    return [$options, $positionalArguments];
 }
 
 function printUsage(): void

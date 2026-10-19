@@ -27,6 +27,8 @@ use Jira2Redmine\History\HistoryPush;
 use Jira2Redmine\History\HistoryRequest;
 use Jira2Redmine\History\IssueHistory;
 use Jira2Redmine\Users\DefaultAuthor;
+use Jira2Redmine\Cli\Script;
+use Jira2Redmine\Cli\ScriptCommandLines;
 const MIGRATE_JOURNALS_SCRIPT_VERSION = '0.0.1';
 const JIRA_RATE_LIMIT_MAX_RETRIES = 5;
 const JIRA_RATE_LIMIT_BASE_DELAY_MS = 1000;
@@ -37,45 +39,21 @@ const AVAILABLE_PHASES = [
     'history' => 'Write the Jira history of status, assignee and priority as Redmine journals (decision 41).',
 ];
 
-if (PHP_SAPI !== 'cli') {
-    throw new RuntimeException('This script is intended to be run from the command line.');
-}
-
 require_once __DIR__ . '/lib/description_conversion.php';
 
-$cliArguments = $_SERVER['argv'] ?? ($GLOBALS['argv'] ?? null);
-if (!is_array($cliArguments)) {
-    throw new RuntimeException('Unable to access the command-line arguments.');
-}
+require_once __DIR__ . '/lib/cli.php';
 
-try {
-    [$cliOptions, $positionalArguments] = parseCommandLineOptions($cliArguments);
-
-    if (!empty($cliOptions['help'])) {
-        printUsage();
-        exit(0);
+exit(Script::run(
+    $_SERVER['argv'] ?? ($GLOBALS['argv'] ?? null),
+    ScriptCommandLines::for(basename(__FILE__)),
+    'printUsage',
+    'printVersion',
+    static function (array $cliOptions): void {
+        /** @var array<string, mixed> $config */
+        $config = require __DIR__ . '/bootstrap.php';
+        main($config, $cliOptions);
     }
-
-    if (!empty($cliOptions['version'])) {
-        printVersion();
-        exit(0);
-    }
-
-    if ($positionalArguments !== []) {
-        throw new RuntimeException(sprintf(
-            'Unexpected positional arguments: %s',
-            implode(', ', $positionalArguments)
-        ));
-    }
-
-    /** @var array<string, mixed> $config */
-    $config = require __DIR__ . '/bootstrap.php';
-
-    main($config, $cliOptions);
-} catch (Throwable $exception) {
-    fwrite(STDERR, sprintf('[ERROR] %s%s', $exception->getMessage(), PHP_EOL));
-    exit(1);
-}
+));
 
 /**
  * @param array<string, mixed> $config
@@ -84,7 +62,7 @@ try {
  */
 function main(array $config, array $cliOptions): void
 {
-    $phasesToRun = determinePhasesToRun($cliOptions);
+    $phasesToRun = Phases::fromOptions(AVAILABLE_PHASES, $cliOptions);
 
     printf(
         "[%s] Selected phases: %s%s",
@@ -2611,80 +2589,6 @@ function extractArrayConfig(array $config, string $key): array
     }
 
     return $config[$key];
-}
-
-/**
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool} $cliOptions
- * @return list<string>
- */
-function determinePhasesToRun(array $cliOptions): array
-{
-    return Phases::select(array_keys(AVAILABLE_PHASES), $cliOptions['phases'] ?? null, $cliOptions['skip'] ?? null);
-}
-
-/**
- * @param array<int, string> $argv
- * @return array{0: array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_push: bool, dry_run: bool, use_extended_api: bool}, 1: list<string>}
- */
-function parseCommandLineOptions(array $argv): array
-{
-    $options = [
-        'help' => false,
-        'version' => false,
-        'phases' => null,
-        'skip' => null,
-        'confirm_push' => false,
-        'dry_run' => false,
-        'use_extended_api' => false,
-    ];
-
-    $arguments = [];
-
-    array_shift($argv);
-    foreach ($argv as $argument) {
-        if (!is_string($argument)) {
-            continue;
-        }
-
-        if ($argument === '--help') {
-            $options['help'] = true;
-            continue;
-        }
-
-        if ($argument === '--version') {
-            $options['version'] = true;
-            continue;
-        }
-
-        if ($argument === '--confirm-push') {
-            $options['confirm_push'] = true;
-            continue;
-        }
-
-        if ($argument === '--dry-run') {
-            $options['dry_run'] = true;
-            continue;
-        }
-
-        if ($argument === '--use-extended-api') {
-            $options['use_extended_api'] = true;
-            continue;
-        }
-
-        if (str_starts_with($argument, '--phases=')) {
-            $options['phases'] = substr($argument, 9);
-            continue;
-        }
-
-        if (str_starts_with($argument, '--skip=')) {
-            $options['skip'] = substr($argument, 7);
-            continue;
-        }
-
-        $arguments[] = $argument;
-    }
-
-    return [$options, $arguments];
 }
 
 /**

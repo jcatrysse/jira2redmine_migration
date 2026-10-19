@@ -56,10 +56,20 @@ final class PhasesTest extends TestCase
         foreach (glob(__DIR__ . '/../[0-9][0-9]_*.php') ?: [] as $script) {
             $source = (string)file_get_contents($script);
             self::assertStringContainsString(
-                "return Phases::select(array_keys(AVAILABLE_PHASES), \$cliOptions['phases'] ?? null, \$cliOptions['skip'] ?? null);",
+                '$phasesToRun = Phases::fromOptions(AVAILABLE_PHASES, $cliOptions);',
                 $source,
                 basename($script)
             );
         }
+    }
+
+    public function testTheParsedCommandLineChoosesThePhases(): void
+    {
+        $available = ['jira' => 'read', 'transform' => 'match', 'push' => 'write'];
+        self::assertSame(['jira', 'transform', 'push'], Phases::fromOptions($available, ['phases' => null, 'skip' => null]));
+        self::assertSame(['transform'], Phases::fromOptions($available, ['phases' => 'push,transform', 'skip' => 'push']));
+
+        $this->expectExceptionMessage('Unknown phase "pul" in --phases. Valid phases: jira, transform, push');
+        Phases::fromOptions($available, ['phases' => 'pul', 'skip' => null]);
     }
 }

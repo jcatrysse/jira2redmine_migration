@@ -19,6 +19,8 @@ use Jira2Redmine\Attachments\PullRetry;
 use Jira2Redmine\Cli\Phases;
 use Jira2Redmine\Attachments\CreatedAt;
 use Jira2Redmine\Users\DefaultAuthor;
+use Jira2Redmine\Cli\Script;
+use Jira2Redmine\Cli\ScriptCommandLines;
 const MIGRATE_ATTACHMENTS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
     'jira' => 'Synchronise Jira attachment metadata with the migration mapping table.',
@@ -27,43 +29,19 @@ const AVAILABLE_PHASES = [
     'push' => 'Upload prepared attachments to Redmine to obtain association tokens.',
 ];
 
-if (PHP_SAPI !== 'cli') {
-    throw new RuntimeException('This script is intended to be run from the command line.');
-}
+require_once __DIR__ . '/lib/cli.php';
 
-$cliArguments = $_SERVER['argv'] ?? ($GLOBALS['argv'] ?? null);
-if (!is_array($cliArguments)) {
-    throw new RuntimeException('Unable to access the command-line arguments.');
-}
-
-try {
-    [$cliOptions, $positionalArguments] = parseCommandLineOptions($cliArguments);
-
-    if (!empty($cliOptions['help'])) {
-        printUsage();
-        exit(0);
+exit(Script::run(
+    $_SERVER['argv'] ?? ($GLOBALS['argv'] ?? null),
+    ScriptCommandLines::for(basename(__FILE__)),
+    'printUsage',
+    'printVersion',
+    static function (array $cliOptions): void {
+        /** @var array<string, mixed> $config */
+        $config = require __DIR__ . '/bootstrap.php';
+        main($config, $cliOptions);
     }
-
-    if (!empty($cliOptions['version'])) {
-        printVersion();
-        exit(0);
-    }
-
-    if ($positionalArguments !== []) {
-        throw new RuntimeException(sprintf(
-            'Unexpected positional arguments: %s',
-            implode(', ', $positionalArguments)
-        ));
-    }
-
-    /** @var array<string, mixed> $config */
-    $config = require __DIR__ . '/bootstrap.php';
-
-    main($config, $cliOptions);
-} catch (Throwable $exception) {
-    fwrite(STDERR, sprintf('[ERROR] %s%s', $exception->getMessage(), PHP_EOL));
-    exit(1);
-}
+));
 
 /**
  * @param array<string, mixed> $config
@@ -72,7 +50,7 @@ try {
  */
 function main(array $config, array $cliOptions): void
 {
-    $phasesToRun = determinePhasesToRun($cliOptions);
+    $phasesToRun = Phases::fromOptions(AVAILABLE_PHASES, $cliOptions);
 
     printf(
         "[%s] Selected phases: %s%s",
@@ -1738,115 +1716,6 @@ function extractArrayConfig(array $config, string $key): array
     }
 
     return $config[$key];
-}
-
-/**
- * @param array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_pull: bool, confirm_push: bool, dry_run: bool, download_limit: ?int, upload_limit: ?int, use_extended_api: bool} $cliOptions
- * @return list<string>
- */
-function determinePhasesToRun(array $cliOptions): array
-{
-    return Phases::select(array_keys(AVAILABLE_PHASES), $cliOptions['phases'] ?? null, $cliOptions['skip'] ?? null);
-}
-
-/**
- * @param array<int, string> $argv
- * @return array{0: array{help: bool, version: bool, phases: ?string, skip: ?string, confirm_pull: bool, confirm_push: bool, dry_run: bool, download_limit: ?int, upload_limit: ?int, use_extended_api: bool}, 1: list<string>}
- */
-function parseCommandLineOptions(array $argv): array
-{
-    $options = [
-        'help' => false,
-        'version' => false,
-        'phases' => null,
-        'skip' => null,
-        'confirm_pull' => false,
-        'confirm_push' => false,
-        'dry_run' => false,
-        'download_limit' => null,
-        'upload_limit' => null,
-        'use_extended_api' => false,
-    ];
-
-    $arguments = [];
-
-    array_shift($argv);
-    foreach ($argv as $argument) {
-        if (!is_string($argument)) {
-            continue;
-        }
-
-        if ($argument === '--help') {
-            $options['help'] = true;
-            continue;
-        }
-
-        if ($argument === '--version') {
-            $options['version'] = true;
-            continue;
-        }
-
-        if ($argument === '--confirm-pull') {
-            $options['confirm_pull'] = true;
-            continue;
-        }
-
-        if ($argument === '--confirm-push') {
-            $options['confirm_push'] = true;
-            continue;
-        }
-
-        if ($argument === '--use-extended-api') {
-            $options['use_extended_api'] = true;
-            continue;
-        }
-
-        if ($argument === '--dry-run') {
-            $options['dry_run'] = true;
-            continue;
-        }
-
-        if (str_starts_with($argument, '--phases=')) {
-            $options['phases'] = substr($argument, 9);
-            continue;
-        }
-
-        if (str_starts_with($argument, '--skip=')) {
-            $options['skip'] = substr($argument, 7);
-            continue;
-        }
-
-        if (str_starts_with($argument, '--download-limit=')) {
-            $value = substr($argument, 17);
-            $options['download_limit'] = parsePositiveIntOption($value, '--download-limit');
-            continue;
-        }
-
-        if (str_starts_with($argument, '--upload-limit=')) {
-            $value = substr($argument, 15);
-            $options['upload_limit'] = parsePositiveIntOption($value, '--upload-limit');
-            continue;
-        }
-
-        $arguments[] = $argument;
-    }
-
-    return [$options, $arguments];
-}
-
-function parsePositiveIntOption(string $value, string $optionName): int
-{
-    $trimmed = trim($value);
-    if ($trimmed === '' || !preg_match('/^\d+$/', $trimmed)) {
-        throw new RuntimeException(sprintf('Invalid %s value: %s', $optionName, $value));
-    }
-
-    $intValue = (int)$trimmed;
-    if ($intValue <= 0) {
-        throw new RuntimeException(sprintf('%s expects a positive integer.', $optionName));
-    }
-
-    return $intValue;
 }
 
 function normalizeInteger(mixed $value, int $min = PHP_INT_MIN, ?int $max = null): ?int

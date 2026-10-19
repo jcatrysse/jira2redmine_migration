@@ -16,6 +16,21 @@ use RuntimeException;
 final class Phases
 {
     /**
+     * The phases the parsed command line chose (CommandLine: --phases and --skip).
+     *
+     * @param array<string, string> $available the script's AVAILABLE_PHASES, phase => description, in its order
+     * @param array<string, mixed> $cliOptions
+     * @return list<string>
+     */
+    public static function fromOptions(array $available, array $cliOptions): array
+    {
+        $phases = $cliOptions['phases'] ?? null;
+        $skip = $cliOptions['skip'] ?? null;
+
+        return self::select(array_keys($available), is_string($phases) ? $phases : null, is_string($skip) ? $skip : null);
+    }
+
+    /**
      * @param list<string> $available the script's phases, in the order it runs them
      * @return list<string>
      */
