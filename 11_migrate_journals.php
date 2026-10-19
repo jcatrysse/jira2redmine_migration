@@ -1041,10 +1041,12 @@ function fetchPushableComments(PDO $pdo): array
             c.body_html,
             c.created_at,
             c.updated_at,
-            c.raw_payload
+            c.raw_payload,
+            ji.updated_at AS issue_updated_at
         FROM migration_mapping_journals map
         JOIN staging_jira_comments c ON c.id = map.jira_entity_id AND map.entity_type = 'COMMENT'
         JOIN migration_mapping_issues issue_map ON issue_map.jira_issue_id = map.jira_issue_id
+        LEFT JOIN staging_jira_issues ji ON ji.id = map.jira_issue_id
         WHERE map.migration_status = 'READY_FOR_PUSH'
           AND issue_map.redmine_issue_id IS NOT NULL
         ORDER BY c.created_at, map.mapping_id
@@ -1079,10 +1081,12 @@ function fetchPushableChangelog(PDO $pdo): array
             map.proposed_updated_on,
             h.author_account_id,
             h.created_at,
-            h.items_json
+            h.items_json,
+            ji.updated_at AS issue_updated_at
         FROM migration_mapping_journals map
         JOIN staging_jira_changelogs h ON h.id = map.jira_entity_id AND map.entity_type = 'CHANGELOG'
         JOIN migration_mapping_issues issue_map ON issue_map.jira_issue_id = map.jira_issue_id
+        LEFT JOIN staging_jira_issues ji ON ji.id = map.jira_issue_id
         WHERE map.migration_status = 'READY_FOR_PUSH'
           AND issue_map.redmine_issue_id IS NOT NULL
         ORDER BY h.created_at, map.mapping_id
@@ -1415,7 +1419,8 @@ function processCommentPush(
         )
         : [];
 
-    $issueUpdatedOn = $useExtendedApi ? buildIssueUpdatedOnOverride($updatedAt ?? $createdAt) : null;
+    // the issue keeps Jira's updated time, as 10 set it: a journal does not move it (decision 41)
+    $issueUpdatedOn = $useExtendedApi ? buildIssueUpdatedOnOverride($comment['issue_updated_at'] ?? $updatedAt ?? $createdAt) : null;
 
     if ($useExtendedApi && $journalOverrides !== []) {
         $issuePayload = ['notes' => $note, 'journal' => $journalOverrides];
@@ -1614,7 +1619,8 @@ function processChangelogPush(
         )
         : [];
 
-    $issueUpdatedOn = $useExtendedApi ? buildIssueUpdatedOnOverride($createdAt) : null;
+    // the issue keeps Jira's updated time, as 10 set it: a journal does not move it (decision 41)
+    $issueUpdatedOn = $useExtendedApi ? buildIssueUpdatedOnOverride($history['issue_updated_at'] ?? $createdAt) : null;
 
     if ($useExtendedApi && $journalOverrides !== []) {
         $issuePayload = ['notes' => $baseNote, 'journal' => $journalOverrides];
