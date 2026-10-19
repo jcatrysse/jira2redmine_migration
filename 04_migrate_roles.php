@@ -908,6 +908,7 @@ SQL;
 
 /**
  * @param array<string, mixed> $rolesConfig migration.roles
+ * @param array<string, mixed> $workflowsConfig
  */
 function synchronizeMigrationMappingProjectRoleGroups(PDO $pdo, array $rolesConfig, array $workflowsConfig = []): void
 {
@@ -2044,6 +2045,7 @@ SQL;
  * @param bool $isDryRun
  * @param array<string,mixed> $redmineConfig
  * @param bool $useExtendedApi
+ * @param array<string, mixed> $workflowsConfig
  * @return void
  * @throws Throwable
  */
@@ -2103,19 +2105,7 @@ function runRolePushPhase(
                 PHP_EOL
             );
 
-            $warnings = [];
-            if ($assignment['redmine_project_id'] === null) {
-                $warnings[] = 'missing Redmine project mapping';
-            }
-            if ($assignment['redmine_group_id'] === null) {
-                $warnings[] = 'missing Redmine group mapping';
-            }
-            if ($assignment['redmine_role_id'] === null) {
-                $warnings[] = 'missing Redmine role mapping';
-            }
-            if ($warnings !== []) {
-                printf("    Warning: %s.%s", implode(', ', $warnings), PHP_EOL);
-            }
+            // fetchPendingRoleAssignments() keeps only rows with a Redmine project, group and role: no warning to give
 
             if ($assignment['notes'] !== null) {
                 printf("    Notes: %s%s", $assignment['notes'], PHP_EOL);
@@ -2200,20 +2190,7 @@ function runRolePushPhase(
                 $assignment['jira_project_id']
             );
 
-            if ($projectId === null || $groupId === null || $roleId === null) {
-                $errorMessage = 'Missing Redmine project/group/role identifiers for automatic assignment.';
-                $record($assignment, 'MANUAL_INTERVENTION_REQUIRED', $errorMessage);
-                printf(
-                    "  [skipped] Project %s, Jira role %s: %s%s",
-                    $projectReference,
-                    $assignment['jira_role_name'] ?? ('Role #' . $assignment['jira_role_id']),
-                    $errorMessage,
-                    PHP_EOL
-                );
-                $failureCount++;
-                continue;
-            }
-
+            // the project, group and role ids are always there (fetchPendingRoleAssignments)
             try {
                 if (!isset($membershipsByProject[$projectId])) {
                     $membershipsByProject[$projectId] = fetchRedmineProjectMemberships($redmineClient, $projectId);
@@ -2252,7 +2229,7 @@ function runRolePushPhase(
                         sprintf('memberships/%d.json', $membership['id']),
                         ['json' => ['membership' => ['role_ids' => $plan['role_ids']]]]
                     );
-                    $membershipsByProject[$projectId][$groupId]['role_ids'] = $plan['role_ids'];
+                    $membershipsByProject[$projectId][$groupId] = ['id' => $membership['id'], 'role_ids' => $plan['role_ids']];
                     $updatedCount++;
                 }
 

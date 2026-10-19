@@ -565,6 +565,9 @@ function applyAttachmentSample(PDO $pdo, bool $enabled): array
     return $result;
 }
 
+/**
+ * @return array{new_mappings: int, relinked: int}
+ */
 function syncAttachmentMappings(PDO $pdo): array
 {
     $insertSql = <<<SQL
@@ -616,6 +619,7 @@ function syncAttachmentMappings(PDO $pdo): array
 }
 
 /**
+ * @param array<string, mixed> $config
  * @return array{queued: int, downloaded: int, failed: int}
  */
 function downloadPendingJiraAttachments(Client $client, PDO $pdo, array $config, ?int $limit = null): array
@@ -904,6 +908,11 @@ function downloadPendingJiraAttachments(Client $client, PDO $pdo, array $config,
 }
 
 /**
+ * @param array{
+ *     offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string,
+ *     folder_path: string, graph_base_url: string, chunk_size_bytes: int
+ * }|null $sharePointConfig
+ * @param array<string, array{redmine_user_id: int}> $userLookup
  * @return array{queued: int, uploaded: int, sharepoint_uploaded: int, failed: int}
  */
 function uploadPendingAttachmentsToRedmine(
@@ -1035,7 +1044,7 @@ SQL);
         }
 
         $stat = fstat($handle);
-        if ($stat === false || !isset($stat['size'])) {
+        if ($stat === false) {
             fclose($handle);
             $updateStatement->execute([
                 'migration_status' => 'FAILED',
@@ -1184,7 +1193,7 @@ SQL);
 
 /**
  * @param array<string, array{redmine_user_id: int}> $userLookup
- * @return array<string, string>
+ * @return array<string, int|string>
  */
 function buildAttachmentOverrideQuery(
     ?string $authorAccountId,
@@ -1227,7 +1236,7 @@ function buildRedmineUserLookup(PDO $pdo): array
             continue;
         }
 
-        if (!isset($row['jira_account_id'], $row['redmine_user_id']) || $row['redmine_user_id'] === null) {
+        if (!isset($row['jira_account_id'], $row['redmine_user_id'])) {
             continue;
         }
 
@@ -1249,6 +1258,9 @@ function resolveRedmineUserId(array $lookup, ?string $jiraAccountId, ?int $defau
     return $defaultAuthorId;
 }
 
+/**
+ * @param array<string, mixed> $config
+ */
 function resolveAttachmentWorkingDirectory(array $config): string
 {
     $paths = $config['paths'] ?? [];
@@ -1478,10 +1490,8 @@ function shouldUploadToSharePoint(?array $sharePointConfig, ?Client $sharePointC
         return false;
     }
 
-    $threshold = $sharePointConfig['offload_threshold_bytes'] ?? null;
-    if ($threshold === null) {
-        return false;
-    }
+    // extractSharePointConfig() always sets the threshold
+    $threshold = $sharePointConfig['offload_threshold_bytes'];
 
     $sizeToCompare = $reportedSize ?? $actualSize;
 
@@ -1493,6 +1503,7 @@ function shouldUploadToSharePoint(?array $sharePointConfig, ?Client $sharePointC
  *     offload_threshold_bytes: int, tenant_id: string, client_id: string, client_secret: string, site_id: string, drive_id: string,
  *     folder_path: string, graph_base_url: string, chunk_size_bytes: int
  * } $sharePointConfig
+ * @param resource $handle
  */
 function uploadAttachmentToSharePoint(
     Client &$client,
@@ -1837,8 +1848,9 @@ function extractRedmineAttachmentIdFromToken(string $token): ?int
         return null;
     }
 
+    // $dotPos > 0: the prefix has at least one character
     $prefix = substr($token, 0, $dotPos);
-    if ($prefix === '' || preg_match('/^\d+$/', $prefix) !== 1) {
+    if (preg_match('/^\d+$/', $prefix) !== 1) {
         return null;
     }
 

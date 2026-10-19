@@ -101,6 +101,7 @@ function printVersion(): void
 }
 
 /**
+ * @param array<string, mixed> $config
  * @throws Throwable
  */
 function runRelationTransformPhase(PDO $pdo, array $config): void
@@ -169,10 +170,10 @@ function runRelationTransformPhase(PDO $pdo, array $config): void
             continue;
         }
 
-        $sourceRedmineId = isset($row['source_redmine_issue_id']) && $row['source_redmine_issue_id'] !== null
+        $sourceRedmineId = isset($row['source_redmine_issue_id'])
             ? (int)$row['source_redmine_issue_id']
             : null;
-        $targetRedmineId = isset($row['target_redmine_issue_id']) && $row['target_redmine_issue_id'] !== null
+        $targetRedmineId = isset($row['target_redmine_issue_id'])
             ? (int)$row['target_redmine_issue_id']
             : null;
 
@@ -499,7 +500,8 @@ function fetchRelationMappings(PDO $pdo): array
 }
 
 /**
- * @return array<string, mixed>
+ * @param array<string, mixed> $config
+ * @return array<mixed>
  */
 function extractCustomRelationMappings(array $config): array
 {
@@ -530,10 +532,6 @@ function buildSupportedRelationTypes(array $customMappings): array
     $types = REDMINE_RELATION_TYPES;
 
     foreach ($customMappings as $mapping) {
-        if (!is_array($mapping)) {
-            continue;
-        }
-
         foreach (['outward', 'inward'] as $direction) {
             $value = $mapping[$direction] ?? null;
             if (is_string($value) && trim($value) !== '') {
@@ -546,6 +544,8 @@ function buildSupportedRelationTypes(array $customMappings): array
 }
 
 /**
+ * @param array<string, array{outward: ?string, inward: ?string}> $customMappings
+ * @param array<int, string> $supportedRelationTypes
  * @return array{relation_type: string, note: ?string}
  */
 function mapJiraRelationToRedmineType(
@@ -594,6 +594,7 @@ function mapJiraRelationToRedmineType(
 }
 
 /**
+ * @param array<mixed> $customMappings
  * @return array<string, array{outward: ?string, inward: ?string}>
  */
 function normalizeCustomRelationMappings(array $customMappings): array
@@ -638,6 +639,9 @@ function normalizeRelationTypeValue(mixed $value): ?string
     return $trimmed !== '' ? $trimmed : null;
 }
 
+/**
+ * @param array<string, array{outward: ?string, inward: ?string}> $customMappings
+ */
 function resolveCustomRelationType(
     ?string $name,
     ?string $outward,
@@ -712,6 +716,9 @@ function mapJiraDescriptionToRelationType(string $description, bool $isOutward):
     return null;
 }
 
+/**
+ * @param array<int, string> $supportedRelationTypes
+ */
 function isSupportedRedmineRelationType(string $relationType, array $supportedRelationTypes): bool
 {
     return in_array($relationType, $supportedRelationTypes, true);
@@ -757,6 +764,9 @@ function mergeNotes(?string $current, ?string $addition): ?string
     return $current . ' ' . $addition;
 }
 
+/**
+ * @return array<mixed>
+ */
 function decodeJsonResponse(ResponseInterface $response): array
 {
     $body = (string)$response->getBody();
@@ -793,6 +803,9 @@ function extractErrorBody(ResponseInterface $response): string
     return trim($body);
 }
 
+/**
+ * @return array{relation: array{issue_to_id: int, relation_type: string}, notify?: false, skip_journal?: true}
+ */
 function buildRelationPayload(int $issueToId, string $relationType, bool $includeNotify): array
 {
     $payload = [

@@ -202,7 +202,13 @@ function fetchAndStoreJiraIssueStatuses(Client $client, PDO $pdo): int
 
         return $page;
     });
-    $projectIds = array_map('strval', $pdo->query('SELECT id FROM staging_jira_projects')->fetchAll(PDO::FETCH_COLUMN));
+    $projectStatement = $pdo->query('SELECT id FROM staging_jira_projects');
+    if ($projectStatement === false) {
+        // the connection throws on errors (ConnectionFactory): never false
+        throw new RuntimeException('Failed to read the staged Jira projects.');
+    }
+    /** @var list<string> $projectIds */
+    $projectIds = array_map('strval', $projectStatement->fetchAll(PDO::FETCH_COLUMN));
     if ($projectIds === []) {
         printf("  [warn] No staged Jira projects (run 01 first): only the statuses Jira lists are read.%s", PHP_EOL);
     }
@@ -233,10 +239,6 @@ function fetchAndStoreJiraIssueStatuses(Client $client, PDO $pdo): int
 
     try {
         foreach ($decoded as $status) {
-            if (!is_array($status)) {
-                continue;
-            }
-
             $statusId = isset($status['id']) ? (string)$status['id'] : '';
             $name = normalizeString($status['name'] ?? null, 255);
 
@@ -572,7 +574,8 @@ function runStatusTransformationPhase(PDO $pdo): array
             $summary['matched']++;
         } elseif ($newStatus === 'READY_FOR_CREATION' && $newStatus !== $currentStatus) {
             $summary['ready_for_creation']++;
-        } elseif ($newStatus === 'MANUAL_INTERVENTION_REQUIRED' && $newStatus !== $currentStatus) {
+        } elseif ($newStatus === 'MANUAL_INTERVENTION_REQUIRED') {
+            // the status read is one of $allowedStatuses: MANUAL_INTERVENTION_REQUIRED is always new
             $summary['manual_review']++;
         }
     }
@@ -621,7 +624,7 @@ function refreshStatusMetadata(PDO $pdo): void
 }
 
 /**
- * @return array<string, array{id: int, name: string, is_closed: mixed}>
+ * @return array<string, array<string, mixed>> the staging rows by lowercase name
  */
 function buildRedmineStatusLookup(PDO $pdo): array
 {
@@ -713,6 +716,9 @@ function computeStatusAutomationStateHash(
     return hash('sha256', $json);
 }
 
+/**
+ * @return array<string, int>
+ */
 function fetchStatusMigrationStatusCounts(PDO $pdo): array
 {
     try {
@@ -741,6 +747,9 @@ function fetchStatusMigrationStatusCounts(PDO $pdo): array
     return $results;
 }
 
+/**
+ * @param array<string, mixed> $redmineConfig
+ */
 function runStatusPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $redmineConfig, bool $useExtendedApi): void
 {
     $pendingStatuses = fetchStatusesReadyForCreation($pdo);
@@ -980,6 +989,9 @@ function runStatusPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $
     );
 }
 
+/**
+ * @return array<int, array<string, mixed>>
+ */
 function fetchStatusesReadyForCreation(PDO $pdo): array
 {
     $sql = <<<SQL

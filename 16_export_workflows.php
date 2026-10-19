@@ -226,7 +226,7 @@ function exportWorkflowSchemeProjects(Client $client, PDO $pdo): void
         $payload = decodeJsonResponse(
             jiraGetWithRetry($client, '/rest/api/3/workflowscheme/project?' . $query, [], 'projects', 'workflow-scheme-project')
         );
-        foreach (is_array($payload) ? ($payload['values'] ?? []) : [] as $entry) {
+        foreach ($payload['values'] ?? [] as $entry) {
             $scheme = is_array($entry['workflowScheme'] ?? null) ? $entry['workflowScheme'] : [];
             foreach ($entry['projectIds'] ?? [] as $projectId) {
                 $statement->execute([
@@ -295,7 +295,7 @@ function exportIssueTypes(Client $client, PDO $pdo): void
 {
     $response = jiraGetWithRetry($client, '/rest/api/3/issuetype', [], 'issuetypes', 'issue-types');
     $payload = decodeJsonResponse($response);
-    $items = is_array($payload) ? $payload : [];
+    $items = $payload;
 
     $statement = $pdo->prepare(<<<SQL
         INSERT INTO staging_jira_issue_types_export (
@@ -523,10 +523,6 @@ function exportProjectRoles(Client $client, PDO $pdo): void
         $response = jiraGetWithRetry($client, sprintf('/rest/api/3/project/%s/role', $projectId), [], $projectId, 'project-roles');
         $payload = decodeJsonResponse($response);
 
-        if (!is_array($payload)) {
-            continue;
-        }
-
         foreach ($payload as $roleName => $roleUrl) {
             if (!is_string($roleUrl)) {
                 continue;
@@ -575,7 +571,7 @@ function exportFields(Client $client, PDO $pdo): void
 {
     $response = jiraGetWithRetry($client, '/rest/api/3/field', [], 'fields', 'fields');
     $payload = decodeJsonResponse($response);
-    $items = is_array($payload) ? $payload : [];
+    $items = $payload;
 
     $statement = $pdo->prepare(<<<SQL
         INSERT INTO staging_jira_fields_export (
@@ -691,7 +687,7 @@ function exportScreens(Client $client, PDO $pdo): void
 
         $tabsResponse = jiraGetWithRetry($client, sprintf('/rest/api/3/screens/%s/tabs', $screenId), [], $screenId, 'screen-tabs');
         $tabsPayload = decodeJsonResponse($tabsResponse);
-        $tabs = is_array($tabsPayload) ? $tabsPayload : [];
+        $tabs = $tabsPayload;
 
         foreach ($tabs as $tab) {
             if (!is_array($tab)) {
@@ -717,7 +713,7 @@ function exportScreens(Client $client, PDO $pdo): void
                 'screen-tab-fields'
             );
             $fieldsPayload = decodeJsonResponse($fieldsResponse);
-            $fields = is_array($fieldsPayload) ? $fieldsPayload : [];
+            $fields = $fieldsPayload;
             foreach ($fields as $field) {
                 if (!is_array($field)) {
                     continue;
@@ -941,6 +937,7 @@ function exportFieldConfigurationSchemes(Client $client, PDO $pdo): void
 }
 
 /**
+ * @param array<string, mixed> $extraQuery
  * @return array<int, array<string, mixed>>
  */
 function fetchPagedItems(Client $client, string $path, string $valuesKey, array $extraQuery = []): array
@@ -981,8 +978,9 @@ function extractRoleIdFromUrl(string $url): ?string
 {
     $trimmed = rtrim($url, '/');
     $parts = explode('/', $trimmed);
+    // explode() gives at least one part: end() is never false
     $id = end($parts);
-    if ($id === false || $id === '') {
+    if ($id === '') {
         return null;
     }
 
@@ -990,6 +988,7 @@ function extractRoleIdFromUrl(string $url): ?string
 }
 
 /**
+ * @param array<string, mixed> $options
  * @throws BadResponseException
  * @throws GuzzleException
  */
@@ -1057,7 +1056,7 @@ function calculateRateLimitDelayMs(int $attempt, ?int $retryAfterSeconds): int
 
 /**
  * @param ResponseInterface $response
- * @return array<string, mixed>
+ * @return array<mixed> an object's numeric keys come back as int
  */
 function decodeJsonResponse(ResponseInterface $response): array
 {

@@ -11,7 +11,7 @@ echo "php -l: ok"
 vendor/bin/phpunit
 php tools/bin/phpstan.phar analyse --no-progress --memory-limit=1G
 # The scripts, one analysis each (phpstan-scripts.neon), each with its own cache. Phase 6 adds them as they are clean.
-analysed='01 02 06 13 14 15'
+analysed='01 02 04 05 06 09 12 13 14 15 16'
 mkdir -p tools/bin/phpstan
 scripts=$(for n in $analysed; do ls ${n}_*.php; done)
 for script in $scripts; do
