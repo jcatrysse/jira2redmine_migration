@@ -78,7 +78,9 @@ order (2026-10-15): upgrade first, check, then migrate Jira into 7.0 (Part B).
 
 Proven in the cloud test environment: a 5.1-stable-GEOxyz database with the 44 production plugins and
 seeded data (not production data), upgraded in place to 7.0-stable-GEOxyz `71b9479` with the 44 plugins on
-`redmine70-migration`. `db:migrate` and `redmine:plugins:migrate` exit 0 with no manual workaround; the schema
+`redmine70-migration`. Since 2026-10-19 the tested core is `7310d11` (the merge of upstream 7.0-stable `37012d5`: no
+conflicts, no migrations, no gem changes; core suite 6,270 runs, 0 failures); the 44-plugin set is being run again on
+it, and the result goes here. `db:migrate` and `redmine:plugins:migrate` exit 0 with no manual workaround; the schema
 equals a fresh 7.0 install apart from column details without effect (datetime precision); row counts equal;
 the workflow answers of 35 sample transitions identical before and after; 900 pages crawled as admin and as a
 manager, 0 server errors (5.1 itself had 16); 13 of 13 write actions pass. Each plugin's suite is green with
@@ -115,9 +117,28 @@ A clone of the production VM carries production's configuration. Before its Redm
   Jira migration's staging MariaDB of Part B is a separate, temporary database.
 - **Redmine runs as an unprivileged user** (Passenger or Puma). redmine_reporter_dashboards renders PDF with
   headless Chromium, which refuses to run as root.
-- **Tools on the server**: `pandoc` (core Office preview, more_previews "mark"), LibreOffice `soffice`
-  (more_previews "libre"); ImageMagick and Ghostscript only if more_previews "maggie" stays on (it is off after
-  the hand-over task in A.5). Chromium for reporter_dashboards PDF.
+- **Tools on the server**: `pandoc` (core Office preview, more_previews "mark"); ImageMagick and Ghostscript only
+  if more_previews "maggie" stays on (it is off after the hand-over task in A.5). Chromium for reporter_dashboards
+  PDF. For more_previews "libre" (redmine_more_previews `c2b8c27`, Jan 2026-10-19: Libre runs only inside a
+  bubblewrap sandbox, without a fallback; without a working sandbox Libre refuses and stays off):
+  - LibreOffice from the distribution, exposing `/usr/bin/soffice`
+    (`apt install libreoffice-writer libreoffice-calc libreoffice-impress` plus the fonts in use); a TDF .deb under
+    `/opt` reached through PATH is not supported by the sandbox.
+  - `apt install bubblewrap`. On Ubuntu 23.10 and later (24.04 included) `kernel.apparmor_restrict_unprivileged_userns=1`
+    blocks bwrap for non-root users. The narrowest fix: if `/etc/apparmor.d/bwrap-userns-restrict` exists, make sure
+    it is loaded (`aa-status | grep bwrap`); otherwise create `/etc/apparmor.d/bwrap` with
+
+    ```text
+    abi <abi/4.0>,
+    include <tunables/global>
+    profile bwrap /usr/bin/bwrap flags=(unconfined) {
+      userns,
+      include if exists <local/bwrap>
+    }
+    ```
+
+    and load it with `apparmor_parser -r /etc/apparmor.d/bwrap`. Do not switch the sysctl off system-wide.
+    `user.max_user_namespaces` must be above 0.
 - **Web server**: https; WebSocket upgrade on `/rup_cable` (redmine_zenedit's editing indicator, redmine_agile
   live boards), e.g. nginx `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header
   Connection $connection_upgrade; proxy_set_header X-Forwarded-Proto https;`. With a Content-Security-Policy:
@@ -129,8 +150,8 @@ A clone of the production VM carries production's configuration. Before its Redm
 
 ### A.3 What to deploy
 
-Core: `jcatrysse/redmine`, branch `7.0-stable-GEOxyz` (rehearsal: the commit named in the report; production:
-the same commit). Plugins: one directory per row; **the directory name matters** (it is the plugin id stored in
+Core: `jcatrysse/redmine`, branch `7.0-stable-GEOxyz`, tested at `7310d11` (rehearsal: the commit named in the
+report; production: the same commit). Plugins: one directory per row; **the directory name matters** (it is the plugin id stored in
 the database). Rehearsal: branch `redmine70-migration`; production: `main`/`master` after Jan's merge
 (decision of 2026-10-15), whose tree the coordinator checks is identical to the tested one.
 
@@ -233,7 +254,9 @@ The upgrade (rehearsal and production alike):
    `DRY_RUN`, and a third time (only `unchanged`). Then remove `plugins/redmine_user_specific_theme`. If the
    global theme was PurpleMine2: Administration > Settings > Display > Theme = Opale.
 10. Assets and caches: `rm -rf public/assets`, `RAILS_ENV=production bundle exec rake assets:precompile`,
-    `rm -rf tmp/more_previews/*`, `rm -rf public/plugin_assets/calendar_events_daily`.
+    `RAILS_ENV=production bundle exec rake redmine_more_previews:cache:clean DAYS=0 CONFIRM_PURGE_ALL=1` (the cache
+    identity changed; upstream's opt-in purge of every preview cache, skipping previews in use; the daily `DAYS=30`
+    cron of A.6 stays), `rm -rf public/plugin_assets/calendar_events_daily`.
 11. Rehearsal only: `UPDATE webhooks SET active = false;` (A.1). Then start Redmine as its user.
 
 ### A.5 After the upgrade, before users log in
@@ -247,21 +270,22 @@ else is a finding.
 | 2 | ITIL priority (finding F9) | Administration > Roles: remove "Override ITIL priority" from the helpdesk staff roles; **tick it on Anonymous** | a test mail to a helpdesk mailbox (production, after the go) gets the helpdesk's default priority |
 | 3 | project workflows (finding F8) | Administration > Roles: grant "View the project's workflow" and "Manage the project's workflow" (redmine_project_workflows) to the roles that had the old project workflow permissions; `bundle exec rake redmine_project_workflows:backup FILE=<outside>/pw-after.json`; once `rake redmine_project_workflows:deduplicate_workflow_rules` | the same rules as `pw-before.json`; Workflow > Fields permissions shows Impact and Urgency |
 | 4 | more_previews hand-over (Jan q3) | `DRY_RUN=1 bundle exec rake redmine_more_previews:use_core_previews`, then without, then again | the last run: "Nothing to change" |
-| 5 | computed custom fields | `bundle exec rake redmine:computed_custom_field:check_formulas` | exit 0, no `FAIL` (fix a FAIL in Administration > Custom fields) |
-| 6 | custom workflow scripts | `bundle exec rake redmine:custom_workflows:audit` | no script reported |
-| 7 | view_customize | `bundle exec rails runner plugins/view_customize/docs/audit_snippets.rb`; scripts that read the API key in an unusual way get "use API key" ticked by hand | snippets fixed only where broken (Jan) |
-| 8 | stored SQL fields | run every statement of step 2 once on 7.0; `%<name>d` or `%s` placeholders become `%{name}` | each statement runs; the new issue form opens |
-| 9 | digest rules | `bundle exec rails runner 'IssueDigestRule.find_each { \|r\| puts [r.id, r.valid?].inspect }'`; rules with timezone `Etc/GMT+12` corrected in the form | every rule `true` |
-| 10 | tags | `bundle exec rails runner 'p Issue.where.not(cached_tag_names: [nil, ""]).count'` | the number of tagged issues; tag filters and the issue report open |
-| 11 | checklists | Administration > Roles: `done_checklists` for the roles that tick items | as before |
-| 12 | issue view columns | `bundle exec rails runner 'p Setting.related_issues_default_columns'`; Settings > Issue tracking > "Show table headers" on if the captions are wanted | the plugin's global columns |
-| 13 | small clean-ups | `DELETE FROM wiki_extensions_menus WHERE menu_no NOT BETWEEN 1 AND 5;` and, optional, `UPDATE agile_data SET agile_sprint_id = NULL WHERE agile_sprint_id = 0;` | |
-| 14 | settings that changed meaning | Plugins > Redmine Edit Issue Author: "Possible authors" (new default: project members who may add issues); Roles: HR roles "Users visibility" = all active users (redmine_people); helpdesk "Add contact notes" off per confidential project (helpdesk document, q7); mail_digest "Allow email-address recipient lookup" if rules use addresses | as decided |
-| 15 | Project > Settings, every tab | as admin and as a project manager; `grep -rnE "^\s*alias_method.*project_settings_tabs" plugins/` prints nothing | no error page |
-| 16 | REST API and text formatting | Administration > Settings > Integrations (REST on); General > Text formatting = CommonMark | on, CommonMark |
-| 17 | LDAP sync (real AD) | `DRY_RUN=1 bundle exec rake redmine:plugins:ldap_sync:sync_all`, read it (the first run creates groups and memberships that 5.1 never synced), then the real run; log in as one account in the required group, one outside, one disabled in AD | as the AD says |
-| 18 | SSO | `bundle exec rake redmine:bless_this_sso:status`; the entry point is now `/oauth/sso/authorize` (callback unchanged) | production: login, SSO-only, sign out |
-| 19 | the whole site | open the issue list, an issue, the agile board, the calendar, the gantt, My page, a wiki page, a helpdesk ticket, a contact, the people page, as admin and as a normal user; on the clone Claude can crawl every menu link and report any 500 | no error page |
+| 5 | Libre sandbox (more_previews round 6) | as the Redmine user: `sudo -u <redmine-user> /usr/bin/env -i /usr/bin/bwrap --die-with-parent --new-session --unshare-user --unshare-pid --unshare-net --unshare-ipc --unshare-uts --ro-bind /usr /usr --symlink usr/bin /bin --symlink usr/lib /lib --symlink usr/lib64 /lib64 -- /usr/bin/true && echo sandbox ok`; then Administration > Information shows "LibreOffice available in its sandbox (bubblewrap)" ticked; preview a .docx and an .odt as PDF and as HTML | `sandbox ok`, the box ticked, the four previews show. If the sandbox does not work: Libre previews stay off (Jan, 2026-10-19), the rest of the upgrade goes on |
+| 6 | computed custom fields | `bundle exec rake redmine:computed_custom_field:check_formulas` | exit 0, no `FAIL` (fix a FAIL in Administration > Custom fields) |
+| 7 | custom workflow scripts | `bundle exec rake redmine:custom_workflows:audit` | no script reported |
+| 8 | view_customize | `bundle exec rails runner plugins/view_customize/docs/audit_snippets.rb`; scripts that read the API key in an unusual way get "use API key" ticked by hand | snippets fixed only where broken (Jan) |
+| 9 | stored SQL fields | run every statement of step 2 once on 7.0; `%<name>d` or `%s` placeholders become `%{name}` | each statement runs; the new issue form opens |
+| 10 | digest rules | `bundle exec rails runner 'IssueDigestRule.find_each { \|r\| puts [r.id, r.valid?].inspect }'`; rules with timezone `Etc/GMT+12` corrected in the form | every rule `true` |
+| 11 | tags | `bundle exec rails runner 'p Issue.where.not(cached_tag_names: [nil, ""]).count'` | the number of tagged issues; tag filters and the issue report open |
+| 12 | checklists | Administration > Roles: `done_checklists` for the roles that tick items | as before |
+| 13 | issue view columns | `bundle exec rails runner 'p Setting.related_issues_default_columns'`; Settings > Issue tracking > "Show table headers" on if the captions are wanted | the plugin's global columns |
+| 14 | small clean-ups | `DELETE FROM wiki_extensions_menus WHERE menu_no NOT BETWEEN 1 AND 5;` and, optional, `UPDATE agile_data SET agile_sprint_id = NULL WHERE agile_sprint_id = 0;` | |
+| 15 | settings that changed meaning | Plugins > Redmine Edit Issue Author: "Possible authors" (new default: project members who may add issues); Roles: HR roles "Users visibility" = all active users (redmine_people); helpdesk "Add contact notes" off per confidential project (helpdesk document, q7); mail_digest "Allow email-address recipient lookup" if rules use addresses | as decided |
+| 16 | Project > Settings, every tab | as admin and as a project manager; `grep -rnE "^\s*alias_method.*project_settings_tabs" plugins/` prints nothing | no error page |
+| 17 | REST API and text formatting | Administration > Settings > Integrations (REST on); General > Text formatting = CommonMark | on, CommonMark |
+| 18 | LDAP sync (real AD) | `DRY_RUN=1 bundle exec rake redmine:plugins:ldap_sync:sync_all`, read it (the first run creates groups and memberships that 5.1 never synced), then the real run; log in as one account in the required group, one outside, one disabled in AD | as the AD says |
+| 19 | SSO | `bundle exec rake redmine:bless_this_sso:status`; the entry point is now `/oauth/sso/authorize` (callback unchanged) | production: login, SSO-only, sign out |
+| 20 | the whole site | open the issue list, an issue, the agile board, the calendar, the gantt, My page, a wiki page, a helpdesk ticket, a contact, the people page, as admin and as a normal user; on the clone Claude can crawl every menu link and report any 500 | no error page |
 
 ### A.6 Cron entries
 
@@ -485,9 +509,9 @@ Then, once, on the upgraded Redmine 7.0. Each line is a check the local session 
 | what | how | check |
 |---|---|---|
 | snapshot S0 | part B's rollback point (A.4 step 3 is the upgrade's). Rehearsal: the snapshot after A.5. Production: taken now, at the start of the window, after steps 1 to 4 above (users worked in Redmine since part A). B7 takes S1 to S3 (B10) | the snapshot exists and its time is noted |
-| REST API | Administration > Settings > Integrations: REST web service on (A.5 row 16; "API" on 5.1) | `curl -s -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/users/current.json"` gives the migration account, `admin: true` |
+| REST API | Administration > Settings > Integrations: REST web service on (A.5 row 17; "API" on 5.1) | `curl -s -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/users/current.json"` gives the migration account, `admin: true` |
 | Extended API | the plugin is installed, version 8e7096c or later (tested: `ecc7dde`): the scripts send `skip_journal` (decision 37), which an older version ignores, so its journals would come back | `curl -sI -H "X-Redmine-API-Key: $REDMINE_API_KEY" "$REDMINE_URL/extended_api/issues.json"` has the header `X-Redmine-Extended-API`; `grep -c skip_journal <redmine-root>/plugins/redmine_extended_api/lib/redmine_extended_api/patches/api_helpers.rb` is above 0 |
-| text formatting | Administration, Settings, General: CommonMark Markdown (A.5 row 16) | `Setting.text_formatting` is `common_mark` |
+| text formatting | Administration, Settings, General: CommonMark Markdown (A.5 row 17) | `Setting.text_formatting` is `common_mark` |
 | no mail, no webhook from the migration | `redmine.extended_api.enabled` true (B3): 10, 11, 12, 13 (tags on 7.0) and the relink write issues and journals through it with notify=false, which silences the mails and Redmine 7's webhooks of the request (Jan, 2026-10-15), and 10's second pass, 12, 13 and the relink also with `skip_journal` (no journal, decision 37); 09's uploads and 14's watchers send none. The one exception: 15 saves the issue's done ratio through the plain API when redmine_checklists' setting "issue done ratio" is on (Administration, Plugins, Checklists; off by default): switch it off for the run. Safety net (production, cheap, B2's advice): stealth mode on for the migration account, `curl -s -X POST -H "X-Redmine-API-Key: $REDMINE_API_KEY" -d toggle=true "$REDMINE_URL/stealth/toggle.json"`; it silences the mails of anything the migration account writes outside the Extended API. Rehearsal: outgoing mail is off on the clone (A.1) | the checklists setting is off; production: the answer is `{"is_cloaked":true}` (signing in to the web interface as the migration account switches stealth off again: do not, or toggle it on after) |
 | relation types | the GEOxyz relation types of `migration.relations.custom_mappings` in `redmine_issue_view_columns` (`tools/testenv/redmine_issue_view_columns.local.rb` is generated from them) | after part A they exist in 7.0 (12 refuses a relation type Redmine does not know) |
 | attachment prune and LDAP sync off | covered by the crontab being off (step 4 above; on the clone A.1): prune would delete uploads still waiting for their issue after 24 h, LDAP sync would lock or change accounts the migration activates | `crontab -l` for the Redmine user is empty |
