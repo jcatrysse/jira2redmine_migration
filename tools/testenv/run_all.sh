@@ -12,6 +12,8 @@
 # (the check of the one run, docs/PRODUCTION.md B7 step 7 and B9 step 1); the summary marks S0 to S3, the
 # snapshot points of the one run (decision 39), with their time. STOP_AT=S1|S2|S3 ends the run at that mark, to take a
 # snapshot of the test instance there (the history proof of decision 41 starts twice from S2).
+# J2R_JIRA_TAPE=DIR with J2R_JIRA_TAPE_MODE=record|replay records every Jira answer of the run, or plays a recorded
+# run back without Jira (src/Http/JiraTape.php): the runs before and after a refactor then read the same Jira.
 # Expects tools/testenv/setup.sh to have run, and config/config.local.php to read the environment
 # (JIRA_*, JIRA_CLOUD_ID, REDMINE_URL, REDMINE_API_KEY, STAGING_DSN, J2R_TMP, J2R_JQL, J2R_PROJECTS).
 set -u
@@ -42,6 +44,16 @@ manual() { # manual workflows|members|restore [script]
 }
 
 : > "$logdir/summary.txt"
+if [ -n "${J2R_JIRA_TAPE:-}" ]; then
+  export J2R_JIRA_TAPE_MODE=${J2R_JIRA_TAPE_MODE:-replay}
+  if [ "$J2R_JIRA_TAPE_MODE" = record ]; then
+    # a tape holds one run: recording into an old tape would play its answers first
+    [ -z "$(ls -A "$J2R_JIRA_TAPE" 2>/dev/null)" ] || { echo "J2R_JIRA_TAPE=$J2R_JIRA_TAPE is not empty" | tee -a "$logdir/summary.txt"; exit 1; }
+  else
+    rm -rf "$J2R_JIRA_TAPE/played"
+  fi
+  echo "jira tape: $J2R_JIRA_TAPE_MODE $J2R_JIRA_TAPE" | tee -a "$logdir/summary.txt"
+fi
 [ -z "${BATCH:-}" ] && "$BASE/reset.sh" "$v" > /dev/null
 if [ -n "${RECORD:-}" ]; then
   # Record every Redmine request (phase 6 proof): the scripts talk to a proxy on port 31xx.

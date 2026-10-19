@@ -85,6 +85,8 @@ function jiraGatewayRewriteUri(UriInterface $uri, string $gatewayPrefix, string 
 function jiraHandlerStack(array $jiraConfig): HandlerStack
 {
     $stack = HandlerStack::create();
+    // test runs only: the Jira tape of the phase 6 proof, off unless J2R_JIRA_TAPE is set
+    \Jira2Redmine\Http\JiraTape::attach($stack);
     $prefix = jiraGatewayPrefix($jiraConfig);
     if ($prefix === null) {
         return $stack;
