@@ -229,6 +229,49 @@ This structure is intended to be reused by later migration scripts so that manua
 
 ---
 
+## The command line and the shared code (phase 6)
+
+Every script starts the same way (`src/Cli/Script.php`): it reads the command line, answers `--help` and
+`--version` without loading the configuration, stops on a positional argument ("Unexpected positional arguments")
+and turns any error into one `[ERROR] ...` line on stderr and exit code 1. Every script takes `--phases=LIST` and
+`--skip=LIST` (`src/Cli/Phases.php`: an unknown phase, an empty list or nothing left to run stops the script) and its
+own flags, listed per script below.
+
+The 16 scripts had their own copy of the option parsing; `src/Cli/CommandLine.php` replaced them in phase 6 without
+changing what a script accepts. They agree on every command line the runbook uses and differ only on the rest, kept
+per script in `src/Cli/ScriptCommandLines.php` (`tests/fixtures/command_lines.json` holds what each old copy did):
+
+| script | `-h`, `-V` | `--phases LIST` (space) | an unknown option | `--` | other differences |
+|---|---|---|---|---|---|
+| 01 to 03 | yes | yes, values trimmed | error "Unknown option provided" | ends the options | |
+| 04 | yes | no | error "Unknown option" (only `--x`) | ends the options | any other argument: "Unknown short option" |
+| 05 to 07 | yes | no | error "Unknown option" | ends the options | |
+| 08 | yes | no | error 'Unknown option "x".' | an unknown option | |
+| 09 | no | no | a positional argument | a positional argument | `--download-limit=N`, `--upload-limit=N` |
+| 10 | yes | no | a positional argument | a positional argument | empty arguments ignored; `--phases=` empty counts as not given |
+| 11, 13 to 16 | no | no | a positional argument | a positional argument | |
+| 12 | no | no | error "Unknown option" | an unknown option | empty arguments ignored |
+
+A positional argument stops every script, so a typo never runs a phase by accident. One rule for all is a choice for
+Jan (plan, M1).
+
+Shared code the scripts use from `src/`: the configuration sections (`Cli/ConfigValue::section`), the staging
+database (`Database/ConnectionFactory`, each script with its own PDO attributes), the Jira and Redmine clients
+(`Http/ClientFactory`, 01 to 07 and 10 with a 30 second timeout), the current time in UTC (`Time/Clock`), the phases
+(`Cli/Phases`). `lib/cli.php` loads the start without Composer, so `--help` works before `bootstrap.php` checks the PHP
+version and extensions.
+
+Checks (`tools/qa.sh`): PHPStan level 8 analyses each script on its own (`phpstan-scripts.neon`: the scripts declare
+`main()` and helpers of the same name), and PHPCS holds them to PSR-12 at 140 characters. What PHPStan reports and
+cannot be fixed without a change of behaviour is in `tools/phpstan-baseline/<script>.neon`, each entry with its reason
+(08: 2, 10: 3, 11: 7, all of them a PCRE or decode failure that ends in a TypeError or a warning, as before).
+
+For test runs only, `J2R_JIRA_TAPE=DIR` with `J2R_JIRA_TAPE_MODE=record|replay` records every Jira answer of a run or
+plays one back without Jira (`src/Http/JiraTape.php`, `tools/testenv/run_all.sh`): the proof that a refactor changes no
+Redmine request runs twice on the same Jira data.
+
+---
+
 ## Running `01_migrate_projects.php`
 
 Version `0.0.11` introduces the dedicated entry point for synchronising projects. It follows the same CLI ergonomics as the other migration scripts, so you can iterate on the extract, transform, and push phases independently.

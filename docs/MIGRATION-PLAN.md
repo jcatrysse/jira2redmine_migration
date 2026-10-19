@@ -2,7 +2,23 @@
 
 ## Samenvatting voor Jan (2026-10-19, B2)
 
-**Stand.** Alles staat op `redmine70-migration`, QA groen (373 tests). Jira bleef read-only: alleen GET-calls.
+**Stand.** Alles staat op `redmine70-migration`, QA groen (1.161 tests). Jira bleef read-only: alleen GET-calls.
+
+**Vanavond: fase 6 (M1) afgerond, zonder gedragswijziging (jouw keuze: voor de generale repetitie)**
+- **De 16 scripts delen hun basiscode nu via `src/`:** de start (help, versie, de `[ERROR]`-regel), de
+  optie-parsing, de fases, de configuratie, de database, de clients en de tijd. Ongeveer 2.300 regels kopieën weg,
+  elke verschoven functie met unit tests. De verschillen tussen de kopieën (bv. `-h` niet in elk script) zijn bewust
+  behouden; SCRIPTS.md heeft de tabel.
+- **Alle 16 scripts onder PHPStan level 8 en PSR-12.** Een baseline van 12 fouten die niet weg kunnen zonder
+  gedragswijziging (een PCRE-fout of een onleesbare waarde in 08, 10 en 11), elk met de reden erbij.
+- **Bewezen met de record proxy**, voor en na vanaf dezelfde Jira-data (een opgenomen "tape"): 5.1 18.486 = 18.486
+  requests, 7.0 18.557 = 18.557, `compare_requests.php` exit 0. Inclusief de geschiedenis, de volgorde per issue (C)
+  en Anonymous (42). Samenvattingen en verify gelijk; de run duurt 22 tot 23 min i.p.v. 59 (Jira van de tape).
+- **Bevinding B86** (08, gevonden door PHPStan): een standaardwaarde las een variabele die nooit gezet wordt.
+  Behouden zoals het was, met de bevinding in de code.
+- **Open voor jou** (Open questions): één optie-regel voor alle scripts, de baseline zo laten, B86. F6 (Redmine onder
+  een sub-pad) blijft een aparte gedragswijziging, nog niet gedaan.
+- **De eindrun van de 14 projecten op 7.0** met de nieuwe code loopt; de vergelijking met 595c7f2 volgt hier.
 
 **Vandaag: jouw herziene beslissing 41 (Jira-geschiedenis tijdens de migratie), gebouwd en bewezen**
 - **Status, toegewezene en prioriteit** komen als echte journals mee in 11, met hun eigen auteur en tijd, via het
@@ -255,7 +271,8 @@ outside the run, mentions and issue links count as links"), **not yet confirmed 
    2; off by default; skipped files reported "skipped by sample" and expected-absent in verify).
    **B2: DONE**, option built (`attachments.test_sample`); SURV run on 5.1, see Results.
 7. Phase 6 rest: the 8 helper functions still copied in every script (M1), CLI and config helpers,
-   each step proven with identical recorded requests. **Open** (B2 did not start it; not Jira-bound).
+   each step proven with identical recorded requests. **DONE** (B2, 2026-10-19 evening, Jan: before the rehearsal):
+   work list 11 and Results, "Phase 6 rest (M1), the proof".
 8. Phase 9: final runs on both targets, numbers in "Results".
 
 **Test environment, for `tools/testenv/setup.sh` in a fresh container.**
@@ -707,7 +724,7 @@ choices) is still open.
 
 | # | finding | where |
 |---|---|---|
-| M1 | 8 helper functions copied in all 16 scripts (CLI, config, DB, timestamps); Jira/Redmine clients 13 to 15 times | `^function` across `[0-9]*.php`. Clients: ClientFactory (phase 6); Extended API helpers and phase selection shared (B2, work list 11) |
+| M1 | 8 helper functions copied in all 16 scripts (CLI, config, DB, timestamps); Jira/Redmine clients 13 to 15 times | `^function` across `[0-9]*.php`. Clients: ClientFactory (phase 6); Extended API helpers and phase selection shared (B2, work list 11). **Closed** (B2, 2026-10-19): the eight and the client creation in `src/`, all 16 scripts under PHPStan level 8 and PSR-12 (work list 11) |
 | M2 | No tests of any kind | repo |
 | M3 | 429 handling in 4 of 16 scripts (09, 11, 14, 16); in `10_migrate_issues.php` one 429 during the issue search fails the whole project | `10_migrate_issues.php:588` |
 | M4 | Gateway URL breaks the Jira client: `base_uri` plus a path with a leading slash (`/rest/api/3/...`) drops `/ex/jira/{cloudId}` | `createJiraClient`, every Jira call |
@@ -860,6 +877,24 @@ In this order. Each item records its result under "Results" when done.
       the copies differ only in accepted spellings (01 to 03 also take `--phases jira`). **Kept**.
     One choice for Jan: the comment window of B59 (Open questions). The proof of the behaviour changes is in
     Results (M1 rest).
+    **Phase 6 closed, B2 2026-10-19 evening** (Jan: phase 6 rest before the rehearsal, which must test the final code).
+    The scripts now share, through `src/`: the start (`Cli/Script`: help, version, positional arguments, the `[ERROR]`
+    line), the option parsing (`Cli/CommandLine` with each script's own rule in `Cli/ScriptCommandLines`, the copies'
+    differences kept, SCRIPTS.md "The command line and the shared code"), the phases (`Cli/Phases::fromOptions`), the
+    configuration sections (`Cli/ConfigValue::section`), the database and the clients (the factories, each script with
+    the PDO attributes and timeout its copy had) and the current time (`Time/Clock`). Gone from the scripts: the 16
+    copies of the start, `parseCommandLineOptions`, `determinePhasesToRun`, `extractArrayConfig`,
+    `createDatabaseConnection` and `formatCurrentTimestamp`, the 7 of `formatCurrentUtcTimestamp`, the 13 and 15 of
+    `createJiraClient`/`createRedmineClient` and 09's `parsePositiveIntOption`: 2,282 lines fewer (the scripts: 36,046
+    lines before, 34,826 after, with the PSR-12 wrapping). `main()`, `printUsage()` and `printVersion()` stay: they are
+    each script's own logic and text. All 16 scripts are under PHPStan level 8 (one analysis per script,
+    `phpstan-scripts.neon`) and PSR-12 at 140 characters; a baseline holds 12 errors that cannot be fixed without a
+    change of behaviour, each with its reason (`tools/phpstan-baseline/`: 08 2, 10 3, 11 7). Left as they are, not among
+    M1's eight: helpers of the same name in two to thirteen scripts. Most differ between their copies
+    (`decodeJsonResponse` 4 variants, `extractErrorBody` 3, `normalizeStoredAutomationHash` 5, `normalizeString` 2), a
+    few are the same (`extractRedmineErrorMessage` in 01 to 03, `jiraGetWithRetry` in 11 and 14,
+    `parseCascadingAllowedValues` in 08 and 10): a later step, each with its own proof. Proof: Results, "Phase 6 rest
+    (M1), the proof".
 
 **Phase 7, fixes**
 
@@ -1229,6 +1264,15 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
 - ~~B37, B38/B39~~ and ~~automation rules~~: decided overnight, confirmed by Jan 2026-10-14 (decisions
   15 to 17).
 
+- **Phase 6 left three things as they were, each a change of behaviour for Jan to choose (B2, 2026-10-19):** (1) **One
+  command line rule for all 16 scripts.** The copies of the option parsing differed on invalid command lines (`-h` in 01
+  to 08 and 10 only, `--phases LIST` with a space in 01 to 03 only, an unknown option an error in some, a positional
+  argument in others; SCRIPTS.md has the table). Every difference ends in a stop, except one: in 10 an empty `--phases=`
+  counts as not given and runs every phase. Advice: one rule (`-h` and `-V` everywhere, an unknown option an error), one
+  small commit with its own test. (2) **The 12 errors in the PHPStan baseline**: a PCRE error or an undecodable value
+  ends in a TypeError or a warning (08, 10, 11). No test run's log has one; handling them means choosing what the script
+  does then (keep the text, skip the field). Advice: leave them. (3) **B86**: see Findings.
+
 ## Findings
 
 Before the baseline (session B, 2026-10-13):
@@ -1359,6 +1403,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B83 | 15's transform kept every row whose checklist had not changed (automation hash), a FAILED row too | a rerun of 15 never retried a failed checklist, against PRODUCTION.md B10 ("FAILED rows are judged again"): DOC-292 (B80) stayed FAILED with 6 of its 9 items after the fix of B80 | **fixed**: an unchanged row is kept unless its push failed; on 5.1 15 then pushed DOC-292 again, all 9 items, the long one cut to 512 characters, the issue's updated time unchanged, no journal |
 | B84 | Redmine's "Last updated by" (`Issue#last_updated_by`, the issue list column; 5.1 and 7.0) is the author of the journal with the highest id, not of the latest one; 11 pushed every comment before every changelog entry | on 55 of the 721 issues with journals (GEOS, SIS, OAC, LABO; 222 of 1,870 in the earlier 7.0 run of DOC, GEOS, OAC, SIS, SURV) the last updated user was not the last person who acted in Jira; history written after 11 would have changed it on most issues (decision 41) | **fixed** (`868d07c`, decision 41 option C): 11 pushes per issue in Jira's time order, the history series in between: 0 on 5.1 and 7.0, the requests the same (record proxy, compared as a set) |
 | B85 | 11 sent each journal with the issue's updated time set to that journal's own time (the Extended API's `updated_on` override) | after 11 an issue showed the time of the last journal pushed instead of Jira's updated time that 10 had set: 647 of 1,013 issues (633 in time order) | **fixed** (`800b8d4`): every journal sends Jira's updated time of its issue: 0 |
+| B86 | 08's transform defaulted `proposed_is_for_all` with `empty($currentProposedProjectIds)`, a variable that is never set (the decoded ids are `$decodedProjectIds`), so always true; PHPStan found it (phase 6) | a mapping without `proposed_is_for_all` gets true; a field with proposed projects gets false from the project rule further down before it is pushed, so the effect is limited to the rows 08 writes before that rule (unused, kept as edited, manual); not measured | **kept** (phase 6 changes no behaviour): the code says `true` with the finding; whether it should read the proposed projects is for Jan (Open questions) |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
@@ -1938,3 +1983,29 @@ In the UI (both versions): the issue header "Added by Anonymous about 1 year ago
 journals "Updated by Anonymous ...", a file "Anonymous, 10/13/2025 09:38 AM", `jira-history.json` with its
 description and "Anonymous". The 5.1 run's 11 reported one history that ends in another status than the issue
 (GEOS-120: changed in Jira at 13:56, between 10's read and 11's), which is what the check is for.
+
+**Phase 6 rest (M1), the proof (B2, 2026-10-19 evening).** Before: `2245962` (the scripts as they were, plus the Jira
+tape); after: `a6c678f` (the shared code, all 16 scripts under PHPStan and PSR-12). GEOS, SIS, OAC and LABO with the
+history, the per-issue order (option C) and Anonymous as the default author (decision 42), `run_all.sh` in full with
+the stability pass, the workflows and restore, the sample, on 5.1 and on 7.0. Every Redmine request recorded
+(`RECORD`), every Jira answer recorded in the before run and played back in the after run (`J2R_JIRA_TAPE`, 8,428
+answers on 7.0): both runs of a target read the same Jira, also where Jira changed in between.
+
+| | 5.1 | 7.0 |
+|---|---|---|
+| Redmine requests, before and after | 18,486 and 18,486 | 18,557 and 18,557 |
+| `compare_requests.php` (in order, upload tokens aside) | **IDENTICAL, 0 differing, exit 0** | **IDENTICAL, 0 differing, exit 0** |
+| history (11) | 4,357 journals, 188 files, 0 failed, both runs | the same |
+| stability pass, restore | unchanged; memberships equal 04's proposal, both runs | the same |
+| run summary and verify report | the same apart from times | the same apart from times |
+| run time before (live Jira) and after (tape) | 59 and 23 minutes | 59 and 22 minutes |
+
+verify reported the same 4 failures in all four runs: LABO counts that changed in Jira between 10's read and verify's
+(584 in Jira, 580 migrated; a tape holds the Jira of its run). The steps without Redmine requests have their own
+proof: the 548 command lines that end before `main()` give the same stdout, stderr and exit code in `2245962` and after
+every commit, `tests/fixtures/command_lines.json` holds all 752 parse results of the old copies, and the layout
+commits compile to the same opcodes (opcache, before the optimizer), 16 of 16 for phpcbf and 11 of 16 for the wrapping
+(the other five only where a string's text was wrapped: SQL whitespace in four heredocs and two interpolated strings
+of 11 built from two parts). Checking the export of the before commit showed that a copied commit loaded `src/` from
+the working tree through the vendor symlink; the proof runs use exports with their own autoloader, and the earlier
+proofs that used exports (decision 41, 42) ran while the working tree's `src/` matched them.

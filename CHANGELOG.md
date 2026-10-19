@@ -6,6 +6,8 @@ All notable changes to this project. Steps to take before and after a migration 
 ## [Unreleased] (branch redmine70-migration)
 
 ### Added
+- `J2R_JIRA_TAPE` (test runs): records every Jira answer of a run or plays one back without Jira, so the runs before
+  and after a refactor read the same Jira (`src/Http/JiraTape.php`, `tools/testenv/run_all.sh`).
 - Redmine 7.0 as a second target next to 5.1; both tested with the same projects.
 - Jira scoped API tokens: with `jira.cloud_id` set, every call goes through the gateway
   `https://api.atlassian.com/ex/jira/{cloudId}`.
@@ -84,6 +86,11 @@ All notable changes to this project. Steps to take before and after a migration 
   --any-order` compares two recordings as a set.
 
 ### Changed
+- Phase 6 (plan M1), no change of behaviour: the 16 scripts share their start, option parsing (each script's own
+  rule kept, `src/Cli/ScriptCommandLines.php`), phases, configuration sections, database, clients and clock through
+  `src/`; about 2,300 lines of copies are gone. All 16 are under PHPStan level 8 (one analysis per script, a baseline
+  of 12 with reasons in `tools/phpstan-baseline/`) and PSR-12. Proven with the record proxy on 5.1 and 7.0 (every
+  Redmine request the same), the opcodes of the layout commits and 752 recorded command lines.
 - An existing Redmine (decisions 33 to 35): Jira priorities map onto existing Redmine priorities, the rest is a
   review row and 06 creates none by default; the roles the `workflows` step opens come from the configuration,
   and the step stops on a role it cannot use; in mode `project` a tracker Redmine already had keeps its global
