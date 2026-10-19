@@ -56,14 +56,14 @@ function main(array $config, array $cliOptions): void
     );
 
     $databaseConfig = ConfigValue::section($config, 'database');
-    $pdo = createDatabaseConnection($databaseConfig);
+    $pdo = ConnectionFactory::connect($databaseConfig);
 
     /** @var array<string, mixed>|null $redmineConfig */
     $redmineConfig = null;
 
     if (in_array('jira', $phasesToRun, true)) {
         $jiraConfig = ConfigValue::section($config, 'jira');
-        $jiraClient = createJiraClient($jiraConfig);
+        $jiraClient = ClientFactory::jira($jiraConfig, 30.0);
 
         printf("[%s] Starting Jira priority extraction...%s", formatCurrentTimestamp(), PHP_EOL);
 
@@ -85,7 +85,7 @@ function main(array $config, array $cliOptions): void
 
     if (in_array('redmine', $phasesToRun, true)) {
         $redmineConfig ??= ConfigValue::section($config, 'redmine');
-        $redmineClient = createRedmineClient($redmineConfig);
+        $redmineClient = ClientFactory::redmine($redmineConfig, 30.0);
 
         printf("[%s] Starting Redmine priority snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
 
@@ -701,7 +701,7 @@ function runPriorityPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array
             return;
         }
 
-        $redmineClient = createRedmineClient($redmineConfig);
+        $redmineClient = ClientFactory::redmine($redmineConfig, 30.0);
         $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
         ExtendedApi::verifyAvailable(
             $redmineClient,
@@ -981,21 +981,6 @@ function formatIntegerForDisplay(?int $value): string
     }
 
     return (string)$value;
-}
-
-function createDatabaseConnection(array $databaseConfig): PDO
-{
-    return ConnectionFactory::connect($databaseConfig, []);
-}
-
-function createJiraClient(array $jiraConfig): Client
-{
-    return ClientFactory::jira($jiraConfig, 30.0);
-}
-
-function createRedmineClient(array $redmineConfig): Client
-{
-    return ClientFactory::redmine($redmineConfig, 30.0);
 }
 
 function decodeJsonResponse(ResponseInterface $response): mixed

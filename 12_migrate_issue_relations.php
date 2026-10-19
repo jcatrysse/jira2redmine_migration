@@ -60,7 +60,7 @@ function main(array $config, array $cliOptions): void
     printf('[%s] Selected phases: %s%s', formatCurrentTimestamp(), implode(', ', $phasesToRun), PHP_EOL);
 
     $databaseConfig = ConfigValue::section($config, 'database', 'Missing %s configuration block.');
-    $pdo = createDatabaseConnection($databaseConfig);
+    $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 
     if (in_array('transform', $phasesToRun, true)) {
         runRelationTransformPhase($pdo, $config);
@@ -317,7 +317,7 @@ function runRelationPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $
         return;
     }
 
-    $client = createRedmineClient($redmineConfig);
+    $client = ClientFactory::redmine($redmineConfig);
 
     $successStatement = $pdo->prepare(<<<SQL
         UPDATE migration_mapping_issue_relations
@@ -753,16 +753,6 @@ function mergeNotes(?string $current, ?string $addition): ?string
     }
 
     return $current . ' ' . $addition;
-}
-
-function createDatabaseConnection(array $databaseConfig): PDO
-{
-    return ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-}
-
-function createRedmineClient(array $redmineConfig): Client
-{
-    return ClientFactory::redmine($redmineConfig);
 }
 
 function formatCurrentTimestamp(string $format = 'Y-m-d H:i:s'): string

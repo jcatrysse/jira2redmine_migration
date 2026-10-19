@@ -56,14 +56,14 @@ function main(array $config, array $cliOptions): void
     );
 
     $databaseConfig = ConfigValue::section($config, 'database');
-    $pdo = createDatabaseConnection($databaseConfig);
+    $pdo = ConnectionFactory::connect($databaseConfig);
 
     /** @var array<string, mixed>|null $redmineConfig */
     $redmineConfig = null;
 
     if (in_array('jira', $phasesToRun, true)) {
         $jiraConfig = ConfigValue::section($config, 'jira');
-        $jiraClient = createJiraClient($jiraConfig);
+        $jiraClient = ClientFactory::jira($jiraConfig, 30.0);
 
         printf("[%s] Starting Jira issue type extraction...%s", formatCurrentTimestamp(), PHP_EOL);
 
@@ -85,7 +85,7 @@ function main(array $config, array $cliOptions): void
 
     if (in_array('redmine', $phasesToRun, true)) {
         $redmineConfig ??= ConfigValue::section($config, 'redmine');
-        $redmineClient = createRedmineClient($redmineConfig);
+        $redmineClient = ClientFactory::redmine($redmineConfig, 30.0);
 
         printf("[%s] Starting Redmine tracker snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
 
@@ -1234,7 +1234,7 @@ function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array 
             printf("  No Jira issue types are marked as READY_FOR_CREATION.%s", PHP_EOL);
         }
 
-        $redmineClient = createRedmineClient($redmineConfig);
+        $redmineClient = ClientFactory::redmine($redmineConfig, 30.0);
         $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
         ExtendedApi::verifyAvailable($redmineClient, $extendedApiPrefix, 'trackers.json');
 
@@ -1481,7 +1481,7 @@ function runTrackerPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array 
     }
 
     if ($confirmPush || $isDryRun) {
-        $redmineClient = createRedmineClient($redmineConfig);
+        $redmineClient = ClientFactory::redmine($redmineConfig, 30.0);
         synchronizeProjectTrackers(
             $pdo,
             $redmineClient,
@@ -2026,21 +2026,6 @@ function formatIntegerForDisplay(?int $value): string
     }
 
     return (string)$value;
-}
-
-function createDatabaseConnection(array $databaseConfig): PDO
-{
-    return ConnectionFactory::connect($databaseConfig, []);
-}
-
-function createJiraClient(array $jiraConfig): Client
-{
-    return ClientFactory::jira($jiraConfig, 30.0);
-}
-
-function createRedmineClient(array $redmineConfig): Client
-{
-    return ClientFactory::redmine($redmineConfig, 30.0);
 }
 
 function decodeJsonResponse(ResponseInterface $response): mixed

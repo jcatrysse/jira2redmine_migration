@@ -73,11 +73,11 @@ function main(array $config, array $cliOptions): void
     );
 
     $databaseConfig = ConfigValue::section($config, 'database');
-    $pdo = createDatabaseConnection($databaseConfig);
+    $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 
     if (in_array('jira', $phasesToRun, true)) {
         printf("[%s] Fetching Jira comments and changelog entries...%s", formatCurrentTimestamp(), PHP_EOL);
-        $jiraClient = createJiraClient(ConfigValue::section($config, 'jira'));
+        $jiraClient = ClientFactory::jira(ConfigValue::section($config, 'jira'));
         $jiraSummary = fetchJiraJournals($jiraClient, $pdo, $config);
         refreshIssueKeyAliases($jiraClient, $pdo);
         printf(
@@ -935,7 +935,7 @@ function runJournalPushPhase(
 {
     $candidateComments = $withJournals ? fetchPushableComments($pdo) : [];
     $candidateChangelogs = $withJournals ? fetchPushableChangelog($pdo) : [];
-    $redmineClient = createRedmineClient(ConfigValue::section($config, 'redmine'));
+    $redmineClient = ClientFactory::redmine(ConfigValue::section($config, 'redmine'));
     $history = null;
     if ($withHistory && !$useExtendedApi) {
         printf("  [warn] The Jira history needs the Extended API (--use-extended-api); left out.%s", PHP_EOL);
@@ -2446,33 +2446,6 @@ function normalizeJiraTimestamp(mixed $value): ?string
     }
 
     return $dateTime->setTimezone(new DateTimeZone('UTC'))->format(DateTimeInterface::ATOM);
-}
-
-/**
- * @param array<string, mixed> $config
- * @return PDO
- */
-function createDatabaseConnection(array $config): PDO
-{
-    return ConnectionFactory::connect($config, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-}
-
-/**
- * @param array<string, mixed> $config
- * @return Client
- */
-function createJiraClient(array $config): Client
-{
-    return ClientFactory::jira($config);
-}
-
-/**
- * @param array<string, mixed> $config
- * @return Client
- */
-function createRedmineClient(array $config): Client
-{
-    return ClientFactory::redmine($config);
 }
 
 /**

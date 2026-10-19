@@ -61,8 +61,8 @@ function main(array $config, array $cliOptions): void
         return;
     }
 
-    $pdo = createDatabaseConnection(ConfigValue::section($config, 'database'));
-    $jiraClient = createJiraClient(ConfigValue::section($config, 'jira'));
+    $pdo = ConnectionFactory::connect(ConfigValue::section($config, 'database'), [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+    $jiraClient = ClientFactory::jira(ConfigValue::section($config, 'jira'));
 
     exportWorkflows($jiraClient, $pdo);
     exportWorkflowSchemes($jiraClient, $pdo);
@@ -1047,24 +1047,6 @@ function calculateRateLimitDelayMs(int $attempt, ?int $retryAfterSeconds): int
     $jitter = random_int(0, (int)($base / 2));
 
     return $delay + $jitter;
-}
-
-/**
- * @param array<string, mixed> $config
- * @return PDO
- */
-function createDatabaseConnection(array $config): PDO
-{
-    return ConnectionFactory::connect($config, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-}
-
-/**
- * @param array<string, mixed> $config
- * @return Client
- */
-function createJiraClient(array $config): Client
-{
-    return ClientFactory::jira($config);
 }
 
 /**

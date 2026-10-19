@@ -54,7 +54,7 @@ function main(array $config, array $cliOptions): void
     );
 
     $databaseConfig = ConfigValue::section($config, 'database');
-    $pdo = createDatabaseConnection($databaseConfig);
+    $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 
     if (in_array('transform', $phasesToRun, true)) {
         printf("[%s] Building issue tag payloads...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -75,7 +75,7 @@ function main(array $config, array $cliOptions): void
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
         $redmineConfig = ConfigValue::section($config, 'redmine');
-        $redmineClient = createRedmineClient($redmineConfig);
+        $redmineClient = ClientFactory::redmine($redmineConfig);
         // Jan (2026-10-15): the issue update of 7.0 goes through the Extended API with notify=false and skip_journal
         $extendedApiPrefix = ExtendedApi::enabled($redmineConfig, false) ? ExtendedApi::prefix($redmineConfig) : null;
         runTagPushPhase($pdo, $redmineClient, $confirmPush, $isDryRun, $extendedApiPrefix);
@@ -356,24 +356,6 @@ function runTagPushPhase(PDO $pdo, Client $client, bool $confirmPush, bool $isDr
         ]);
         printf("  [tagged] Redmine issue #%d updated.%s", $redmineIssueId, PHP_EOL);
     }
-}
-
-/**
- * @param array<string, mixed> $config
- * @return PDO
- */
-function createDatabaseConnection(array $config): PDO
-{
-    return ConnectionFactory::connect($config, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-}
-
-/**
- * @param array<string, mixed> $config
- * @return Client
- */
-function createRedmineClient(array $config): Client
-{
-    return ClientFactory::redmine($config);
 }
 
 function extractErrorBody(ResponseInterface $response): string

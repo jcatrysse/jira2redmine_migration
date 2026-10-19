@@ -204,11 +204,11 @@ function main(array $config, array $cliOptions): void
     );
 
     $databaseConfig = ConfigValue::section($config, 'database');
-    $pdo = createDatabaseConnection($databaseConfig);
+    $pdo = ConnectionFactory::connect($databaseConfig);
 
     if (in_array('jira', $phasesToRun, true)) {
         $jiraConfig = ConfigValue::section($config, 'jira');
-        $jiraClient = createJiraClient($jiraConfig);
+        $jiraClient = ClientFactory::jira($jiraConfig, 30.0);
 
         printf("[%s] Starting Jira issue extraction...%s", formatCurrentTimestamp(), PHP_EOL);
 
@@ -1709,7 +1709,7 @@ function runIssuePushPhase(
         return;
     }
 
-    $client = createRedmineClient($redmineConfig);
+    $client = ClientFactory::redmine($redmineConfig, 30.0);
 
     if ($useExtendedApi) {
         ExtendedApi::verifyAvailable($client, $extendedApiPrefix, 'issues.json');
@@ -4857,20 +4857,6 @@ function printUsage(): void
 function printVersion(): void
 {
     printf('%s version %s%s', basename(__FILE__), MIGRATE_ISSUES_SCRIPT_VERSION, PHP_EOL);
-}
-function createDatabaseConnection(array $databaseConfig): PDO
-{
-    return ConnectionFactory::connect($databaseConfig, []);
-}
-
-function createJiraClient(array $jiraConfig): Client
-{
-    return ClientFactory::jira($jiraConfig, 30.0);
-}
-
-function createRedmineClient(array $redmineConfig): Client
-{
-    return ClientFactory::redmine($redmineConfig, 30.0);
 }
 /**
  * @param array<int, array{

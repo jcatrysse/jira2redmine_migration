@@ -52,7 +52,7 @@ function main(array $config, array $cliOptions): void
     );
 
     $databaseConfig = ConfigValue::section($config, 'database');
-    $pdo = createDatabaseConnection($databaseConfig);
+    $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 
     if (in_array('transform', $phasesToRun, true)) {
         printf("[%s] Parsing Jira checklists...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -72,7 +72,7 @@ function main(array $config, array $cliOptions): void
     if (in_array('push', $phasesToRun, true)) {
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
-        $redmineClient = createRedmineClient(ConfigValue::section($config, 'redmine'));
+        $redmineClient = ClientFactory::redmine(ConfigValue::section($config, 'redmine'));
         runChecklistPushPhase($pdo, $redmineClient, $confirmPush, $isDryRun);
     } else {
         printf("[%s] Skipping push phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
@@ -522,24 +522,6 @@ function extractChecklistItems(array $issue, string $primaryRenderedField, strin
     }
 
     return $items;
-}
-
-/**
- * @param array<string, mixed> $config
- * @return PDO
- */
-function createDatabaseConnection(array $config): PDO
-{
-    return ConnectionFactory::connect($config, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-}
-
-/**
- * @param array<string, mixed> $config
- * @return Client
- */
-function createRedmineClient(array $config): Client
-{
-    return ClientFactory::redmine($config);
 }
 
 /**

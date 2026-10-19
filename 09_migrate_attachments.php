@@ -61,7 +61,7 @@ function main(array $config, array $cliOptions): void
     );
 
     $databaseConfig = ConfigValue::section($config, 'database');
-    $pdo = createDatabaseConnection($databaseConfig);
+    $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 
     if (in_array('jira', $phasesToRun, true)) {
         printf("[%s] Refreshing staged attachment metadata from staged issues...%s", formatCurrentTimestamp(), PHP_EOL);
@@ -185,7 +185,7 @@ function runAttachmentPullPhase(PDO $pdo, array $config, bool $confirmPull, bool
         return;
     }
 
-    $jiraClient = createJiraClient(ConfigValue::section($config, 'jira'));
+    $jiraClient = ClientFactory::jira(ConfigValue::section($config, 'jira'));
     $passes = 0;
     do {
         $downloadSummary = downloadPendingJiraAttachments($jiraClient, $pdo, $config, $downloadLimit);
@@ -244,7 +244,7 @@ function runAttachmentUploadPhase(
         return;
     }
 
-    $redmineClient = createRedmineClient(ConfigValue::section($config, 'redmine'));
+    $redmineClient = ClientFactory::redmine(ConfigValue::section($config, 'redmine'));
 
     if ($useExtendedApi) {
         ExtendedApi::verifyAvailable($redmineClient, $extendedApiPrefix, 'issues.json');
@@ -1290,33 +1290,6 @@ function sanitizeAttachmentFileName(string $filename): string
     }
 
     return $sanitized;
-}
-
-/**
- * @param array<string, mixed> $config
- * @return PDO
- */
-function createDatabaseConnection(array $config): PDO
-{
-    return ConnectionFactory::connect($config, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-}
-
-/**
- * @param array<string, mixed> $config
- * @return Client
- */
-function createJiraClient(array $config): Client
-{
-    return ClientFactory::jira($config);
-}
-
-/**
- * @param array<string, mixed> $config
- * @return Client
- */
-function createRedmineClient(array $config): Client
-{
-    return ClientFactory::redmine($config);
 }
 
 /**

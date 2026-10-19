@@ -56,11 +56,11 @@ function main(array $config, array $cliOptions): void
     );
 
     $databaseConfig = ConfigValue::section($config, 'database');
-    $pdo = createDatabaseConnection($databaseConfig);
+    $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 
     if (in_array('jira', $phasesToRun, true)) {
         printf("[%s] Fetching Jira watchers...%s", formatCurrentTimestamp(), PHP_EOL);
-        $jiraClient = createJiraClient(ConfigValue::section($config, 'jira'));
+        $jiraClient = ClientFactory::jira(ConfigValue::section($config, 'jira'));
         $summary = fetchJiraWatchers($jiraClient, $pdo);
         printf(
             "[%s] Jira watcher extraction complete. Watchers processed: %d (updated %d, warnings %d).%s",
@@ -91,7 +91,7 @@ function main(array $config, array $cliOptions): void
     if (in_array('push', $phasesToRun, true)) {
         $confirmPush = (bool)($cliOptions['confirm_push'] ?? false);
         $isDryRun = (bool)($cliOptions['dry_run'] ?? false);
-        $redmineClient = createRedmineClient(ConfigValue::section($config, 'redmine'));
+        $redmineClient = ClientFactory::redmine(ConfigValue::section($config, 'redmine'));
         runWatcherPushPhase($pdo, $redmineClient, $confirmPush, $isDryRun);
     } else {
         printf("[%s] Skipping push phase (disabled via CLI option).%s", formatCurrentTimestamp(), PHP_EOL);
@@ -595,33 +595,6 @@ function calculateRateLimitDelayMs(int $attempt, ?int $retryAfterSeconds): int
     $jitter = random_int(0, (int)($base / 2));
 
     return $delay + $jitter;
-}
-
-/**
- * @param array<string, mixed> $config
- * @return PDO
- */
-function createDatabaseConnection(array $config): PDO
-{
-    return ConnectionFactory::connect($config, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-}
-
-/**
- * @param array<string, mixed> $config
- * @return Client
- */
-function createJiraClient(array $config): Client
-{
-    return ClientFactory::jira($config);
-}
-
-/**
- * @param array<string, mixed> $config
- * @return Client
- */
-function createRedmineClient(array $config): Client
-{
-    return ClientFactory::redmine($config);
 }
 
 /**

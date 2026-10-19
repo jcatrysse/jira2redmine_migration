@@ -64,14 +64,14 @@ function main(array $config, array $cliOptions): void
     );
 
     $databaseConfig = ConfigValue::section($config, 'database');
-    $pdo = createDatabaseConnection($databaseConfig);
+    $pdo = ConnectionFactory::connect($databaseConfig);
 
     /** @var array<string, mixed>|null $redmineConfig */
     $redmineConfig = null;
 
     if (in_array('jira', $phasesToRun, true)) {
         $jiraConfig = ConfigValue::section($config, 'jira');
-        $jiraClient = createJiraClient($jiraConfig);
+        $jiraClient = ClientFactory::jira($jiraConfig, 30.0);
 
         printf("[%s] Starting Jira project role extraction...%s", formatCurrentTimestamp(), PHP_EOL);
 
@@ -95,7 +95,7 @@ function main(array $config, array $cliOptions): void
 
     if (in_array('redmine', $phasesToRun, true)) {
         $redmineConfig ??= ConfigValue::section($config, 'redmine');
-        $redmineClient = createRedmineClient($redmineConfig);
+        $redmineClient = ClientFactory::redmine($redmineConfig, 30.0);
 
         printf("[%s] Starting Redmine role snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
 
@@ -1968,7 +1968,7 @@ function runRolePushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, array $re
             return;
         }
 
-        $redmineClient = createRedmineClient($redmineConfig);
+        $redmineClient = ClientFactory::redmine($redmineConfig, 30.0);
         $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
         ExtendedApi::verifyAvailable($redmineClient, $extendedApiPrefix, 'roles.json');
 
@@ -2326,7 +2326,7 @@ function ensureWorkflowGroupRoles(PDO $pdo, bool $confirmPush, bool $isDryRun, a
         return;
     }
 
-    $client = createRedmineClient($redmineConfig);
+    $client = ClientFactory::redmine($redmineConfig, 30.0);
     $prefix = ExtendedApi::prefix($redmineConfig);
     ExtendedApi::verifyAvailable($client, $prefix, 'roles.json');
     $existing = [];
@@ -2665,33 +2665,6 @@ function printUsage(): void
 function printVersion(): void
 {
     printf('%s version %s%s', basename(__FILE__), MIGRATE_ROLES_SCRIPT_VERSION, PHP_EOL);
-}
-
-/**
- * @param array<string, mixed> $databaseConfig
- * @return PDO
- */
-function createDatabaseConnection(array $databaseConfig): PDO
-{
-    return ConnectionFactory::connect($databaseConfig, []);
-}
-
-/**
- * @param array<string, mixed> $jiraConfig
- * @return Client
- */
-function createJiraClient(array $jiraConfig): Client
-{
-    return ClientFactory::jira($jiraConfig, 30.0);
-}
-
-/**
- * @param array<string, mixed> $redmineConfig
- * @return Client
- */
-function createRedmineClient(array $redmineConfig): Client
-{
-    return ClientFactory::redmine($redmineConfig, 30.0);
 }
 
 /**

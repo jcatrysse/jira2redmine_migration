@@ -56,11 +56,11 @@ function main(array $config, array $cliOptions): void
     );
 
     $databaseConfig = ConfigValue::section($config, 'database', 'Missing or invalid configuration section: %s');
-    $pdo = createDatabaseConnection($databaseConfig);
+    $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false]);
 
     if (in_array('jira', $phasesToRun, true)) {
         $jiraConfig = ConfigValue::section($config, 'jira', 'Missing or invalid configuration section: %s');
-        $jiraClient = createJiraClient($jiraConfig);
+        $jiraClient = ClientFactory::jira($jiraConfig, 30.0);
 
         printf("[%s] Starting Jira project extraction...%s", formatCurrentTimestamp(), PHP_EOL);
 
@@ -83,7 +83,7 @@ function main(array $config, array $cliOptions): void
 
     if (in_array('redmine', $phasesToRun, true)) {
         $redmineConfig = ConfigValue::section($config, 'redmine', 'Missing or invalid configuration section: %s');
-        $redmineClient = createRedmineClient($redmineConfig);
+        $redmineClient = ClientFactory::redmine($redmineConfig, 30.0);
 
         printf("[%s] Starting Redmine project snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
 
@@ -853,7 +853,7 @@ function runProjectPushPhase(PDO $pdo, array $config, bool $confirmPush, bool $i
         return;
     }
 
-    $redmineClient = createRedmineClient(ConfigValue::section($config, 'redmine', 'Missing or invalid configuration section: %s'));
+    $redmineClient = ClientFactory::redmine(ConfigValue::section($config, 'redmine', 'Missing or invalid configuration section: %s'), 30.0);
 
     printf("  Push confirmation supplied; creating Redmine projects...%s", PHP_EOL);
     $result = executeRedmineProjectPush($pdo, $redmineClient, $pendingCreations);
@@ -1471,30 +1471,6 @@ function printUsage(): void
 function printVersion(): void
 {
     printf('%s version %s%s', basename(__FILE__), MIGRATE_PROJECTS_SCRIPT_VERSION, PHP_EOL);
-}
-
-/**
- * @param array<string, mixed> $databaseConfig
- */
-function createDatabaseConnection(array $databaseConfig): PDO
-{
-    return ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false]);
-}
-
-/**
- * @param array<string, mixed> $jiraConfig
- */
-function createJiraClient(array $jiraConfig): Client
-{
-    return ClientFactory::jira($jiraConfig, 30.0);
-}
-
-/**
- * @param array<string, mixed> $redmineConfig
- */
-function createRedmineClient(array $redmineConfig): Client
-{
-    return ClientFactory::redmine($redmineConfig, 30.0);
 }
 
 function formatCurrentTimestamp(?string $format = null): string

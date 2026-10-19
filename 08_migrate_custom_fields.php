@@ -66,7 +66,7 @@ function main(array $config, array $cliOptions): void
     );
 
     $databaseConfig = ConfigValue::section($config, 'database', 'Missing configuration section "%s".');
-    $pdo = createDatabaseConnection($databaseConfig);
+    $pdo = ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 
     /** @var array<string, mixed>|null $redmineConfig */
     $redmineConfig = null;
@@ -75,7 +75,7 @@ function main(array $config, array $cliOptions): void
 
     if (in_array('jira', $phasesToRun, true)) {
         $jiraConfig = ConfigValue::section($config, 'jira', 'Missing configuration section "%s".');
-        $jiraClient = createJiraClient($jiraConfig);
+        $jiraClient = ClientFactory::jira($jiraConfig);
 
         printf("[%s] Starting Jira custom field extraction...%s", formatCurrentTimestamp(), PHP_EOL);
 
@@ -145,7 +145,7 @@ function main(array $config, array $cliOptions): void
         $redmineConfig ??= ConfigValue::section($config, 'redmine', 'Missing configuration section "%s".');
         $redmineUseExtendedApi ??= ExtendedApi::enabled($redmineConfig, (bool)($cliOptions['use_extended_api'] ?? false));
         $redmineExtendedApiPrefix ??= $redmineUseExtendedApi ? ExtendedApi::prefix($redmineConfig) : null;
-        $redmineClient = createRedmineClient($redmineConfig);
+        $redmineClient = ClientFactory::redmine($redmineConfig);
 
         printf("[%s] Starting Redmine custom field snapshot...%s", formatCurrentTimestamp(), PHP_EOL);
 
@@ -5602,7 +5602,7 @@ function runCustomFieldPushPhase(PDO $pdo, bool $confirmPush, bool $isDryRun, ar
             }
         }
 
-        $redmineClient = createRedmineClient($redmineConfig);
+        $redmineClient = ClientFactory::redmine($redmineConfig);
         $extendedApiPrefix = ExtendedApi::prefix($redmineConfig);
         ExtendedApi::verifyAvailable($redmineClient, $extendedApiPrefix, 'custom_fields.json');
 
@@ -7171,30 +7171,6 @@ function encodeJsonColumn(mixed $value): ?string
         throw new RuntimeException('Failed to encode JSON column value: ' . $exception->getMessage(), 0, $exception);
     }
 }
-/**
- * @param array<string, mixed> $databaseConfig
- */
-function createDatabaseConnection(array $databaseConfig): PDO
-{
-    return ConnectionFactory::connect($databaseConfig, [PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-}
-
-/**
- * @param array<string, mixed> $jiraConfig
- */
-function createJiraClient(array $jiraConfig): Client
-{
-    return ClientFactory::jira($jiraConfig);
-}
-
-/**
- * @param array<string, mixed> $redmineConfig
- */
-function createRedmineClient(array $redmineConfig): Client
-{
-    return ClientFactory::redmine($redmineConfig);
-}
-
 function decodeJsonResponse(ResponseInterface $response): mixed
 {
     $body = trim((string)$response->getBody());
