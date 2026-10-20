@@ -31,7 +31,7 @@ step() { # step NAME script args...
   local start=$(date +%s)
   (cd "$REPO" && php "$@") > "$logdir/$name.log" 2>&1
   local rc=$?
-  printf '%-14s exit=%d %4ds errors=%d\n' "$name" $rc $(( $(date +%s) - start )) "$(grep -ciE '\[error\]|fatal|exception' "$logdir/$name.log")" | tee -a "$logdir/summary.txt"
+  printf '%-14s exit=%d %4ds errors=%d\n' "$name" $rc $(( $(date +%s) - start )) "$(grep -ciE '\[error\]|\[failed\]|fatal|exception' "$logdir/$name.log")" | tee -a "$logdir/summary.txt"
 }
 mark() { # mark S0|S1|S2|S3|end: the one run's snapshot points (docs/PRODUCTION.md B7)
   echo "mark $1 $(date -u +%FT%TZ)" | tee -a "$logdir/summary.txt"
