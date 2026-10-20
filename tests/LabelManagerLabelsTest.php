@@ -37,4 +37,22 @@ final class LabelManagerLabelsTest extends TestCase
         self::assertStringContainsString('foreach (LabelManagerLabels::split($entry) as $label) {', $ten);
         self::assertStringContainsString("LabelManagerLabels::all(\$value['labels']),", $ten);
     }
+
+    public function testAnIssueCountsForALabelAppFieldOnlyWithALabel(): void
+    {
+        // B91: Jira gives every issue in a project with the field an object, also without a label
+        self::assertTrue(LabelManagerLabels::isApp('ari:cloud:ecosystem::extension/639553fa/37f393d5/static/label-manager-for-jira'));
+        self::assertFalse(LabelManagerLabels::isApp('com.atlassian.jira.plugin.system.customfieldtypes:labels'));
+        self::assertFalse(LabelManagerLabels::isApp(null));
+
+        self::assertTrue(LabelManagerLabels::hasLabels(['labels' => ['FOCUS_III'], 'colors' => ['light-grey']]));
+        self::assertFalse(LabelManagerLabels::hasLabels(['labels' => [], 'colors' => [], 'labelSource' => 'global']));
+        self::assertFalse(LabelManagerLabels::hasLabels(['labels' => [' , '], 'colors' => ['']]));
+        self::assertFalse(LabelManagerLabels::hasLabels(null));
+        self::assertFalse(LabelManagerLabels::hasLabels('FOCUS_III'));
+
+        $eight = (string)file_get_contents(__DIR__ . '/../08_migrate_custom_fields.php');
+        self::assertStringContainsString('LabelManagerLabels::isApp(', $eight);
+        self::assertStringContainsString('LabelManagerLabels::hasLabels(json_decode($value, true))', $eight);
+    }
 }

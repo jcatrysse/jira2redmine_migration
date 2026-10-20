@@ -2666,6 +2666,29 @@ function purgeOrphanedCustomFieldMappings(PDO $pdo): void
 }
 
 /**
+ * The staged issues whose value of a label app field holds a label (B91, LabelManagerLabels::hasLabels).
+ */
+function countIssuesWithLabels(PDO $pdo, string $fieldId): int
+{
+    $statement = $pdo->prepare(
+        "SELECT JSON_EXTRACT(raw_payload, CONCAT('$.fields.', :field_id)) FROM staging_jira_issues WHERE JSON_VALID(raw_payload)"
+    );
+    if ($statement === false) {
+        throw new RuntimeException('Failed to prepare the label usage statement.');
+    }
+    $statement->execute(['field_id' => $fieldId]);
+    $count = 0;
+    while (($value = $statement->fetchColumn()) !== false) {
+        if (is_string($value) && LabelManagerLabels::hasLabels(json_decode($value, true))) {
+            $count++;
+        }
+    }
+    $statement->closeCursor();
+
+    return $count;
+}
+
+/**
  * @return array{
  *     analysed_fields: int,
  *     fields_with_values: int,
@@ -2700,7 +2723,7 @@ function runCustomFieldUsagePhase(PDO $pdo): array
     $issuesCountStatement->closeCursor();
 
     try {
-        $fieldsStatement = $pdo->query('SELECT id, name FROM staging_jira_fields WHERE is_custom = 1 ORDER BY id');
+        $fieldsStatement = $pdo->query('SELECT id, name, schema_custom FROM staging_jira_fields WHERE is_custom = 1 ORDER BY id');
     } catch (PDOException $exception) {
         throw new RuntimeException('Failed to query Jira custom fields for usage analysis: ' . $exception->getMessage(), 0, $exception);
     }
@@ -2784,7 +2807,11 @@ function runCustomFieldUsagePhase(PDO $pdo): array
         $issuesWithValue = 0;
         $issuesWithNonEmptyValue = 0;
 
-        if ($totalIssues > 0) {
+        if ($totalIssues > 0 && LabelManagerLabels::isApp(isset($field['schema_custom']) ? (string)$field['schema_custom'] : null)) {
+            // B91: a label app value counts only with a label; Jira gives the others an empty object
+            $issuesWithValue = countIssuesWithLabels($pdo, $fieldId);
+            $issuesWithNonEmptyValue = $issuesWithValue;
+        } elseif ($totalIssues > 0) {
             $usageStatement->execute(['field_id' => $fieldId]);
             $usageRow = $usageStatement->fetch(PDO::FETCH_ASSOC) ?: [];
             $usageStatement->closeCursor();

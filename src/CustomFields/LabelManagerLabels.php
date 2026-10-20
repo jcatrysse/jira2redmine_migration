@@ -40,4 +40,20 @@ final class LabelManagerLabels
 
         return $labels;
     }
+
+    /** A field of the label app, by its Jira type ("...static/label-manager-for-jira"). */
+    public static function isApp(?string $schemaCustom): bool
+    {
+        return $schemaCustom !== null && str_contains($schemaCustom, 'label-manager-for-jira');
+    }
+
+    /**
+     * Whether an issue's value of a label app field holds a label. Jira gives every issue in a project that has the
+     * field an object, also without labels ({"labels": [], "colors": []}): 08's usage counted those as values (B91,
+     * "Remotely Operated Towed Vehicle": 111 issues counted, 14 with a label in the 14 projects).
+     */
+    public static function hasLabels(mixed $value): bool
+    {
+        return is_array($value) && is_array($value['labels'] ?? null) && self::all($value['labels']) !== [];
+    }
 }
