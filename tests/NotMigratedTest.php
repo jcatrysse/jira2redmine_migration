@@ -30,7 +30,8 @@ final class NotMigratedTest extends TestCase
     public function testJansDecisionsAreTheConfiguredOutcome(): void
     {
         // decision 20: the service desk fields are not migrated (IGNORED, not MANUAL); decision 22: TEST is not migrated;
-        // decision 40: Jira's AI agent sessions are not migrated either (B78: an issue with a session was held back)
+        // decision 40: Jira's AI agent sessions are not migrated either (B78: an issue with a session was held back);
+        // decision 44: nor "[CHART] Date of First Response", which Jira computes (B87: Redmine refused its date-time format)
         $config = require __DIR__ . '/../config/config.default.php';
 
         self::assertSame(['TEST'], $config['migration']['projects']['not_migrated']);
@@ -38,7 +39,12 @@ final class NotMigratedTest extends TestCase
             'com.atlassian.servicedesk:sd-customer-organizations',
             'com.atlassian.servicedesk:sd-request-participants',
             'com.atlassian.jira.plugin.system.customfieldtypes:agent-sessions',
+            'com.atlassian.jira.ext.charting:firstresponsedate',
         ], $config['migration']['custom_fields']['not_migrated']);
+        self::assertTrue(NotMigrated::fieldType(
+            $config['migration']['custom_fields']['not_migrated'],
+            'com.atlassian.jira.ext.charting:firstresponsedate'
+        ));
     }
 
     public function testTheScriptsApplyIt(): void

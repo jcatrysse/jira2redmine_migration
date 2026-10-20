@@ -82,11 +82,13 @@ return [
             // Jan, decision 20 (2026-10-14): Jira field types that are not migrated; 08 marks them IGNORED (not
             // MANUAL), their values stay in Jira only. The service desk fields "Organizations" and "Request
             // participants"; decision 40 (2026-10-16): "Agent Sessions", Jira's AI agent sessions (B78: 08 made it a
-            // list field and 10 held back an issue with a session).
+            // list field and 10 held back an issue with a session); decision 44 (2026-10-20): "[CHART] Date of First
+            // Response", which Jira computes (B87: Redmine has no date-time field, 08's create failed with 422).
             'not_migrated' => [
                 'com.atlassian.servicedesk:sd-customer-organizations',
                 'com.atlassian.servicedesk:sd-request-participants',
                 'com.atlassian.jira.plugin.system.customfieldtypes:agent-sessions',
+                'com.atlassian.jira.ext.charting:firstresponsedate',
             ],
         ],
         // tools/workflow_plan.php (Jan, decision 13): 'project' gives each project its own Jira workflow through
