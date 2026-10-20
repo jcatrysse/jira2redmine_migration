@@ -90,18 +90,21 @@ order (2026-10-15): upgrade first, check, then migrate Jira into 7.0 (Part B).
 
 ### A.0 What was proven, and what this run proves for the first time
 
-Proven in the cloud test environment: a 5.1-stable-GEOxyz database with the 44 production plugins and
-seeded data (not production data), upgraded in place to 7.0-stable-GEOxyz `71b9479` with the 44 plugins on
-`redmine70-migration`. Since 2026-10-19 the tested core is `7310d11` (the merge of upstream 7.0-stable `37012d5`: no
-conflicts, no migrations, no gem changes; core suite 6,270 runs, 0 failures). The 44 plugins together on `7310d11`
-(PostgreSQL 16, Ruby 3.3.6, Rails 8.1.4, each on its `redmine70-migration` head, more_previews with its sandbox
-required): 8,289 minitest runs and 7,244 rspec examples, 0 failures (the issue_templates drag-and-drop timing spec
-passed on one retry). On the way redmine_view_issue_description `ad36481` fixed a per-request memo that broke 4 of
-redmine_agile's query-count tests. `db:migrate` and `redmine:plugins:migrate` exit 0 with no manual workaround; the schema
-equals a fresh 7.0 install apart from column details without effect (datetime precision); row counts equal;
-the workflow answers of 35 sample transitions identical before and after; 900 pages crawled as admin and as a
-manager, 0 server errors (5.1 itself had 16); 13 of 13 write actions pass. Each plugin's suite is green with
-all 44 installed.
+Proven in the cloud test environment: a 5.1-stable-GEOxyz database with the 44 production plugins and seeded data (not
+production data), upgraded in place to 7.0-stable-GEOxyz `71b9479` with the 44 plugins on `redmine70-migration`. Since
+2026-10-20 the tested core is `f592381`: `7310d11` (the merge of upstream 7.0-stable `37012d5`: no conflicts, no
+migrations, no gem changes; core suite 6,270 runs, 0 failures) plus one fix, the PDF export of a text with a table
+("can't dump hash with default proc", Jan's production error; `lib/redmine/export/pdf.rb` and a unit test, no
+migrations, gems or settings; core suite 6,354 runs, 0 failures). The 44 plugins together on `7310d11` (PostgreSQL 16,
+Ruby 3.3.6, Rails 8.1.4, each on its `redmine70-migration` head, more_previews with its sandbox required): 8,289
+minitest runs and 7,244 rspec examples, 0 failures (the issue_templates drag-and-drop timing spec passed on one retry).
+On `f592381` the plugins that touch the PDF or the issue view ran again, all 0 failures: drawio 75 + 2 runs,
+more_previews 331, issue_field_visibility 62, view_issue_description 91 + 124, core `pdf_test` 7, and a reproduction of
+Jan's error. On the way redmine_view_issue_description `ad36481` fixed a per-request memo that broke 4 of
+redmine_agile's query-count tests. `db:migrate` and `redmine:plugins:migrate` exit 0 with no manual workaround; the
+schema equals a fresh 7.0 install apart from column details without effect (datetime precision); row counts equal; the
+workflow answers of 35 sample transitions identical before and after; 900 pages crawled as admin and as a manager, 0
+server errors (5.1 itself had 16); 13 of 13 write actions pass. Each plugin's suite is green with all 44 installed.
 
 Not proven anywhere yet, so the rehearsal on the clone checks these first:
 - the real production database and files (sizes, old data, plugin data, saved queries, custom SQL, formulas,
@@ -167,7 +170,7 @@ A clone of the production VM carries production's configuration. Before its Redm
 
 ### A.3 What to deploy
 
-Core: `jcatrysse/redmine`, branch `7.0-stable-GEOxyz`, tested at `7310d11` (rehearsal: the commit named in the
+Core: `jcatrysse/redmine`, branch `7.0-stable-GEOxyz`, tested at `f592381` (rehearsal: the commit named in the
 report; production: the same commit). Plugins: one directory per row; **the directory name matters** (it is the plugin id stored in
 the database). Rehearsal: branch `redmine70-migration`; production: `main`/`master` after Jan's merge
 (decision of 2026-10-15), whose tree the coordinator checks is identical to the tested one.
@@ -227,7 +230,9 @@ redmine_resources (decision 25: with them every issue mail fails on 7.0). If any
 Keep from the 5.1 installation: `config/database.yml`, `config/configuration.yml`,
 `config/additional_environment.rb`, the secret (`config/initializers/secret_token.rb` or `secret_key_base`),
 `files/` (or its configured path), `plugins/redmine_issue_view_columns/config/redmine_issue_view_columns.local.rb`
-and its locale file (the GEOxyz relation types), and the themes you keep (A.4 step 4).
+and its locale file (the GEOxyz relation types), and the themes you keep (A.4 step 4). Do **not** carry over
+`config/initializers/99_pdf_export_marshal_fix.rb`, the hotfix Jan may put on 5.1 for the PDF export of a table: core
+`f592381` has the fix (on 7.0 the file would be harmless, the same hook, but it does not belong there).
 
 ### A.4 The upgrade, step by step
 
@@ -304,6 +309,7 @@ else is a finding.
 | 19 | SSO | `bundle exec rake redmine:bless_this_sso:status`; the entry point is now `/oauth/sso/authorize` (callback unchanged) | production: login, SSO-only, sign out |
 | 20 | the whole site | open the issue list, an issue, the agile board, the calendar, the gantt, My page, a wiki page, a helpdesk ticket, a contact, the people page, as admin and as a normal user; on the clone Claude can crawl every menu link and report any 500 | no error page |
 | 21 | GEOxyz relation types | open an issue with a GEOxyz relation (for example "create RMA" or "Wiki"), section Related issues; the labels come from `redmine_issue_view_columns.local.rb` and its locale file, kept from 5.1 (A.3) | the relation's own label, no "Translation missing" (the sign of a forgotten locale file) |
+| 22 | PDF export of a table (core `f592381`) | export an issue whose description has a Markdown table to PDF (the issue, "Also available in: PDF") | a PDF, no 500 |
 
 ### A.6 Cron entries
 
