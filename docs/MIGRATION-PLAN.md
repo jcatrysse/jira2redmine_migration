@@ -1,24 +1,40 @@
 # Jira Cloud to Redmine: test migrations and script upgrade
 
-## Samenvatting voor Jan (2026-10-19, B2)
+## Samenvatting voor Jan (2026-10-20, B2)
 
-**Stand.** Alles staat op `redmine70-migration`, QA groen (1.161 tests). Jira bleef read-only: alleen GET-calls.
+**Stand.** Alles staat op `redmine70-migration`, QA groen (1.169 tests). Jira bleef read-only: alleen GET-calls.
+
+**Vannacht: jouw drie keuzes over fase 6 (beslissing 43), gebouwd en bewezen**
+- **Eén optie-regel voor alle 16 scripts:** `-h` en `-V` overal; een onbekende optie, een optie zonder waarde, een los
+  of leeg argument en een lege `--phases=` stoppen het script, ook naast `--help`. Eén keuze van mij binnen de regel:
+  `--phases jira` (met spatie) is overal een fout, want elke usage-tekst en het runbook geven `--phases=LIST`.
+- **De 12 baseline-fouten opgelost, geen baseline meer:** bij een PCRE-fout blijft de tekst zoals hij was, een
+  onbruikbare waarde slaat het veld over; telkens een `[warn]`-regel met Jira-sleutel en veld, geteld in de samenvatting
+  van 08, 10 en 11. Per plek staat het gedrag in beslissing 43 en SCRIPTS.md.
+- **B86 opgelost:** een veld met voorgestelde projecten is niet meer standaard "voor alle projecten".
+- **Bewezen met de record proxy**, oude code (`a6c678f`) tegen de nieuwe (`62e0271`) vanaf dezelfde Jira-tape: 5.1
+  18.486 = 18.486 requests, 7.0 18.557 = 18.557, `compare_requests.php` exit 0, ook tegen een verse run van de oude
+  code. B86: 0 van de 111 rijen in de staging verschillen (de rij met lege keuze en wel projecten komt in deze data niet
+  voor). Alle tellers van de fallbacks: 0.
+- **De run van de 14 projecten op 7.0 (de code van fase 6, door de proxy gelijk aan de eindcode): 3 u 37 min** (595c7f2:
+  3 u 44 min). 21.007 geschiedenis-journals en 302 bestanden (595c7f2: 21.006 en 302), 4.936 issues, 13.744 commentaren.
+  **verify: 0 fouten** (595c7f2: 5, vier door Jira-wijzigingen tijdens de run en SURV-921, sindsdien in verify
+  opgelost); laatst-bijgewerkt-door en laatste status 267 van 267. De ene mislukte relatie is dezelfde als toen
+  (Jira-link 20782, een kringverwijzing).
+- F6 (Redmine onder een sub-pad) blijft eruit: productie draait op `http://127.0.0.1:8080`.
 
 **Vanavond: fase 6 (M1) afgerond, zonder gedragswijziging (jouw keuze: voor de generale repetitie)**
 - **De 16 scripts delen hun basiscode nu via `src/`:** de start (help, versie, de `[ERROR]`-regel), de
   optie-parsing, de fases, de configuratie, de database, de clients en de tijd. Ongeveer 2.300 regels kopieën weg,
-  elke verschoven functie met unit tests. De verschillen tussen de kopieën (bv. `-h` niet in elk script) zijn bewust
-  behouden; SCRIPTS.md heeft de tabel.
-- **Alle 16 scripts onder PHPStan level 8 en PSR-12.** Een baseline van 12 fouten die niet weg kunnen zonder
-  gedragswijziging (een PCRE-fout of een onleesbare waarde in 08, 10 en 11), elk met de reden erbij.
+  elke verschoven functie met unit tests. De verschillen tussen de kopieën (bv. `-h` niet in elk script) bleven
+  eerst behouden; sinds beslissing 43 geldt één regel.
+- **Alle 16 scripts onder PHPStan level 8 en PSR-12.** Eerst met een baseline van 12 fouten die niet weg konden zonder
+  gedragswijziging (08, 10 en 11); beslissing 43 loste ze op.
 - **Bewezen met de record proxy**, voor en na vanaf dezelfde Jira-data (een opgenomen "tape"): 5.1 18.486 = 18.486
   requests, 7.0 18.557 = 18.557, `compare_requests.php` exit 0. Inclusief de geschiedenis, de volgorde per issue (C)
   en Anonymous (42). Samenvattingen en verify gelijk; de run duurt 22 tot 23 min i.p.v. 59 (Jira van de tape).
 - **Bevinding B86** (08, gevonden door PHPStan): een standaardwaarde las een variabele die nooit gezet wordt.
-  Behouden zoals het was, met de bevinding in de code.
-- **Open voor jou** (Open questions): één optie-regel voor alle scripts, de baseline zo laten, B86. F6 (Redmine onder
-  een sub-pad) blijft een aparte gedragswijziging, nog niet gedaan.
-- **De eindrun van de 14 projecten op 7.0** met de nieuwe code loopt; de vergelijking met 595c7f2 volgt hier.
+  Opgelost in beslissing 43 (hierboven).
 
 **Vandaag: jouw herziene beslissing 41 (Jira-geschiedenis tijdens de migratie), gebouwd en bewezen**
 - **Status, toegewezene en prioriteit** komen als echte journals mee in 11, met hun eigen auteur en tijd, via het
@@ -671,7 +687,7 @@ Jan's decisions on what phase 6 left (2026-10-19 evening, multiple choice, relay
     - **B86 fixed** (Jan: fix it): the stored choice, else "for all projects" only for a field without proposed projects
       (`FieldScope::isForAll`). Commit `62e0271`.
     - **F6 stays out**: production runs Redmine on `http://127.0.0.1:8080`, without a sub-path.
-    Proof: Results, "Decision 43, the proof" (the proxy runs follow).
+    Proof: Results, "Decision 43, the proof".
 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
@@ -752,7 +768,7 @@ choices) is still open.
 
 | # | finding | where |
 |---|---|---|
-| M1 | 8 helper functions copied in all 16 scripts (CLI, config, DB, timestamps); Jira/Redmine clients 13 to 15 times | `^function` across `[0-9]*.php`. Clients: ClientFactory (phase 6); Extended API helpers and phase selection shared (B2, work list 11). **Closed** (B2, 2026-10-19): the eight and the client creation in `src/`, all 16 scripts under PHPStan level 8 and PSR-12 (work list 11) |
+| M1 | 8 helper functions copied in all 16 scripts (CLI, config, DB, timestamps); Jira/Redmine clients 13 to 15 times | `^function` across `[0-9]*.php`. Clients: ClientFactory (phase 6); Extended API helpers and phase selection shared (B2, work list 11). **Closed** (B2, 2026-10-19): the eight and the client creation in `src/`, all 16 scripts under PHPStan level 8 and PSR-12 (work list 11); decision 43 then removed the baseline; the one run of the 14 projects on that code: Results |
 | M2 | No tests of any kind | repo |
 | M3 | 429 handling in 4 of 16 scripts (09, 11, 14, 16); in `10_migrate_issues.php` one 429 during the issue search fails the whole project | `10_migrate_issues.php:588` |
 | M4 | Gateway URL breaks the Jira client: `base_uri` plus a path with a leading slash (`/rest/api/3/...`) drops `/ex/jira/{cloudId}` | `createJiraClient`, every Jira call |
@@ -1299,7 +1315,8 @@ Apache), `attachment_max_size` 4 GB, the same Guzzle streaming upload as 09:
   counts as not given and runs every phase. Advice: one rule (`-h` and `-V` everywhere, an unknown option an error), one
   small commit with its own test. (2) **The 12 errors in the PHPStan baseline**: a PCRE error or an undecodable value
   ends in a TypeError or a warning (08, 10, 11). No test run's log has one; handling them means choosing what the script
-  does then (keep the text, skip the field). Advice: leave them. (3) **B86**: see Findings.
+  does then (keep the text, skip the field). Advice: leave them. (3) **B86**: see Findings. **Decided the same evening
+  (decision 43): (1) yes, (2) fix them, (3) fix it; done and proven.**
 
 ## Findings
 
@@ -1431,7 +1448,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B83 | 15's transform kept every row whose checklist had not changed (automation hash), a FAILED row too | a rerun of 15 never retried a failed checklist, against PRODUCTION.md B10 ("FAILED rows are judged again"): DOC-292 (B80) stayed FAILED with 6 of its 9 items after the fix of B80 | **fixed**: an unchanged row is kept unless its push failed; on 5.1 15 then pushed DOC-292 again, all 9 items, the long one cut to 512 characters, the issue's updated time unchanged, no journal |
 | B84 | Redmine's "Last updated by" (`Issue#last_updated_by`, the issue list column; 5.1 and 7.0) is the author of the journal with the highest id, not of the latest one; 11 pushed every comment before every changelog entry | on 55 of the 721 issues with journals (GEOS, SIS, OAC, LABO; 222 of 1,870 in the earlier 7.0 run of DOC, GEOS, OAC, SIS, SURV) the last updated user was not the last person who acted in Jira; history written after 11 would have changed it on most issues (decision 41) | **fixed** (`868d07c`, decision 41 option C): 11 pushes per issue in Jira's time order, the history series in between: 0 on 5.1 and 7.0, the requests the same (record proxy, compared as a set) |
 | B85 | 11 sent each journal with the issue's updated time set to that journal's own time (the Extended API's `updated_on` override) | after 11 an issue showed the time of the last journal pushed instead of Jira's updated time that 10 had set: 647 of 1,013 issues (633 in time order) | **fixed** (`800b8d4`): every journal sends Jira's updated time of its issue: 0 |
-| B86 | 08's transform defaulted `proposed_is_for_all` with `empty($currentProposedProjectIds)`, a variable that is never set (the decoded ids are `$decodedProjectIds`), so always true; PHPStan found it (phase 6) | a mapping without `proposed_is_for_all` gets true; a field with proposed projects gets false from the project rule further down before it is pushed, so the effect is limited to the rows 08 writes before that rule (unused, kept as edited, manual); not measured | **kept** (phase 6 changes no behaviour): the code says `true` with the finding; whether it should read the proposed projects is for Jan (Open questions) |
+| B86 | 08's transform defaulted `proposed_is_for_all` with `empty($currentProposedProjectIds)`, a variable that is never set (the decoded ids are `$decodedProjectIds`), so always true; PHPStan found it (phase 6) | a mapping without `proposed_is_for_all` gets true; a field with proposed projects gets false from the project rule further down before it is pushed, so the effect is limited to the rows 08 writes before that rule (unused, kept as edited, manual); measured after the fix: 0 rows (a row without a stored choice but with proposed projects does not occur in the test data) | **fixed** (decision 43, `62e0271`): the stored choice, else for all projects only without proposed projects (`FieldScope::isForAll`); proxy on 5.1 and 7.0: requests identical, 0 of 111 staging rows differ |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
@@ -2037,3 +2054,49 @@ commits compile to the same opcodes (opcache, before the optimizer), 16 of 16 fo
 of 11 built from two parts). Checking the export of the before commit showed that a copied commit loaded `src/` from
 the working tree through the vendor symlink; the proof runs use exports with their own autoloader, and the earlier
 proofs that used exports (decision 41, 42) ran while the working tree's `src/` matched them.
+
+**Decision 43, the proof (B2, 2026-10-19/20).** Old: `a6c678f` (phase 6); new: `62e0271` (one command line rule, the 12
+baseline spots, B86). GEOS, SIS, OAC and LABO, `run_all.sh` in full with the stability pass, the workflows and restore,
+the sample, the history, option C and Anonymous, on 5.1 and 7.0, every Redmine request recorded, Jira from the tape of
+the phase 6 proof (`J2R_JIRA_TAPE`). The new code ran once; the old code twice, the phase 6 after run and a fresh run
+the same night for the staging comparison.
+
+| | 5.1 | 7.0 |
+|---|---|---|
+| Redmine requests, old (`70-m1-after`/`51-m1-after`) and new | 18,486 and 18,486 | 18,557 and 18,557 |
+| `compare_requests.php`, old against new | **IDENTICAL, 0 differing, exit 0** | **IDENTICAL, 0 differing, exit 0** |
+| the fresh old run against the new | IDENTICAL, 18,486 | IDENTICAL, 18,557 |
+| `migration_mapping_custom_fields`, fresh old run against new (B86) | **0 of 111 rows differ** | **0 of 111 rows differ** |
+| fallbacks (decision 43) in 08, 10 and 11 | 0 in all 11 summary lines | 0 in all 11 summary lines |
+| history (11) | 4,357 journals, 188 files, 0 failed | the same |
+| run summary and verify | the same apart from times | the same apart from times |
+| run time (tape) | 21 min (old 20) | 18 min (old 17) |
+
+The staging comparison masks one text: the usage snapshot time in the notes of unused fields, which is the time of the
+run. B86 shows only for a field whose stored row has no `proposed_is_for_all` but has proposed projects; 08's own writes
+set both together, so the test data holds none (0 rows with an empty choice in either run). The command line rule
+changes no command line the runbook uses: every request is the same.
+
+**The one run of the 14 projects on the final code (M1, B2, 2026-10-19/20).** Code `a6c678f` (phase 6; the head with
+decision 43 is proxy-proven identical to it, above), redmine_extended_api `b423b4c`, the procedure of 595c7f2's run
+(`run_all.sh`, EMPTY_TMP, RELINK, WORKFLOWS, RESTORE, the sample, a Redmine with an existing tracker and project), live
+Jira, Anonymous as the default author (decision 42; 595c7f2's run had the admin):
+
+| | 595c7f2's run (code `baffd9d`) | this run (`a6c678f`) |
+|---|---|---|
+| run | 3 h 44 min (S0 to S1 46, S1 to S2 42, S2 to S3 2 h 00, after S3 14) | **3 h 37 min** (47, 41, 1 h 55, 14) |
+| 10 | 1,574 s | 1,472 s |
+| 11 | 109 min: Jira 71, history prepared in 1.5, push 36 | 104 min: Jira 68, history prepared in 5, push 31 |
+| issues, comments | 4,935, 13,744 | 4,936, 13,744 |
+| history | 4,423 issues, 21,006 journals, 302 files, 442 skipped and connected, 19 dropped, 1 mismatch (GEOS-120), 102 open parents, 0 failed | 4,424 issues, **21,007 journals, 302 files**, 442, 19, 0 mismatches, 102, 0 failed |
+| relations | 1,683 created, 1 failed (Jira link 20782, a circular dependency), 14 ignored | the same, the same link |
+| watchers | 10,313 | 10,315 |
+| relink check | 0 texts with a Jira link left | 0 |
+| memberships after restore | equal 04's proposal | equal 04's proposal |
+| existing tracker's global workflow | unchanged (4 rows, sha256 6c384767d3536829) | unchanged (the same) |
+| verify (25 per project) | 7,946 checks, **5 failures** (four Jira changes during the run, SURV-921 fixed in verify since) | 7,945 checks, **0 failures**; "journals: last updated by the latest" and "history: last status as in Jira" 267 of 267 |
+
+The differences in counts are Jira's: one issue, three changelog entries and two watchers more since the afternoon. The
+5.1 proxy runs shared the machine (4 cores) with this run from 20:55 to 21:38, in S0 to S2; the times include that. The
+history took 5 minutes to prepare instead of 1.5; the phase 6 code is not the cause: the 4-project runs prepared it in
+10 and 11 seconds before and after phase 6. Production stays about 6 to 9 hours with the attachments (PRODUCTION.md B8).
