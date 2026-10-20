@@ -2,7 +2,24 @@
 
 ## Samenvatting voor Jan (2026-10-20, B2)
 
-**Stand.** Alles staat op `redmine70-migration`, QA groen (1.169 tests). Jira bleef read-only: alleen GET-calls.
+**Stand.** Alles staat op `redmine70-migration`, QA groen (1.175 tests). Jira bleef read-only: alleen GET-calls.
+
+**Vanochtend: jouw beslissing 44 (twee velden die Redmine weigerde), gebouwd en bewezen**
+- **"[CHART] Date of First Response" gaat niet mee** (B87), zoals de service desk-velden: Jira berekent het. Het staat
+  in de niet-gemigreerde types van de standaardconfiguratie; 08 maakt het IGNORED en probeert het niet meer aan te
+  maken.
+- **"Remotely Operated Towed Vehicle" heet in Redmine "ROTV"** (B88), via `migration.custom_fields.names` in de
+  standaardconfiguratie (blijft bij een herhaling). Algemeen: 08 kort elke naam boven 30 tekens in tot 30, met een noot
+  op de mappingrij; een met de hand bewerkte rij houdt zijn naam.
+- **De samenvatting van `run_all.sh` telt nu ook `[failed]`** (B89).
+- **Bewezen met de record proxy op 5.1 en 7.0**, oude code tegen de nieuwe vanaf dezelfde Jira-tape: alleen de verwachte
+  verschillen. De geweigerde aanmaak van "[CHART]" is weg, "ROTV" wordt aangemaakt (plus een read van de nieuwe opties),
+  en SIS-1 krijgt zijn waarde "FOCUS_III". Alle andere requests identiek en in volgorde (18.483 en 18.554). In de
+  testdata heeft maar 1 issue een echte ROTV-waarde: de telling van 39 telde 38 lege Label Manager-waarden mee (B91,
+  gemeld).
+- **Gevonden, gemeld en niet opgelost:** mijn Jira-tape (alleen testruns) kon 30 bijlagen niet opslaan door een header
+  die geen geldige UTF-8 is (B90). In elke tape-run sloegen die 30 downloads mislukt over, aan beide kanten gelijk; de
+  vergelijkingen blijven geldig, maar die 30 uploads zaten er niet in. Productie en de live runs gebruiken de tape niet.
 
 **Vannacht: jouw drie keuzes over fase 6 (beslissing 43), gebouwd en bewezen**
 - **Eén optie-regel voor alle 16 scripts:** `-h` en `-V` overal; een onbekende optie, een optie zonder waarde, een los
@@ -688,6 +705,25 @@ Jan's decisions on what phase 6 left (2026-10-19 evening, multiple choice, relay
       (`FieldScope::isForAll`). Commit `62e0271`.
     - **F6 stays out**: production runs Redmine on `http://127.0.0.1:8080`, without a sub-path.
     Proof: Results, "Decision 43, the proof".
+
+Jan's decision on two fields Redmine refused (2026-10-20, multiple choice, relayed by the coordinator):
+
+44. **The two custom fields Redmine refused in every run (B87, B88).**
+    - **"[CHART] Date of First Response" is not migrated** (B87), like the service desk fields (decision 20): Jira
+      computes it. Its type, `com.atlassian.jira.ext.charting:firstresponsedate`, is in
+      `migration.custom_fields.not_migrated` of the default configuration; 08 marks the field IGNORED with the
+      not-migrated note and no longer tries to create it (until now: Redmine's non-existent format `datetime`, 422). 10
+      had no report line for it. Commit `6762b97`.
+    - **A custom field name fits Redmine's 30 characters** (B88): 08 shortens any proposed name over 30 characters to
+      30, with a note on the mapping row, as 07 does for trackers (B1); a cascading parent keeps its " (Parent)" and
+      shortens the name before it. **"Remotely Operated Towed Vehicle" (`customfield_10067`) is "ROTV"**:
+      `migration.custom_fields.names` in the default configuration, by Jira field id. A configured name wins over the
+      Jira name and over a name an earlier run stored, so it survives a rerun; a row edited by hand keeps its name (08
+      skips it, as before). The note is on the row for the review before the push ("Name from
+      migration.custom_fields.names (Jan, decision 44; Jira: ...)"); after a create 08 leaves the notes of a created row
+      empty, as for every created field. Commit `2475699`.
+    - B89 (the test summary did not count `[failed]`) was fixed with them, Class A: commit `059d82b`.
+    Proof: Results, "Decision 44, the proof".
 
 ## Decided overnight (2026-10-13/14), for Jan to confirm
 
@@ -1449,9 +1485,11 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B84 | Redmine's "Last updated by" (`Issue#last_updated_by`, the issue list column; 5.1 and 7.0) is the author of the journal with the highest id, not of the latest one; 11 pushed every comment before every changelog entry | on 55 of the 721 issues with journals (GEOS, SIS, OAC, LABO; 222 of 1,870 in the earlier 7.0 run of DOC, GEOS, OAC, SIS, SURV) the last updated user was not the last person who acted in Jira; history written after 11 would have changed it on most issues (decision 41) | **fixed** (`868d07c`, decision 41 option C): 11 pushes per issue in Jira's time order, the history series in between: 0 on 5.1 and 7.0, the requests the same (record proxy, compared as a set) |
 | B85 | 11 sent each journal with the issue's updated time set to that journal's own time (the Extended API's `updated_on` override) | after 11 an issue showed the time of the last journal pushed instead of Jira's updated time that 10 had set: 647 of 1,013 issues (633 in time order) | **fixed** (`800b8d4`): every journal sends Jira's updated time of its issue: 0 |
 | B86 | 08's transform defaulted `proposed_is_for_all` with `empty($currentProposedProjectIds)`, a variable that is never set (the decoded ids are `$decodedProjectIds`), so always true; PHPStan found it (phase 6) | a mapping without `proposed_is_for_all` gets true; a field with proposed projects gets false from the project rule further down before it is pushed, so the effect is limited to the rows 08 writes before that rule (unused, kept as edited, manual); measured after the fix: 0 rows (a row without a stored choice but with proposed projects does not occur in the test data) | **fixed** (decision 43, `62e0271`): the stored choice, else for all projects only without proposed projects (`FieldScope::isForAll`); proxy on 5.1 and 7.0: requests identical, 0 of 111 staging rows differ |
-| B87 | 08 maps a Jira date-time field to the Redmine format `datetime`, which neither 5.1 nor 7.0 has (string, text, int, float, date, bool, list, enumeration, user, version, link, attachment, progressbar): "[CHART] Date of First Response" (`customfield_10024`, `com.atlassian.jira.ext.charting:firstresponsedate`) | 422 "Format is not included in the list" in every run whose 08 creates fields (60 of the 70 recorded runs; the other 10 were later WIKI batches that created none); the field is not created (CREATION_FAILED) and 10 leaves its values out: 2,516 of the 14 projects' issues (51 %), 576 of 1,013 in GEOS/SIS/OAC/LABO; verify compares only migrated fields and does not see it | 08 transform (`:datetime` and schema type `datetime`); **reported to Jan, not fixed** (found 2026-10-20 while explaining the 5.1/7.0 request difference) |
-| B88 | 08 proposes a custom field name longer than Redmine's 30 characters (`validates_length_of :name, maximum: 30`, 5.1 and 7.0); 07 shortens tracker names (B1), 08 does not: "Remotely Operated Towed Vehicle" (31, `customfield_10067`, a Label Manager field) | 422 "Name is too long" in 54 of those 60 runs (not in six early ones: full1, gate, relink1, surv, bench); the field is not created and 10 leaves its values out: 39 of 1,013 issues in GEOS/SIS/OAC/LABO (the 14 projects' count is not logged) | 08 transform; **reported to Jan, not fixed** |
-| B89 | `run_all.sh` counts `[error]`, `fatal` and `exception` in a step's log as its errors, not `[failed]`, which 08 prints for a field Redmine refused | B87 and B88 showed in every run's 08 log but the summary said `08-push ... errors=0` | `tools/testenv/run_all.sh` (test tooling only); **reported, not fixed** |
+| B87 | 08 maps a Jira date-time field to the Redmine format `datetime`, which neither 5.1 nor 7.0 has (string, text, int, float, date, bool, list, enumeration, user, version, link, attachment, progressbar): "[CHART] Date of First Response" (`customfield_10024`, `com.atlassian.jira.ext.charting:firstresponsedate`) | 422 "Format is not included in the list" in every run whose 08 creates fields (60 of the 70 recorded runs; the other 10 were later WIKI batches that created none); the field is not created (CREATION_FAILED) and 10 leaves its values out: 2,516 of the 14 projects' issues (51 %), 576 of 1,013 in GEOS/SIS/OAC/LABO; verify compares only migrated fields and does not see it | 08 transform (`:datetime` and schema type `datetime`); **fixed** (decision 44, `6762b97`): not migrated, IGNORED with the not-migrated note; proxy on 5.1 and 7.0: the refused create is gone |
+| B88 | 08 proposes a custom field name longer than Redmine's 30 characters (`validates_length_of :name, maximum: 30`, 5.1 and 7.0); 07 shortens tracker names (B1), 08 does not: "Remotely Operated Towed Vehicle" (31, `customfield_10067`, a Label Manager field) | 422 "Name is too long" in 54 of those 60 runs (not in six early ones: full1, gate, relink1, surv, bench); the field is not created and 10 leaves its values out: 1 issue in GEOS/SIS/OAC/LABO (SIS-1, "FOCUS_III"; the usage count said 39, B91) | 08 transform; **fixed** (decision 44, `2475699`): names shortened to 30 with a note, this field "ROTV" by configuration; proxy on 5.1 and 7.0: ROTV created, SIS-1 has its value |
+| B89 | `run_all.sh` counts `[error]`, `fatal` and `exception` in a step's log as its errors, not `[failed]`, which 08 prints for a field Redmine refused | B87 and B88 showed in every run's 08 log but the summary said `08-push ... errors=0` | `tools/testenv/run_all.sh` (test tooling only); **fixed** (`059d82b`, Class A): `[failed]` counts; the next runs showed 30 more, B90 |
+| B90 | The Jira tape (test runs only, `src/Http/JiraTape.php`) stores a response's headers as JSON; 30 attachment downloads of GEOS/SIS/OAC/LABO have a header that is not valid UTF-8, `json_encode` threw, the tape rejected the download and left an empty entry | in every tape run 09 failed those 30 of 1,565 downloads (record: "Malformed UTF-8 characters", replay: "Syntax error"), so the proofs of phase 6 and decisions 43 and 44 did not exercise those 30 uploads, on both sides alike (their comparisons stand); production and the live runs do not use the tape (the one run had 0 such failures); B89 made it visible (09-pull errors=30) | `src/Http/JiraTape.php`; **reported, not fixed** (fix: store the headers losslessly, fail a run loudly when the tape cannot store, record the tapes again) |
+| B91 | 08's usage count counts a Label Manager value without labels (`{"labels": []}`) as a value | "Remotely Operated Towed Vehicle": 39 issues with a value in the count, 1 with a label; a field whose issues only hold empty label objects is not IGNORED as unused | 08 usage; **reported, not fixed** |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
@@ -2121,3 +2159,24 @@ The differences in counts are Jira's: one issue, three changelog entries and two
 5.1 proxy runs shared the machine (4 cores) with this run from 20:55 to 21:38, in S0 to S2; the times include that. The
 history took 5 minutes to prepare instead of 1.5; the phase 6 code is not the cause: the 4-project runs prepared it in
 10 and 11 seconds before and after phase 6. Production stays about 6 to 9 hours with the attachments (PRODUCTION.md B8).
+
+**Decision 44, the proof (B2, 2026-10-20).** Old: `62e0271` (the scripts of `4da4f58`); new: `2475699` (B89, B87, B88).
+GEOS, SIS, OAC and LABO as for decision 43, the same Jira tapes, 5.1 and 7.0 side by side. Creating ROTV gives every
+custom field and option created after it another id, so the comparison replaces those ids by stable names from each
+run's staging (Jira field id; Jira field id and option name), masks the upload tokens, and aligns the two request
+sequences (`cmp44.py`, scratch tool; two runs of the same code give 0 differences, 18,486 and 18,557).
+
+| script | request | old | new | why |
+|---|---|---:|---:|---|
+| 08 | `POST /extended_api/custom_fields.json` "[CHART] Date of First Response" (`datetime`), 422 | 1 | 0 | B87: not migrated, IGNORED |
+| 08 | `POST /extended_api/custom_fields.json` "Remotely Operated Towed Vehicle", 422; "ROTV", 201 | 1 | 1 | B88: the same request with the name ROTV |
+| 08 | `GET /extended_api/custom_fields/{ROTV}.json` | 0 | 1 | Redmine's create answer has no enumerations; 08 reads them, as for every enumeration field it creates |
+| 10 | `POST /extended_api/issues.json`, SIS-1 | 1 | 1 | the same body plus ROTV = "FOCUS_III" |
+| | all other requests, identical and in order | 18,483 / 18,554 | 18,483 / 18,554 | (5.1 / 7.0) |
+
+Both targets the same: 18,486 and 18,557 requests before and after. Staging: "[CHART] Date of First Response" IGNORED
+with the not-migrated note (decisions 20, 40 and 44), `customfield_10067` CREATION_SUCCESS as "ROTV"; Redmine: the
+enumeration field ROTV with one value, SIS-1's "FOCUS_III". 08's logs have no `[failed]` line, the summary says `08-push
+... errors=0`. The usage count gave 39 issues with a value; 38 of them hold an empty Label Manager object (B91). The
+note on the row is there for the review before the push, measured with 08's transform on a copy of the staging. With B89
+the summaries now show 09-pull errors=30 in every tape run: B90, the tape's own defect, not 09's.

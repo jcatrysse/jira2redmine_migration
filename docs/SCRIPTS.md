@@ -687,7 +687,11 @@ php 08_migrate_custom_fields.php --help
    values, and tracker/role/project associations for comparison.
 3. **Transform (`transform`)** – synchronises `migration_mapping_custom_fields`
    with the staging snapshots, preserving automation hashes so operator edits
-   survive reruns. Each Jira custom field produces a single Redmine proposal that
+   survive reruns. The proposed name is the one in `migration.custom_fields.names`
+   (by Jira field id, decision 44), else the stored or the Jira name, shortened to
+   Redmine's 30 characters with a note on the row (B88); field types in
+   `migration.custom_fields.not_migrated` are IGNORED (decisions 20, 40, 44).
+   Each Jira custom field produces a single Redmine proposal that
    is enriched with the aggregated project/issue-type usage and normalised
    allowed values from the create metadata. The transform phase reuses the Jira
    option lists where possible, derives sensible defaults for simple field types,

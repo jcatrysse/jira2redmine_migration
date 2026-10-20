@@ -460,9 +460,10 @@ directory with `RAILS_ENV=production bundle exec rails runner 'puts User.anonymo
 them in a chat, never commit them.
 
 Everything else keeps the defaults of `config/config.default.php`, which hold Jan's decisions: TEST not
-migrated (22), the service desk fields and Jira's "Agent Sessions" not migrated (20, 40), the role mappings and B31 proposals (10), the
-workflow mode `project` and the group settings (13, 14, 19), the comment attachment window 0 (27), the
-GEOxyz relation types. Check that the local file loads, without printing a secret:
+migrated (22), the service desk fields, Jira's "Agent Sessions" and "[CHART] Date of First Response" not
+migrated (20, 40, 44), the Redmine name "ROTV" for "Remotely Operated Towed Vehicle" (44), the role mappings and
+B31 proposals (10), the workflow mode `project` and the group settings (13, 14, 19), the comment attachment window 0
+(27), the GEOxyz relation types. Check that the local file loads, without printing a secret:
 `php -r '$c = require "bootstrap.php"; echo implode(",", $c["migration"]["issues"]["projects"]), " | ", implode(",", $c["migration"]["projects"]["not_migrated"]), PHP_EOL;'`
 prints the run's projects and `TEST`.
 
@@ -566,7 +567,7 @@ before its push (**GO**).
 | 05 statuses | the name | nothing; open or closed is **taken from Redmine**, not from Jira's category | matched statuses whose Jira category (`done`) and Redmine's closed flag disagree (listed first by the query) |
 | 06 priorities | `migration.priorities.mappings` (Jira name => Redmine name), else the name (decision 35) | nothing: one priority scheme for every project; a Jira priority without a match is a review row (MANUAL) and 06 creates none (only with `migration.priorities.create_missing`; then after the existing ones, B73) | every MANUAL row: put the mapping in `migration.priorities.mappings` (it carries over to production) and run 06 again; 10 holds back the issues of an unmapped priority |
 | 07 trackers | the name (shortened to 30 characters) | the tracker itself is not changed; each project gets the trackers it needs **added** to its tracker list | matched trackers that mean something else in GEOxyz's Redmine; new trackers get the lowest open status as default unless `migration.trackers.default_redmine_status_id` is set |
-| 08 custom fields | the name (issue custom fields) | the migrated projects and trackers are **added** to the field (a field "for all projects" gets the trackers, so it shows on them in every project); a dependent field gets its value dependencies; the format, the visibility, the roles and the possible values stay as they are | every matched field: is its format the Jira type? 08 prints `[values] Redmine custom field #N existed before the migration and lacks ...` for Jira values the existing field does not have: add them by hand before 10 (Redmine refuses an issue with a value the field does not list) |
+| 08 custom fields | the name (issue custom fields; shortened to 30 characters, or the name in `migration.custom_fields.names`, decision 44) | the migrated projects and trackers are **added** to the field (a field "for all projects" gets the trackers, so it shows on them in every project); a dependent field gets its value dependencies; the format, the visibility, the roles and the possible values stay as they are | every matched field: is its format the Jira type? 08 prints `[values] Redmine custom field #N existed before the migration and lacks ...` for Jira values the existing field does not have: add them by hand before 10 (Redmine refuses an issue with a value the field does not list) |
 
 Review queries (staging, after the analysis of each script and before its push; tested on the 7.0 staging):
 
@@ -718,7 +719,9 @@ checkout (the logs hold Jira data: never in the repository).
    `projects=14`, LLE and FPS included, which have no issues). The activated accounts (former employees among them) stay active until
    `restore` (B9), which comes before Redmine opens; in production nobody can log in with them meanwhile, the web
    server answers 503 (B5).
-5. **Custom fields.** Review the analysis (B6: fields matched to existing Redmine fields), then push.
+5. **Custom fields.** Review the analysis (B6: fields matched to existing Redmine fields), then push. The push log has
+   no `[failed]` line: until decision 44 two fields failed in every test run ("[CHART] Date of First Response", now not
+   migrated, and "Remotely Operated Towed Vehicle", now "ROTV"); a name over 30 characters is shortened, with a note.
 
    ```bash
    php 08_migrate_custom_fields.php --phases=usage,redmine,transform

@@ -6,6 +6,8 @@ All notable changes to this project. Steps to take before and after a migration 
 ## [Unreleased] (branch redmine70-migration)
 
 ### Added
+- `migration.custom_fields.names` (decision 44): a custom field's Redmine name by Jira field id; the default
+  configuration names "Remotely Operated Towed Vehicle" (`customfield_10067`) "ROTV".
 - `J2R_JIRA_TAPE` (test runs): records every Jira answer of a run or plays one back without Jira, so the runs before
   and after a refactor read the same Jira (`src/Http/JiraTape.php`, `tools/testenv/run_all.sh`).
 - Redmine 7.0 as a second target next to 5.1; both tested with the same projects.
@@ -128,6 +130,12 @@ All notable changes to this project. Steps to take before and after a migration 
   code; Outlook safe links in mailed comments become the link itself.
 
 ### Fixed
+- 08 proposed custom field names over Redmine's 30 characters and Redmine refused the field (B88): a name is now
+  shortened to 30 with a note on the mapping row, as 07 does for trackers; "Remotely Operated Towed Vehicle" is "ROTV"
+  (decision 44).
+- 08 proposed Redmine's non-existent format `datetime` for "[CHART] Date of First Response" and Redmine refused it
+  (B87): the field is not migrated, like the service desk fields (decision 44).
+- `run_all.sh` did not count `[failed]` lines in a step's errors (B89).
 - A PCRE error (a backtrack limit, text that is not valid UTF-8) or a value a field needs that cannot be used no
   longer stops 08, 10 or 11 with a TypeError or a PHP warning: the text stays as it was or the field is skipped, with
   a counted `[warn] ... (decision 43).` line and a summary line (`src/Cli/Fallbacks.php`). PHPStan runs without a

@@ -104,6 +104,8 @@ Check the summary line of each (`Matched / Ready / Manual`):
 - users: Jira app accounts are IGNORED; people without a visible e-mail stay MANUAL (their content uses
   the default author); new users are created LOCKED unless `default_redmine_user_status` says otherwise;
 - trackers: names longer than 30 characters are shortened (note on the mapping row);
+- custom fields (decision 44): the same for names longer than 30 characters; `migration.custom_fields.names` sets
+  a field's Redmine name by Jira field id (ROTV); the push log has no `[failed]` line;
 - statuses and trackers: names in the language of the Redmine instance; Jira `Done` maps to a closed
   status, `To Do` to New;
 - priorities (Jan, decision 35): a Jira priority maps onto an existing Redmine priority, the one
