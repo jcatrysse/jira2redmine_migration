@@ -26,11 +26,17 @@ use Throwable;
  * its next recording. Playback refuses a request the tape does not hold, so a run that reads Jira differently fails.
  * The middleware sits innermost, below the redirects (each hop of an attachment download is on the tape) and above
  * the retry (a rate limit while recording is not on the tape).
+ *
+ * The headers are kept byte for byte (base64: B90, a header that is not valid UTF-8 could not be stored as JSON). An
+ * answer the tape cannot record or play fails the request as before and also writes the file FAILED into the tape,
+ * which tools/testenv/run_all.sh checks after every step: a script that goes on after a failed request (09 counts a
+ * download as failed and continues) must not make a run that read Jira differently look valid.
  */
 final class JiraTape
 {
     public const RECORD = 'record';
     public const REPLAY = 'replay';
+    public const FAILED = 'FAILED';
 
     public function __construct(private readonly string $directory, private readonly string $mode)
     {
@@ -57,16 +63,32 @@ final class JiraTape
             return function (RequestInterface $request, array $options) use ($handler): PromiseInterface {
                 $key = self::key($request);
                 if ($this->mode === self::REPLAY) {
-                    return $this->play($request, $key, $options);
+                    try {
+                        return $this->play($request, $key, $options);
+                    } catch (Throwable $exception) {
+                        $this->markFailed($key, $exception);
+                        throw $exception;
+                    }
                 }
 
                 /** @var PromiseInterface $promise */
                 $promise = $handler($request, $options);
 
                 return $promise->then(
-                    fn (ResponseInterface $response): ResponseInterface => $this->record($key, $response),
+                    function (ResponseInterface $response) use ($key): ResponseInterface {
+                        try {
+                            return $this->record($key, $response);
+                        } catch (Throwable $exception) {
+                            $this->markFailed($key, $exception);
+                            throw $exception;
+                        }
+                    },
                     function (mixed $reason) use ($key): PromiseInterface {
-                        $this->store($key, ['error' => $reason instanceof Throwable ? $reason->getMessage() : 'rejected'], '');
+                        try {
+                            $this->store($key, ['error' => $reason instanceof Throwable ? $reason->getMessage() : 'rejected'], '');
+                        } catch (Throwable $exception) {
+                            $this->markFailed($key, $exception);
+                        }
 
                         return Create::rejectionFor($reason);
                     }
@@ -99,7 +121,11 @@ final class JiraTape
             $content = $body->getContents();
             $response = $response->withBody(Utils::streamFor($content));
         }
-        $this->store($key, ['status' => $response->getStatusCode(), 'headers' => $response->getHeaders()], $content);
+        $headers = array_map(
+            static fn (array $values): array => array_map(static fn (string $value): string => base64_encode($value), $values),
+            $response->getHeaders()
+        );
+        $this->store($key, ['status' => $response->getStatusCode(), 'headers_base64' => $headers], $content);
 
         return $response;
     }
@@ -119,8 +145,12 @@ final class JiraTape
             $n++;
         }
         file_put_contents(sprintf('%s/%s.%d.body', $this->directory, $hash, $n), $content);
-        fwrite($handle, (string)json_encode(['key' => $key] + $meta, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
-        fclose($handle);
+        try {
+            $flags = JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR;
+            fwrite($handle, json_encode(['key' => $key] + $meta, $flags));
+        } finally {
+            fclose($handle);
+        }
     }
 
     /**
@@ -143,10 +173,28 @@ final class JiraTape
         }
         $content = (string)file_get_contents(sprintf('%s/%s.%d.body', $this->directory, $hash, $n));
         self::sink($options['sink'] ?? null, $content);
-        /** @var array<string, list<string>> $headers */
-        $headers = is_array($meta['headers'] ?? null) ? $meta['headers'] : [];
+        $headers = [];
+        foreach (is_array($meta['headers_base64'] ?? null) ? $meta['headers_base64'] : [] as $name => $values) {
+            foreach (is_array($values) ? $values : [] as $value) {
+                $headers[(string)$name][] = (string)base64_decode((string)$value, true);
+            }
+        }
+        // a tape recorded before B90 holds the headers as text
+        if ($headers === [] && is_array($meta['headers'] ?? null)) {
+            /** @var array<string, list<string>> $headers */
+            $headers = $meta['headers'];
+        }
 
         return Create::promiseFor(new Response((int)$meta['status'], $headers, $content));
+    }
+
+    /** The mark run_all.sh stops on: this request's answer is not on the tape as Jira gave it. */
+    private function markFailed(string $key, Throwable $exception): void
+    {
+        if (is_dir($this->directory)) {
+            $line = sprintf('%s %s: %s%s', gmdate(DATE_ATOM), $key, $exception->getMessage(), PHP_EOL);
+            file_put_contents($this->directory . '/' . self::FAILED, $line, FILE_APPEND | LOCK_EX);
+        }
     }
 
     /** Which recording of this request is next; the count is kept on disk, a run is many processes. */

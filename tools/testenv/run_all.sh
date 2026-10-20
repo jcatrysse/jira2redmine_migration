@@ -32,6 +32,11 @@ step() { # step NAME script args...
   (cd "$REPO" && php "$@") > "$logdir/$name.log" 2>&1
   local rc=$?
   printf '%-14s exit=%d %4ds errors=%d\n' "$name" $rc $(( $(date +%s) - start )) "$(grep -ciE '\[error\]|\[failed\]|fatal|exception' "$logdir/$name.log")" | tee -a "$logdir/summary.txt"
+  # B90: an answer the Jira tape could not record or play makes the run read Jira differently: stop
+  if [ -n "${J2R_JIRA_TAPE:-}" ] && [ -f "$J2R_JIRA_TAPE/FAILED" ]; then
+    { echo "jira tape FAILED after $name:"; head -3 "$J2R_JIRA_TAPE/FAILED"; } | tee -a "$logdir/summary.txt"
+    exit 1
+  fi
 }
 mark() { # mark S0|S1|S2|S3|end: the one run's snapshot points (docs/PRODUCTION.md B7)
   echo "mark $1 $(date -u +%FT%TZ)" | tee -a "$logdir/summary.txt"
@@ -50,7 +55,7 @@ if [ -n "${J2R_JIRA_TAPE:-}" ]; then
     # a tape holds one run: recording into an old tape would play its answers first
     [ -z "$(ls -A "$J2R_JIRA_TAPE" 2>/dev/null)" ] || { echo "J2R_JIRA_TAPE=$J2R_JIRA_TAPE is not empty" | tee -a "$logdir/summary.txt"; exit 1; }
   else
-    rm -rf "$J2R_JIRA_TAPE/played"
+    rm -rf "$J2R_JIRA_TAPE/played" "$J2R_JIRA_TAPE/FAILED"
   fi
   echo "jira tape: $J2R_JIRA_TAPE_MODE $J2R_JIRA_TAPE" | tee -a "$logdir/summary.txt"
 fi

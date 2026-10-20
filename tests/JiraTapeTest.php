@@ -125,6 +125,59 @@ final class JiraTapeTest extends TestCase
         self::assertSame("\x00binary", (string)$response->getBody());
     }
 
+    public function testAHeaderThatIsNotUtf8IsRecordedAndPlayedBackAsItWas(): void
+    {
+        // B90: 30 attachment downloads of the test projects carry such a header; the tape could not store them, so the
+        // download failed in the record run and in every replay of it
+        $disposition = "attachment; filename=\"caf\xe9 r\xe9sum\xe9.pdf\"";
+        $recorder = $this->client(JiraTape::RECORD, [new Response(200, ['Content-Disposition' => $disposition], "\x00pdf")]);
+        self::assertSame("\x00pdf", (string)$recorder->get('rest/api/3/attachment/content/8')->getBody());
+
+        $played = $this->client(JiraTape::REPLAY)->get('rest/api/3/attachment/content/8');
+        self::assertSame($disposition, $played->getHeaderLine('Content-Disposition'));
+        self::assertSame("\x00pdf", (string)$played->getBody());
+        self::assertFileDoesNotExist($this->directory . '/' . JiraTape::FAILED);
+    }
+
+    public function testATapeThatCannotPlayAnAnswerMarksItselfFailed(): void
+    {
+        // B90: a tape entry left empty played as "Syntax error", which the script logged as a failed download and went
+        // on; the run must stop instead (run_all.sh checks the mark after every step)
+        $this->client(JiraTape::RECORD, [new Response(200, [], 'a')])->get('rest/api/3/issue/1');
+        foreach (glob($this->directory . '/*.json') ?: [] as $entry) {
+            file_put_contents($entry, '');
+        }
+
+        try {
+            $this->client(JiraTape::REPLAY)->get('rest/api/3/issue/1');
+            self::fail('an empty tape entry was played');
+        } catch (Throwable $exception) {
+            self::assertStringContainsString('Syntax error', $exception->getMessage());
+        }
+        self::assertStringContainsString(
+            'GET https://jira.example/rest/api/3/issue/1',
+            (string)file_get_contents($this->directory . '/' . JiraTape::FAILED)
+        );
+
+        $script = (string)file_get_contents(__DIR__ . '/../tools/testenv/run_all.sh');
+        self::assertStringContainsString('[ -f "$J2R_JIRA_TAPE/FAILED" ]', $script);
+        self::assertStringContainsString('rm -rf "$J2R_JIRA_TAPE/played" "$J2R_JIRA_TAPE/FAILED"', $script);
+    }
+
+    public function testARequestNotOnTheTapeMarksItFailedToo(): void
+    {
+        $this->client(JiraTape::RECORD, [new Response(200, [], 'a')])->get('rest/api/3/issue/1');
+        try {
+            $this->client(JiraTape::REPLAY)->get('rest/api/3/issue/2');
+            self::fail('a request the tape does not hold was played');
+        } catch (RuntimeException) {
+        }
+        self::assertStringContainsString(
+            'Not on the Jira tape: GET https://jira.example/rest/api/3/issue/2',
+            (string)file_get_contents($this->directory . '/' . JiraTape::FAILED)
+        );
+    }
+
     public function testWithoutTheVariableTheStackStaysAsItIs(): void
     {
         putenv('J2R_JIRA_TAPE');
