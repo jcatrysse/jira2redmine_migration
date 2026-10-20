@@ -90,6 +90,12 @@ return [
                 'com.atlassian.jira.plugin.system.customfieldtypes:agent-sessions',
                 'com.atlassian.jira.ext.charting:firstresponsedate',
             ],
+            // Jan, decision 44 (2026-10-20): the Redmine name of a Jira custom field, by Jira field id; it wins over
+            // the Jira name and over a name an earlier run stored (not over a mapping row edited by hand). 08
+            // shortens any other name over Redmine's 30 characters, with a note on the row (B88).
+            'names' => [
+                'customfield_10067' => 'ROTV', // "Remotely Operated Towed Vehicle", 31 characters
+            ],
         ],
         // tools/workflow_plan.php (Jan, decision 13): 'project' gives each project its own Jira workflow through
         // redmine_project_workflows, with the union cleaned by Jan as the global workflow; 'union' writes only the

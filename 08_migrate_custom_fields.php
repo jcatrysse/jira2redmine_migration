@@ -29,6 +29,8 @@ use Jira2Redmine\Cli\ScriptCommandLines;
 use Jira2Redmine\Cli\ConfigValue;
 use Jira2Redmine\Time\Clock;
 use Jira2Redmine\Cli\Fallbacks;
+use Jira2Redmine\CustomFields\FieldNames;
+use Jira2Redmine\Redmine\Names;
 
 const MIGRATE_CUSTOM_FIELDS_SCRIPT_VERSION = '0.0.1';
 const AVAILABLE_PHASES = [
@@ -186,7 +188,11 @@ function main(array $config, array $cliOptions): void
     if (in_array('transform', $phasesToRun, true)) {
         printf("[%s] Starting custom field reconciliation & transform phase...%s", Clock::atom(), PHP_EOL);
 
-        $transformSummary = runCustomFieldTransformationPhase($pdo, $config['migration']['custom_fields']['not_migrated'] ?? []);
+        $transformSummary = runCustomFieldTransformationPhase(
+            $pdo,
+            $config['migration']['custom_fields']['not_migrated'] ?? [],
+            $config['migration']['custom_fields']['names'] ?? []
+        );
 
         printf(
             "[%s] Completed transform phase. Matched: %d, Ready: %d, Manual: %d, Overrides kept: %d, Ignored (unused): %d, Skipped:"
@@ -3153,7 +3159,7 @@ function extractIdListFromRedmineCustomField(mixed $value): ?string
  *     object_field_stats: array{evaluated: int, created: int, updated: int, unchanged: int, missing_samples: int}
  * }
  */
-function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): array
+function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = [], mixed $fieldNames = []): array
 {
     $usageScopes = new UsageScopes();
     $issueStatement = $pdo->query('SELECT project_id, issuetype_id, raw_payload FROM staging_jira_issues');
@@ -3476,11 +3482,12 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
 
         $cascadingParentContext = null;
 
-        $proposedName = $currentProposedName;
-        if ($proposedName === null) {
-            $proposedName = $defaultName ?? $jiraFieldId;
+        // decision 44: a name Jan configured wins; a name over Redmine's 30 characters is shortened, with a note (B88)
+        $proposal = FieldNames::propose($fieldNames, $jiraFieldId, $currentProposedName, $defaultName);
+        $proposedName = $proposal['name'];
+        if ($proposal['note'] !== null) {
+            $infoNotes[] = $proposal['note'];
         }
-        $proposedName = normalizeString($proposedName, 255);
 
         $proposedFormat = $currentProposedFormat;
         $proposedIsRequired = $currentProposedIsRequired ?? false;
@@ -3844,10 +3851,7 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
                     $proposedValueDependencies = $cascadingDescriptor['dependencies'];
                 }
 
-                $parentNameBase = normalizeString($proposedName ?? ($defaultName ?? $jiraFieldId), 255)
-                    ?? ($proposedName ?? ($defaultName ?? $jiraFieldId));
-                $parentName = normalizeString(sprintf('%s (Parent)', $parentNameBase), 255)
-                    ?? sprintf('%s (Parent)', $parentNameBase);
+                $parentName = Names::customField($proposedName, ' (Parent)');
 
                 $parentRedmineId = null;
                 $parentMappingId = null;
@@ -4047,10 +4051,7 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
             }
         }
 
-        $lookupCandidates = [];
-        if ($proposedName !== null) {
-            $lookupCandidates[] = strtolower($proposedName);
-        }
+        $lookupCandidates = [strtolower($proposedName)];
         if ($defaultName !== null) {
             $lookupCandidates[] = strtolower($defaultName);
         }
@@ -4317,7 +4318,7 @@ function runCustomFieldTransformationPhase(PDO $pdo, mixed $notMigrated = []): a
             $summary['manual_review']++;
             printf(
                 "  [manual] Jira custom field %s: %s%s",
-                $proposedName ?? ($defaultName ?? $jiraFieldId),
+                $proposedName,
                 $notes,
                 PHP_EOL
             );

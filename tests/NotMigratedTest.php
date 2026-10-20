@@ -56,7 +56,7 @@ final class NotMigratedTest extends TestCase
         self::assertStringContainsString($call, $projects);
         self::assertStringContainsString('NotMigrated::project($notMigrated, $projectKey)', $projects);
         $call = "runCustomFieldTransformationPhase(\$pdo, \$config['migration']['custom_fields']['not_migrated']";
-        self::assertStringContainsString($call, $fields);
+        self::assertStringContainsString($call, sourceWithoutLayout($fields));
         self::assertStringContainsString('NotMigrated::fieldType($notMigrated, $jiraSchemaCustom)', $fields);
     }
 }
