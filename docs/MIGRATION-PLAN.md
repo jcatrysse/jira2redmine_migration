@@ -17,9 +17,14 @@
   en SIS-1 krijgt zijn waarde "FOCUS_III". Alle andere requests identiek en in volgorde (18.483 en 18.554). In de
   testdata heeft maar 1 issue een echte ROTV-waarde: de telling van 39 telde 38 lege Label Manager-waarden mee (B91,
   gemeld).
-- **Gevonden, gemeld en niet opgelost:** mijn Jira-tape (alleen testruns) kon 30 bijlagen niet opslaan door een header
-  die geen geldige UTF-8 is (B90). In elke tape-run sloegen die 30 downloads mislukt over, aan beide kanten gelijk; de
-  vergelijkingen blijven geldig, maar die 30 uploads zaten er niet in. Productie en de live runs gebruiken de tape niet.
+- **Mijn Jira-tape (alleen testruns) opgelost (B90):** 30 bijlagen met een header die geen geldige UTF-8 is gingen in
+  elke tape-run verloren, en daardoor wachtten 4 issues op hun bijlagen en werden ze niet aangemaakt, aan beide kanten
+  van elke vergelijking gelijk. Nu bewaart de tape de headers exact en stopt een run als de tape iets niet kan bewaren
+  of afspelen. Nieuwe tapes opgenomen (token eerst read-only bewezen): 0 mislukte downloads, alle 1.013 issues
+  aangemaakt, en het bewijs van beslissing 44 opnieuw: dezelfde 3 verschillen, al het andere identiek (18.570 en 18.641
+  requests). Productie en de live runs gebruiken de tape niet.
+- **B91 opgelost:** 08 telde een lege Label Manager-waarde als gebruikt. In de 14 projecten verandert dat geen veld,
+  alleen de tellingen (ROTV: 14 issues met een waarde i.p.v. 111).
 
 **Vannacht: jouw drie keuzes over fase 6 (beslissing 43), gebouwd en bewezen**
 - **Eén optie-regel voor alle 16 scripts:** `-h` en `-V` overal; een onbekende optie, een optie zonder waarde, een los
@@ -1488,8 +1493,8 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B87 | 08 maps a Jira date-time field to the Redmine format `datetime`, which neither 5.1 nor 7.0 has (string, text, int, float, date, bool, list, enumeration, user, version, link, attachment, progressbar): "[CHART] Date of First Response" (`customfield_10024`, `com.atlassian.jira.ext.charting:firstresponsedate`) | 422 "Format is not included in the list" in every run whose 08 creates fields (60 of the 70 recorded runs; the other 10 were later WIKI batches that created none); the field is not created (CREATION_FAILED) and 10 leaves its values out: 2,516 of the 14 projects' issues (51 %), 576 of 1,013 in GEOS/SIS/OAC/LABO; verify compares only migrated fields and does not see it | 08 transform (`:datetime` and schema type `datetime`); **fixed** (decision 44, `6762b97`): not migrated, IGNORED with the not-migrated note; proxy on 5.1 and 7.0: the refused create is gone |
 | B88 | 08 proposes a custom field name longer than Redmine's 30 characters (`validates_length_of :name, maximum: 30`, 5.1 and 7.0); 07 shortens tracker names (B1), 08 does not: "Remotely Operated Towed Vehicle" (31, `customfield_10067`, a Label Manager field) | 422 "Name is too long" in 54 of those 60 runs (not in six early ones: full1, gate, relink1, surv, bench); the field is not created and 10 leaves its values out: 1 issue in GEOS/SIS/OAC/LABO (SIS-1, "FOCUS_III"; the usage count said 39, B91) | 08 transform; **fixed** (decision 44, `2475699`): names shortened to 30 with a note, this field "ROTV" by configuration; proxy on 5.1 and 7.0: ROTV created, SIS-1 has its value |
 | B89 | `run_all.sh` counts `[error]`, `fatal` and `exception` in a step's log as its errors, not `[failed]`, which 08 prints for a field Redmine refused | B87 and B88 showed in every run's 08 log but the summary said `08-push ... errors=0` | `tools/testenv/run_all.sh` (test tooling only); **fixed** (`059d82b`, Class A): `[failed]` counts; the next runs showed 30 more, B90 |
-| B90 | The Jira tape (test runs only, `src/Http/JiraTape.php`) stores a response's headers as JSON; 30 attachment downloads of GEOS/SIS/OAC/LABO have a header that is not valid UTF-8, `json_encode` threw, the tape rejected the download and left an empty entry | in every tape run 09 failed those 30 of 1,565 downloads (record: "Malformed UTF-8 characters", replay: "Syntax error"), so the proofs of phase 6 and decisions 43 and 44 did not exercise those 30 uploads, on both sides alike (their comparisons stand); production and the live runs do not use the tape (the one run had 0 such failures); B89 made it visible (09-pull errors=30) | `src/Http/JiraTape.php`; **reported, not fixed** (fix: store the headers losslessly, fail a run loudly when the tape cannot store, record the tapes again) |
-| B91 | 08's usage count counts a Label Manager value without labels (`{"labels": []}`) as a value | "Remotely Operated Towed Vehicle": 39 issues with a value in the count, 1 with a label; a field whose issues only hold empty label objects is not IGNORED as unused | 08 usage; **reported, not fixed** |
+| B90 | The Jira tape (test runs only, `src/Http/JiraTape.php`) stores a response's headers as JSON; 30 attachment downloads of GEOS/SIS/OAC/LABO have a header that is not valid UTF-8, `json_encode` threw, the tape rejected the download and left an empty entry | in every tape run 09 failed those 30 of 1,565 downloads (record: "Malformed UTF-8 characters", replay: "Syntax error"), so the proofs of phase 6 and decisions 43 and 44 did not exercise those 30 uploads, on both sides alike (their comparisons stand); production and the live runs do not use the tape (the one run had 0 such failures); B89 made it visible (09-pull errors=30) | `src/Http/JiraTape.php`; **fixed** (`f32cd97`, the coordinator's go): headers stored base64, an answer the tape cannot record or play marks it FAILED and `run_all.sh` stops; tapes recorded again: the 30 downloads succeed, and 4 issues that had waited for 15 of those attachments (`[blocked]`) are created, so the earlier proofs had left them out on both sides |
+| B91 | 08's usage count counts a Label Manager value without labels (`{"labels": []}`) as a value | "Remotely Operated Towed Vehicle": 39 issues with a value in the count, 1 with a label; a field whose issues only hold empty label objects is not IGNORED as unused | 08 usage; **fixed** (`e348eb5`, Class A: in the 14 projects no field changes, only counts: Nearshore and Trailer Vessel 719 to 591, Offshore Vessel 1,470 to 1,286, Drone Vessel 158 to 76, ROTV 111 to 14; the other 105 fields the same) |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
@@ -2180,3 +2185,24 @@ enumeration field ROTV with one value, SIS-1's "FOCUS_III". 08's logs have no `[
 ... errors=0`. The usage count gave 39 issues with a value; 38 of them hold an empty Label Manager object (B91). The
 note on the row is there for the review before the push, measured with 08's transform on a copy of the staging. With B89
 the summaries now show 09-pull errors=30 in every tape run: B90, the tape's own defect, not 09's.
+
+**B90 and B91: the proof again on whole tapes (B2, 2026-10-20).** New tapes recorded from live Jira (the token proven
+read-only first: a write probe on NOPE-999999 answered 401 "scope does not match", a read 200) by the old scripts,
+`62e0271` with the two test tools of `f32cd97` (the tape, `run_all.sh`); GEOS, SIS, OAC and LABO as before, 5.1 and 7.0
+side by side; played back by `f32cd97` and by `e348eb5` (B91). Compared as for decision 44.
+
+| | 5.1 | 7.0 |
+|---|---|---|
+| 09's failed downloads in the record run | **0** (the old tapes: 30) | **0** (30) |
+| issues created | 1,013 of 1,013 (the old tapes: 1,009) | the same |
+| Redmine requests, record (old) and replay (new) | 18,573 and 18,573 | 18,644 and 18,644 |
+| old against `f32cd97` and against `e348eb5` | the 3 differences of decision 44, 18,570 identical and in order | the same 3, 18,641 |
+| `f32cd97` against `e348eb5` (B91) | **identical**, 18,573 | **identical**, 18,644 |
+| tape marked FAILED | no | no |
+
+The 87 requests more than in the earlier proofs are the 4 issues the old tapes held back (`[blocked]`: 15 of their
+attachments were among the 30 lost downloads): 4 creates, 16 uploads, 18 history journals, 14 watchers, 24 updates, 10
+reads, 1 relation. Jira itself had not changed (2,499 comments and 9,479 changelog entries, as on the old tapes). The
+earlier proofs (phase 6, decisions 43 and 44) therefore left those 4 issues out on both sides; on the whole tapes the
+comparison of decision 44 shows the same 3 differences and nothing else, and B91 changes no request. The summaries show
+`08-push ... errors=2` for the old scripts (B87 and B88, now counted) and 0 for the new.

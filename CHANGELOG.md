@@ -130,6 +130,11 @@ All notable changes to this project. Steps to take before and after a migration 
   code; Outlook safe links in mailed comments become the link itself.
 
 ### Fixed
+- 08's usage counted a label app value without labels (`{"labels": []}`, which Jira gives every issue of a project
+  with the field) as used; it now counts only values with a label (B91). In the 14 projects only the counts change.
+- The Jira tape of the test runs (`J2R_JIRA_TAPE`) could not store a header that is not valid UTF-8: 30 attachment
+  downloads failed in every tape run and 4 issues waited for them. It now keeps the headers byte for byte and marks a
+  run it cannot serve FAILED, which `run_all.sh` stops on (B90).
 - 08 proposed custom field names over Redmine's 30 characters and Redmine refused the field (B88): a name is now
   shortened to 30 with a note on the mapping row, as 07 does for trackers; "Remotely Operated Towed Vehicle" is "ROTV"
   (decision 44).
