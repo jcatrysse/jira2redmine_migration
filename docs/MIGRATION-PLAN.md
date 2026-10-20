@@ -1449,6 +1449,9 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B84 | Redmine's "Last updated by" (`Issue#last_updated_by`, the issue list column; 5.1 and 7.0) is the author of the journal with the highest id, not of the latest one; 11 pushed every comment before every changelog entry | on 55 of the 721 issues with journals (GEOS, SIS, OAC, LABO; 222 of 1,870 in the earlier 7.0 run of DOC, GEOS, OAC, SIS, SURV) the last updated user was not the last person who acted in Jira; history written after 11 would have changed it on most issues (decision 41) | **fixed** (`868d07c`, decision 41 option C): 11 pushes per issue in Jira's time order, the history series in between: 0 on 5.1 and 7.0, the requests the same (record proxy, compared as a set) |
 | B85 | 11 sent each journal with the issue's updated time set to that journal's own time (the Extended API's `updated_on` override) | after 11 an issue showed the time of the last journal pushed instead of Jira's updated time that 10 had set: 647 of 1,013 issues (633 in time order) | **fixed** (`800b8d4`): every journal sends Jira's updated time of its issue: 0 |
 | B86 | 08's transform defaulted `proposed_is_for_all` with `empty($currentProposedProjectIds)`, a variable that is never set (the decoded ids are `$decodedProjectIds`), so always true; PHPStan found it (phase 6) | a mapping without `proposed_is_for_all` gets true; a field with proposed projects gets false from the project rule further down before it is pushed, so the effect is limited to the rows 08 writes before that rule (unused, kept as edited, manual); measured after the fix: 0 rows (a row without a stored choice but with proposed projects does not occur in the test data) | **fixed** (decision 43, `62e0271`): the stored choice, else for all projects only without proposed projects (`FieldScope::isForAll`); proxy on 5.1 and 7.0: requests identical, 0 of 111 staging rows differ |
+| B87 | 08 maps a Jira date-time field to the Redmine format `datetime`, which neither 5.1 nor 7.0 has (string, text, int, float, date, bool, list, enumeration, user, version, link, attachment, progressbar): "[CHART] Date of First Response" (`customfield_10024`, `com.atlassian.jira.ext.charting:firstresponsedate`) | 422 "Format is not included in the list" in every run whose 08 creates fields (60 of the 70 recorded runs; the other 10 were later WIKI batches that created none); the field is not created (CREATION_FAILED) and 10 leaves its values out: 2,516 of the 14 projects' issues (51 %), 576 of 1,013 in GEOS/SIS/OAC/LABO; verify compares only migrated fields and does not see it | 08 transform (`:datetime` and schema type `datetime`); **reported to Jan, not fixed** (found 2026-10-20 while explaining the 5.1/7.0 request difference) |
+| B88 | 08 proposes a custom field name longer than Redmine's 30 characters (`validates_length_of :name, maximum: 30`, 5.1 and 7.0); 07 shortens tracker names (B1), 08 does not: "Remotely Operated Towed Vehicle" (31, `customfield_10067`, a Label Manager field) | 422 "Name is too long" in 54 of those 60 runs (not in six early ones: full1, gate, relink1, surv, bench); the field is not created and 10 leaves its values out: 39 of 1,013 issues in GEOS/SIS/OAC/LABO (the 14 projects' count is not logged) | 08 transform; **reported to Jan, not fixed** |
+| B89 | `run_all.sh` counts `[error]`, `fatal` and `exception` in a step's log as its errors, not `[failed]`, which 08 prints for a field Redmine refused | B87 and B88 showed in every run's 08 log but the summary said `08-push ... errors=0` | `tools/testenv/run_all.sh` (test tooling only); **reported, not fixed** |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
@@ -2054,6 +2057,24 @@ commits compile to the same opcodes (opcache, before the optimizer), 16 of 16 fo
 of 11 built from two parts). Checking the export of the before commit showed that a copied commit loaded `src/` from
 the working tree through the vendor symlink; the proof runs use exports with their own autoloader, and the earlier
 proofs that used exports (decision 41, 42) ran while the working tree's `src/` matched them.
+
+**Why 7.0 makes 71 Redmine requests more than 5.1 (B2, 2026-10-20, Jan's question).** The two after runs of the phase 6
+proof (`51-m1-after`, `70-m1-after`: the same code, the same Jira tape, GEOS, SIS, OAC and LABO) recorded 18,486 and
+18,557 requests. With the ids replaced by `{id}`, the two sequences align one to one except for one block in 13; all
+other 18,416 requests of 5.1 have their partner on 7.0 in the same order, with the same method, endpoint and status.
+
+| script | method and endpoint | 5.1 | 7.0 | difference | cause |
+|---|---|---:|---:|---:|---|
+| 13 | `POST /issues/{id}/tags.json` | 70 (201) | 1 (404) | -69 | the 7.0 branch of redmine_tags has no such route (B19); the first call 404s and switches 13 to the issue update for the rest of the run, by design |
+| 13 | `GET /issues/{id}.json` | 0 | 70 | +70 | before the issue update 13 reads the issue's updated time, to send it back (Jan, 2026-10-15: the issue keeps its updated time) |
+| 13 | `PUT /extended_api/issues/{id}.json?notify=false&send_notification=0&skip_journal=1` | 0 | 70 | +70 | the tags as `add_tag_list` (a list, B75) with that updated time, without mail, webhook or journal (decision 37) |
+| | **total** | **70** | **141** | **+71** | |
+
+Nothing else differs: no retry, no paging, no other 7.0-only check, and the test instances' existing data gives the same
+requests. The 404 is the designed probe, once per run. Each of the 70 tagged issues costs one request on 5.1 and two on
+7.0, plus the probe. Production runs 7.0: about one extra read per tagged issue. Found on the way, the same on both
+targets: two custom fields Redmine refuses in every run (B87, B88) and a run summary that did not count them (B89);
+reported to Jan, no code changed.
 
 **Decision 43, the proof (B2, 2026-10-19/20).** Old: `a6c678f` (phase 6); new: `62e0271` (one command line rule, the 12
 baseline spots, B86). GEOS, SIS, OAC and LABO, `run_all.sh` in full with the stability pass, the workflows and restore,
