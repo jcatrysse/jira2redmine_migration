@@ -22,7 +22,7 @@ final class ImapOauth2CredentialsTest extends TestCase
         $this->directory = sys_get_temp_dir() . '/j2r-imap-oauth2-' . bin2hex(random_bytes(6));
         mkdir($this->directory . '/config', 0700, true);
         mkdir($this->directory . '/etc', 0700);
-        foreach (['email_oauth2_support.yml', 'email_oauth2_support_client.yml'] as $file) {
+        foreach (array_diff((array)scandir(self::FIXTURES), ['.', '..']) as $file) {
             copy(self::FIXTURES . '/' . $file, $this->directory . '/config/' . $file);
         }
     }
@@ -56,7 +56,11 @@ final class ImapOauth2CredentialsTest extends TestCase
         ], $this->readAs70($target));
         // it says what it wrote, never a value of it
         self::assertStringContainsString('token_url, client_id, client_secret, refresh_token, scope', $output);
-        self::assertStringContainsString('provider: Microsoft 365', $output);
+        // not 5.1's wider consent (POP, SMTP, User.Read), which the token file names
+        self::assertStringContainsString(
+            'provider: Microsoft 365; scope: https://outlook.office.com/IMAP.AccessAsUser.All offline_access (IMAP only)',
+            $output
+        );
         foreach (['dummy-client-secret', 'dummy-refresh-token', 'dummy-access-token', 'dummy-client-id'] as $value) {
             self::assertStringNotContainsString($value, $output . $errors);
         }
@@ -76,13 +80,13 @@ final class ImapOauth2CredentialsTest extends TestCase
 
     public function testAPublicClientStops(): void
     {
-        // 5.1's O365 guide allowed an application without a secret; 7.0 sends client_secret in every token request
+        // 5.1's O365 guide says a public app may omit the secret; 7.0 sends client_secret in every token request
         $this->edit('email_oauth2_support_client.yml', "client_secret: dummy-client-secret\n", '');
 
         [$status, $output, $errors] = $this->convert();
 
         self::assertSame(1, $status);
-        self::assertStringContainsString('holds no client_secret: a public client', $errors);
+        self::assertStringContainsString('holds no client_secret. 7.0 sends a client secret', $errors);
         self::assertStringContainsString('authorize the mailbox again', $errors);
         self::assertSame('', $output);
         self::assertFileDoesNotExist($this->directory . '/etc/support.yml');
@@ -135,6 +139,64 @@ final class ImapOauth2CredentialsTest extends TestCase
         self::assertSame('dummy-refresh-token', $this->readAs70($this->directory . '/etc/support.yml')['refresh_token']);
     }
 
+    public function testTheTokenFileNamedEmailOauth2Alone(): void
+    {
+        // 5.1's own default name, as on Jan's copy: config/email_oauth2.yml and config/email_oauth2_client.yml
+        rename($this->directory . '/config/email_oauth2_support.yml', $this->directory . '/config/email_oauth2.yml');
+        rename($this->directory . '/config/email_oauth2_support_client.yml', $this->directory . '/config/email_oauth2_client.yml');
+
+        [$status, , $errors] = $this->convert(null, $this->directory . '/config/email_oauth2');
+
+        self::assertSame(0, $status, $errors);
+        self::assertSame('dummy-refresh-token', $this->readAs70($this->directory . '/etc/support.yml')['refresh_token']);
+    }
+
+    public function testAGmailMailboxBecomesTheFileOfTheCoreGuide(): void
+    {
+        [$status, $output, $errors] = $this->convert(null, $this->directory . '/config/email_oauth2_gmail');
+
+        self::assertSame(0, $status, $errors);
+        self::assertSame(0600, fileperms($this->directory . '/etc/support.yml') & 0777);
+        // core doc/IMAP_OAUTH2.md, "Gmail and Google Workspace"
+        self::assertSame([
+            'token_url' => 'https://oauth2.googleapis.com/token',
+            'client_id' => 'dummy-gmail-client-id.apps.googleusercontent.com',
+            'client_secret' => 'dummy-gmail-client-secret',
+            'refresh_token' => 'dummy-gmail-refresh-token',
+            'scope' => 'https://mail.google.com/',
+            'authorize_url' => 'https://accounts.google.com/o/oauth2/v2/auth',
+            'redirect_uri' => 'http://localhost',
+            'authorize_params' => ['access_type' => 'offline', 'prompt' => 'consent'],
+        ], $this->readAs70($this->directory . '/etc/support.yml'));
+        self::assertStringContainsString('provider: Google; scope: https://mail.google.com/ (from the token file)', $output);
+        self::assertStringContainsString('expire after 7 days', $output);
+        foreach (['dummy-gmail-client-secret', 'dummy-gmail-refresh-token', 'dummy-gmail-access-token'] as $value) {
+            self::assertStringNotContainsString($value, $output . $errors);
+        }
+    }
+
+    public function testAGmailTokenWithoutScopeGetsGooglesScope(): void
+    {
+        $this->edit('email_oauth2_gmail.yml', ":scope: https://mail.google.com/\n", '');
+
+        [$status, $output, $errors] = $this->convert(null, $this->directory . '/config/email_oauth2_gmail');
+
+        self::assertSame(0, $status, $errors);
+        self::assertSame('https://mail.google.com/', $this->readAs70($this->directory . '/etc/support.yml')['scope']);
+        self::assertStringContainsString("scope: https://mail.google.com/ (Google's)", $output);
+    }
+
+    public function testAGmailConsentWithoutMailStops(): void
+    {
+        $this->edit('email_oauth2_gmail.yml', ':scope: https://mail.google.com/', ':scope: https://www.googleapis.com/auth/gmail.readonly');
+
+        [$status, , $errors] = $this->convert(null, $this->directory . '/config/email_oauth2_gmail');
+
+        self::assertSame(1, $status);
+        self::assertStringContainsString('does not include https://mail.google.com/', $errors);
+        self::assertFileDoesNotExist($this->directory . '/etc/support.yml');
+    }
+
     public function testATargetDirectoryThatDoesNotExistStops(): void
     {
         [$status, , $errors] = $this->convert($this->directory . '/missing/support.yml');
@@ -146,11 +208,11 @@ final class ImapOauth2CredentialsTest extends TestCase
     /**
      * @return array{int, string, string}
      */
-    private function convert(?string $target = null): array
+    private function convert(?string $target = null, ?string $tokenFile = null): array
     {
         return $this->execute([
             'ruby', __DIR__ . '/../tools/imap_oauth2_credentials.rb',
-            $this->directory . '/config/email_oauth2_support', $target ?? $this->directory . '/etc/support.yml',
+            $tokenFile ?? $this->directory . '/config/email_oauth2_support', $target ?? $this->directory . '/etc/support.yml',
         ]);
     }
 

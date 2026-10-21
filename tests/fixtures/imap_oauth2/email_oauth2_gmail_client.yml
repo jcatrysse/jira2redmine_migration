@@ -1,0 +1,10 @@
+---
+client_id: dummy-gmail-client-id.apps.googleusercontent.com
+client_secret: dummy-gmail-client-secret
+site: https://accounts.google.com
+authorize_url: "/o/oauth2/v2/auth"
+token_url: https://oauth2.googleapis.com/token
+scope: https://mail.google.com/
+auth_params:
+  access_type: offline
+redirect_uri: http://localhost

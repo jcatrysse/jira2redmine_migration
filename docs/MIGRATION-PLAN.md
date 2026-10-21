@@ -2,10 +2,10 @@
 
 ## Samenvatting voor Jan (2026-10-21, B2)
 
-**Stand.** Alles staat op `redmine70-migration`, QA groen (1.187 tests). Jira bleef read-only: alleen GET-calls.
+**Stand.** Alles staat op `redmine70-migration`, QA groen (1.191 tests). Jira bleef read-only: alleen GET-calls.
 
 **Vandaag: het ophalen van mail met OAuth van 5.1 naar 7.0 (B92)**
-- **Het probleem:** 5.1 haalt de Microsoft 365-mailboxen op met `receive_imap_oauth2` en twee bestanden per mailbox in
+- **Het probleem:** 5.1 haalt de Microsoft 365- en Gmail-mailboxen op met `receive_imap_oauth2` en twee bestanden per mailbox in
   `config/`. 7.0 heeft die taak niet; de cronregels uit 5.1 zouden in productie bij elke run falen, en in de repetitie
   zag niemand het (crontab uit). 7.0 kan het 5.1-tokenbestand ook niet lezen, en 7.0's `.gitignore` negeert die
   bestanden niet meer.
@@ -14,9 +14,10 @@
   bestand. PRODUCTION.md: de omzetting (A.4 stap 4b), de nieuwe cronregel (A.6), de controle (A.5 rij 23) en
   `receive_imap` nooit op de kloon (A.1 en deel C).
 - **Bewezen met dummybestanden, nooit een echt token:** 7.0's eigen `Oauth2Client` leest het resultaat en vraagt het
-  token aan bij de juiste Microsoft-URL met de IMAP-scope (netwerk gestubd).
-- **Open:** een mailbox zonder client secret (5.1's handleiding liet dat toe) kan niet mee: 7.0 stuurt altijd een
-  secret, dus nieuwe toestemming nodig. En de core krijgt nog een commit die het nieuwe refresh token van Microsoft
+  token aan bij de juiste Microsoft- of Google-URL met de IMAP-scope (netwerk gestubd).
+- **Gmail:** een Google-app in "Testing" geeft refresh tokens die na 7 dagen vervallen; de tool herinnert eraan.
+- **Open:** een mailbox zonder client secret kan niet mee (5.1's taken eisen er een, de handleiding niet): 7.0 stuurt
+  altijd een secret, dus nieuwe toestemming nodig. En de core krijgt nog een commit die het nieuwe refresh token van Microsoft
   bewaart; tot dan wacht het ophalen van mail in productie.
 
 **Vanochtend: jouw beslissing 44 (twee velden die Redmine weigerde), gebouwd en bewezen**
@@ -1510,7 +1511,7 @@ uploaded but never attached (issues not created; Redmine's prune removes them); 
 | B89 | `run_all.sh` counts `[error]`, `fatal` and `exception` in a step's log as its errors, not `[failed]`, which 08 prints for a field Redmine refused | B87 and B88 showed in every run's 08 log but the summary said `08-push ... errors=0` | `tools/testenv/run_all.sh` (test tooling only); **fixed** (`059d82b`, Class A): `[failed]` counts; the next runs showed 30 more, B90 |
 | B90 | The Jira tape (test runs only, `src/Http/JiraTape.php`) stores a response's headers as JSON; 30 attachment downloads of GEOS/SIS/OAC/LABO have a header that is not valid UTF-8, `json_encode` threw, the tape rejected the download and left an empty entry | in every tape run 09 failed those 30 of 1,565 downloads (record: "Malformed UTF-8 characters", replay: "Syntax error"), so the proofs of phase 6 and decisions 43 and 44 did not exercise those 30 uploads, on both sides alike (their comparisons stand); production and the live runs do not use the tape (the one run had 0 such failures); B89 made it visible (09-pull errors=30) | `src/Http/JiraTape.php`; **fixed** (`f32cd97`, the coordinator's go): headers stored base64, an answer the tape cannot record or play marks it FAILED and `run_all.sh` stops; tapes recorded again: the 30 downloads succeed, and 4 issues that had waited for 15 of those attachments (`[blocked]`) are created, so the earlier proofs had left them out on both sides |
 | B91 | 08's usage count counts a Label Manager value without labels (`{"labels": []}`) as a value | "Remotely Operated Towed Vehicle": 39 issues with a value in the count, 1 with a label; a field whose issues only hold empty label objects is not IGNORED as unused | 08 usage; **fixed** (`e348eb5`, Class A: in the 14 projects no field changes, only counts: Nearshore and Trailer Vessel 719 to 591, Offshore Vessel 1,470 to 1,286, Drone Vessel 158 to 76, ROTV 111 to 14; the other 105 fields the same) |
-| B92 | PRODUCTION.md part A carried 5.1's mail fetching over as it is: 5.1-stable-GEOxyz fetches the Microsoft 365 mailboxes with `rake redmine:email:receive_imap_oauth2 token_file=...` (core `lib/tasks/email_oauth.rake`) and two files per mailbox in `config/` (the token with Ruby symbol keys, rewritten on every refresh; the application with relative tenant endpoints); 7.0-stable-GEOxyz has no such task, only `receive_imap oauth2_credentials=FILE` with one file of string keys, and its `.gitignore` no longer ignores `config/email_oauth2*.yml` (the coordinator, from Jan, 2026-10-21) | A.6's re-created mail lines would fail on every run in production, unseen in the rehearsal (crontab off); A.3 did not say what becomes of the token files, and a copy in 7.0's `config/` is one `git add -A` from a public repository; 7.0 cannot read the 5.1 token file (`Psych::DisallowedClass`) | docs/PRODUCTION.md part A and C; **fixed** (the coordinator's go): `tools/imap_oauth2_credentials.rb` converts each pair, prints no value, writes mode 600 and never replaces; A.4 step 4b, A.5 row 23 (the clone: static only), A.6's line translation, A.1 and part C: `receive_imap` never on the clone. **Pending:** the core commit that keeps Microsoft's rotated refresh token, and with it the final file rules |
+| B92 | PRODUCTION.md part A carried 5.1's mail fetching over as it is: 5.1-stable-GEOxyz fetches the Microsoft 365 mailboxes with `rake redmine:email:receive_imap_oauth2 token_file=...` (core `lib/tasks/email_oauth.rake`) and two files per mailbox in `config/` (the token with Ruby symbol keys, rewritten on every refresh; the application with relative tenant endpoints); 7.0-stable-GEOxyz has no such task, only `receive_imap oauth2_credentials=FILE` with one file of string keys, and its `.gitignore` no longer ignores `config/email_oauth2*.yml` (the coordinator, from Jan, 2026-10-21) | A.6's re-created mail lines would fail on every run in production, unseen in the rehearsal (crontab off); A.3 did not say what becomes of the token files, and a copy in 7.0's `config/` is one `git add -A` from a public repository; 7.0 cannot read the 5.1 token file (`Psych::DisallowedClass`) | docs/PRODUCTION.md part A and C; **fixed** (the coordinator's go, `4ac94ff`; Gmail added on the coordinator's addendum: Jan's copy also has a Gmail pair): `tools/imap_oauth2_credentials.rb` converts each pair of Microsoft 365 or Gmail, prints no value, writes mode 600 and never replaces; A.4 step 4b, A.5 row 23 (the clone: static only), A.6's line translation, A.1 and part C: `receive_imap` never on the clone. **Pending:** the core commit that keeps Microsoft's rotated refresh token, and with it the final file rules |
 
 **Gate rerun on 5.1 with 96fe96a (recursion fix 22e3eb8 + parent author fix f9bf1e7), 2026-10-13:**
 no SystemStackError; script results equal to 132fff5 (issues 365 created, 48 failed, 5 manual, 2
@@ -2234,10 +2235,11 @@ and 7.0-stable-GEOxyz `f592381` (`lib/tasks/email.rake`, `lib/redmine/oauth2_cli
 | `tools/imap_oauth2_credentials.rb` on the pair | exit 0, mode 600, keys token_url, client_id, client_secret, refresh_token, scope, authorize_url, redirect_uri; the output names keys, provider and scopes, no value |
 | the result read by 7.0's own `Redmine::Oauth2Client` (`f592381`, loaded from the core) | `read_credentials` with the five keys: ok; `authorize_url`: `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/authorize`; `access_token` with `Net::HTTP` stubbed: one POST to `login.microsoftonline.com:443`, SSL, path `/<tenant>/oauth2/v2.0/token`, fields client_id, client_secret, grant_type, refresh_token, scope, `grant_type=refresh_token`, scope `https://outlook.office.com/IMAP.AccessAsUser.All offline_access` |
 | A.5 row 23's check on a good and a broken file | `support.yml: keys ok`; `... broken.yml is missing client_secret`, no value printed |
-| `tests/ImapOauth2CredentialsTest.php` | 8 tests; without the tool 6 fail (the seventh shows 7.0 refusing the 5.1 file); without 5.1's `token_file` naming 1 fails |
+| the Gmail pair (dummies as 5.1's `google_oauth2_init` writes them) | exit 0, mode 600; scope `https://mail.google.com/` from the token file; 7.0's `authorize_url`: `https://accounts.google.com/o/oauth2/v2/auth` with `access_type=offline`, `prompt=consent`; `access_token`: one POST to `oauth2.googleapis.com:443`, SSL, path `/token`, `grant_type=refresh_token`, scope `https://mail.google.com/`; the 7-day Testing reminder printed |
+| `tests/ImapOauth2CredentialsTest.php` | 12 tests; without the tool 6 of the first 8 fail (another shows 7.0 refusing the 5.1 file); without 5.1's `token_file` naming 1 fails; the first tool (`4ac94ff`) fails 4 of the 12 (Gmail, Microsoft's scope source, the secret message) |
 
-What the conversion cannot do: a mailbox whose 5.1 application has no client secret (5.1's guide allowed a public
-client). 7.0's `Oauth2Client` sends `client_secret` in every token request, so the tool stops there and the mailbox
+What the conversion cannot do: a mailbox whose 5.1 application has no client secret (5.1's init tasks require one,
+its Microsoft 365 guide says a public app may omit it). 7.0's `Oauth2Client` sends `client_secret` in every token request, so the tool stops there and the mailbox
 needs a secret and a new consent; Jan decides per mailbox. Pending: core `f592381` does not keep the refresh token
 Microsoft returns with every access token, so the converted file keeps the token of the conversion; a core session is
 changing that, and its file rules and commit go into A.3 and A.4 step 4b when they come.

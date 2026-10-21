@@ -1,0 +1,9 @@
+---
+:scope: https://mail.google.com/
+:token_type: Bearer
+:access_token: dummy-gmail-access-token
+:refresh_token: dummy-gmail-refresh-token
+:expires_at: 1792576961
+:mode: :header
+:header_format: Bearer %s
+:param_name: access_token

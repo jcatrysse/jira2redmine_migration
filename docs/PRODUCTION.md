@@ -61,12 +61,13 @@ Placeholders are written `<like-this>`.
   `rails runner 'puts User.anonymous.id'` in `J2R_DEFAULT_AUTHOR_ID`). Dat geldt voor issues, commentaren,
   geschiedenis, `jira-history.json` en bijlagen. Zonder die waarde stoppen de scripts in plaats van als het
   migratie-account te schrijven.
-- **Mail ophalen met OAuth (B92):** 5.1 haalt de Microsoft 365-mailboxen op met `receive_imap_oauth2` en twee
+- **Mail ophalen met OAuth (B92):** 5.1 haalt de Microsoft 365- en Gmail-mailboxen op met `receive_imap_oauth2` en twee
   bestanden per mailbox in `config/`; 7.0 heeft die taak niet, wel `receive_imap` met één credentials-bestand. A.4 stap
   4b zet per mailbox de twee bestanden om met `tools/imap_oauth2_credentials.rb` (toont geen geheim) naar
   `/etc/redmine/imap_oauth2/`, buiten de Redmine-boom; de oude bestanden verlaten de boom (7.0's `.gitignore` negeert
   ze niet meer). A.6 geeft de nieuwe cronregel. Op de kloon draait `receive_imap` nooit, ook niet met de hand: alleen
-  een statische controle (A.5 rij 23). In productie na de go één handmatige run per mailbox met een testmail.
+  een statische controle (A.5 rij 23). In productie na de go één handmatige run per mailbox met een testmail. Een
+  Google-app die in "Testing" staat geeft refresh tokens die na 7 dagen vervallen: publiceer ze.
   **Open:** de core krijgt nog een commit die het nieuwe refresh token van Microsoft terugschrijft; zonder die commit
   stopt het ophalen zodra Microsoft het omgezette token niet meer aanvaardt. De definitieve bestandsregels volgen.
 - **Deel C** is de prompt voor de lokale Claude-sessie op de server: Jira alleen lezen, standaard rechten, Jans go
@@ -140,9 +141,9 @@ A clone of the production VM carries production's configuration. Before its Redm
 
 **Never on the clone, beyond the crontab being off:** `rake redmine:email:receive_imap`, `receive_imap_oauth2`,
 `receive_pop3` or any other `redmine:email:receive_*` task, not by hand, not once, not "to test the new line". The
-clone holds production's mail credentials (B92): a run would sign in to the real Microsoft 365 mailbox with them, fetch
-production's mail into the clone and mark it read or move it, so production would never see it. Also not
-`redmine:email:oauth2_authorize` and no other call to Microsoft's token endpoint. On the clone the mail fetching is
+clone holds production's mail credentials (B92): a run would sign in to the real Microsoft 365 or Gmail mailbox with
+them, fetch production's mail into the clone and mark it read or move it, so production would never see it. Also not
+`redmine:email:oauth2_authorize` and no other call to a provider's token endpoint. On the clone the mail fetching is
 checked statically only (A.4 step 4b, A.5 row 23); the first real run is in production, after the go.
 
 ### A.2 Prerequisites on the server
@@ -280,10 +281,12 @@ The upgrade (rehearsal and production alike):
    `themes/<id>` before the first boot, same directory name; Opale from its 1.7.2 release zip into
    `themes/opale`; PurpleMine2 is not copied (its users go to Opale in step 9).
 
-   4b. **Mail fetching credentials (B92).** 5.1 fetches each Microsoft 365 mailbox with a crontab line
+   4b. **Mail fetching credentials (B92).** 5.1 fetches each Microsoft 365 or Gmail mailbox with a crontab line
    `rake redmine:email:receive_imap_oauth2 token_file=<f> host=... username=...` and two files: `<f>.yml`, the token,
-   which 5.1 rewrites on every refresh, and `<f>_client.yml`, the application (client id and secret, tenant
-   endpoints); when the name of `<f>` does not start with `email_oauth2`, 5.1 puts `email_oauth2_` in front of it.
+   which 5.1 rewrites on every refresh, and `<f>_client.yml`, the application (client id and secret, endpoints);
+   when the name of `<f>` does not start with `email_oauth2`, 5.1 puts `email_oauth2_` in front of it (5.1's own
+   names, as on Jan's copy: `token_file=config/email_oauth2` for `config/email_oauth2.yml` and
+   `config/email_oauth2_client.yml`, `token_file=config/email_oauth2_gmail` for the Gmail pair).
    7.0 has no such task: `rake redmine:email:receive_imap ... oauth2_credentials=<file>` reads one YAML file with
    token_url, client_id, client_secret, refresh_token and scope (core `lib/redmine/oauth2_client.rb`,
    `doc/IMAP_OAUTH2.md`). Per mailbox, one conversion turns the pair into that file.
@@ -300,16 +303,27 @@ The upgrade (rehearsal and production alike):
    ```
 
    It prints the keys it wrote, the provider with the scope it asks for, and the scopes the mailbox owner granted:
-   never a value. For Microsoft 365 the scope is `https://outlook.office.com/IMAP.AccessAsUser.All offline_access`,
-   whatever broader scope 5.1 asked for; the token and authorize URLs become absolute
-   (`https://login.microsoftonline.com/<tenant>/oauth2/v2.0/...`). It writes the file with mode 600, owned by whoever
-   runs it, and never replaces an existing one. It stops with exit 1 and writes nothing when:
-   - `<f>_client.yml` has no client secret: a public client, which 5.1's Microsoft 365 guide allowed. 7.0 sends a
-     client secret with every token request, so that mailbox cannot be converted: the application needs a secret and
-     the mailbox owner consents again with `redmine:email:oauth2_authorize` (core `doc/IMAP_OAUTH2.md`), in
-     production after the go. Report it; Jan decides.
-   - the token holds no refresh token, or the mailbox owner's consent does not include IMAP: consent again the same
-     way.
+   never a value. The provider follows from the host of the token URL, and so does the scope:
+   - Microsoft 365 (`login.microsoftonline.com`): `https://outlook.office.com/IMAP.AccessAsUser.All offline_access`,
+     not 5.1's wider consent (POP, SMTP, User.Read); the token and authorize URLs become absolute
+     (`https://login.microsoftonline.com/<tenant>/oauth2/v2.0/...`).
+   - Gmail (`oauth2.googleapis.com`): the scope the 5.1 token file names, else `https://mail.google.com/`; no
+     `offline_access`, Google's equivalent is `access_type=offline` at the consent, which the old refresh token
+     already reflects. `authorize_params` gets `access_type: offline` and `prompt: consent` for a later new consent
+     (Google gives a refresh token on the first consent only). **An External Google app left in "Testing"
+     publishing status has refresh tokens that expire after 7 days** (core `doc/IMAP_OAUTH2.md`; the imap-oauth
+     dossier on `geoxyz/framework`): publish the app, or use Internal for a Workspace domain; the tool prints this
+     reminder for every Gmail mailbox.
+   - another host: the token file's scope, else the client file's.
+
+   It writes the file with mode 600, owned by whoever runs it, and never replaces an existing one. It stops with exit
+   1 and writes nothing when:
+   - `<f>_client.yml` has no client secret. 5.1's init tasks require one (its Microsoft 365 guide says a public app
+     may omit it); 7.0 sends a client secret with every token request, so that mailbox cannot be converted: the
+     application needs a secret and the mailbox owner consents again with `redmine:email:oauth2_authorize` (core
+     `doc/IMAP_OAUTH2.md`), in production after the go. Report it; Jan decides.
+   - the token holds no refresh token, or the mailbox owner's consent does not include IMAP
+     (`IMAP.AccessAsUser.All`, `https://mail.google.com/`): consent again the same way.
    - the target exists: it is never replaced, so a second run for the same mailbox changes nothing.
 
    Then the old files leave the Redmine tree, both trees: `sudo install -d -m 700 <outside>/email_oauth2-5.1` and
@@ -400,16 +414,19 @@ and MailHandler options, translated like this:
 | `host`, `username`, `folder`, `move_on_success`, `move_on_failure` | the same |
 | no `port` (5.1 means 993) | `port=993` (7.0 means 143 without it) |
 | no `ssl`, or `ssl=1`/`true`/`yes` (5.1: SSL on) | `ssl=1` (7.0: SSL off without it). Never `ssl=force`: that switches certificate checking off |
-| `ssl=0`, or a `port` other than 993 | stop and report: Microsoft 365 IMAP is port 993 with SSL |
+| `ssl=0`, or a `port` other than 993 | stop and report: Microsoft 365 (`outlook.office365.com`) and Gmail (`imap.gmail.com`) IMAP are port 993 with SSL |
 | `starttls=...` | leave it out: 7.0 switches STARTTLS on for any value, `0` included; 5.1 ignored it with SSL on |
 | `imap_debug=...` | leave it out (5.1 only) |
 | `project`, `status`, `tracker`, `category`, `priority`, `assigned_to`, `fixed_version`, `allow_override`, `unknown_user`, `no_permission_check`, `no_account_notice`, `no_notification`, `default_group`, `project_from_subaddress`, `private` | the same, unchanged (both pass them to `MailHandler`) |
 
-For example, with `<f>` = `config/support`:
+For example, a Microsoft 365 mailbox with `<f>` = `config/support` and a Gmail mailbox with `<f>` =
+`config/email_oauth2_gmail`:
 
 ```text
 5.1: */5 * * * * cd <5.1-root> && bundle exec rake redmine:email:receive_imap_oauth2 RAILS_ENV=production token_file=config/support host=outlook.office365.com username=<mailbox> project=<project> unknown_user=accept no_permission_check=1
 7.0: */5 * * * * cd <redmine-root> && bundle exec rake redmine:email:receive_imap RAILS_ENV=production host=outlook.office365.com port=993 ssl=1 username=<mailbox> oauth2_credentials=/etc/redmine/imap_oauth2/support.yml project=<project> unknown_user=accept no_permission_check=1
+5.1: */5 * * * * cd <5.1-root> && bundle exec rake redmine:email:receive_imap_oauth2 RAILS_ENV=production token_file=config/email_oauth2_gmail host=imap.gmail.com username=<mailbox> project=<project>
+7.0: */5 * * * * cd <redmine-root> && bundle exec rake redmine:email:receive_imap RAILS_ENV=production host=imap.gmail.com port=993 ssl=1 username=<mailbox> oauth2_credentials=/etc/redmine/imap_oauth2/gmail.yml project=<project>
 ```
 
 In production a mail line goes into the crontab only after its manual run of A.5 row 23 passed, and after the core

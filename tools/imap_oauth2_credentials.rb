@@ -7,7 +7,8 @@
 # BASE.yml, the token (Ruby symbol keys, rewritten on every refresh), and BASE_client.yml, the application. 7.0-stable-
 # GEOxyz has no such task: `rake redmine:email:receive_imap oauth2_credentials=FILE` reads one YAML file with string
 # keys (lib/redmine/oauth2_client.rb): token_url, client_id, client_secret, refresh_token and scope, plus
-# authorize_url and redirect_uri for `redmine:email:oauth2_authorize`. This writes that file.
+# authorize_url, redirect_uri and authorize_params for `redmine:email:oauth2_authorize`. This writes that file, for a
+# Microsoft 365 and for a Gmail mailbox (5.1's o365_oauth2_init and google_oauth2_init).
 #
 #   ruby tools/imap_oauth2_credentials.rb /path/to/5.1/config/email_oauth2_NAME /etc/redmine/imap_oauth2/NAME.yml
 #
@@ -20,8 +21,14 @@
 require 'yaml'
 require 'uri'
 
-MICROSOFT_SCOPE = 'https://outlook.office.com/IMAP.AccessAsUser.All offline_access'
-GOOGLE_SCOPE = 'https://mail.google.com/'
+MICROSOFT_IMAP = 'https://outlook.office.com/IMAP.AccessAsUser.All'
+GOOGLE_IMAP = 'https://mail.google.com/'
+# By the host of token_url: the provider and the scope IMAP needs. 5.1 writes both (o365_oauth2_init, google_oauth2_init).
+PROVIDERS = {
+  'login.microsoftonline.com' => ['Microsoft 365', MICROSOFT_IMAP],
+  'oauth2.googleapis.com' => ['Google', GOOGLE_IMAP],
+  'accounts.google.com' => ['Google', GOOGLE_IMAP]
+}.freeze
 
 def stop(message)
   warn "imap_oauth2_credentials: #{message}"
@@ -74,27 +81,34 @@ client_id = present(client['client_id'])
 stop "#{base}_client.yml holds no client_id" unless client_id
 client_secret = present(client['client_secret'])
 unless client_secret
-  stop "#{base}_client.yml holds no client_secret: a public client, which 5.1's guide allowed. 7.0 sends a client " \
-       'secret with every token request: give the application one and authorize the mailbox again ' \
-       '(doc/IMAP_OAUTH2.md)'
+  # 5.1's init tasks require one; its Microsoft 365 guide says a public app may omit it
+  stop "#{base}_client.yml holds no client_secret. 7.0 sends a client secret with every token request: give the " \
+       'application one and authorize the mailbox again (doc/IMAP_OAUTH2.md)'
 end
 stop "#{base}_client.yml holds no token_url" unless present(client['token_url'])
 
 token_url = absolute_url(client['token_url'], client['site'], 'token_url')
 host = URI.parse(token_url).host
-provider, scope = case host
-                  when 'login.microsoftonline.com' then ['Microsoft 365', MICROSOFT_SCOPE]
-                  when 'oauth2.googleapis.com', 'accounts.google.com' then ['Google', GOOGLE_SCOPE]
-                  else [host, present(client['scope'])]
-                  end
-stop "#{base}_client.yml holds no scope for #{host}" unless scope
+provider, imap_scope = PROVIDERS.fetch(host, [host, nil])
 
 # What the mailbox owner consented to, as the token response named it; the refresh request asks for a subset only.
 granted = present(token['scope'])&.split || []
-needed = scope.split - %w[offline_access]
-if granted.any? && !(needed - granted).empty?
-  stop "the consent of #{base}.yml does not include #{(needed - granted).join(' ')}: authorize the mailbox again"
+if imap_scope && granted.any? && !granted.include?(imap_scope)
+  stop "the consent of #{base}.yml does not include #{imap_scope}: authorize the mailbox again"
 end
+
+# Microsoft 365: IMAP and offline_access only (core doc/IMAP_OAUTH2.md), not 5.1's wider consent (POP, SMTP, User.Read).
+# Otherwise the scope the token file names, else the provider's (Google: offline is access_type, not a scope).
+scope, source = if provider == 'Microsoft 365'
+                  ["#{MICROSOFT_IMAP} offline_access", 'IMAP only']
+                elsif !granted.empty?
+                  [granted.join(' '), 'from the token file']
+                elsif imap_scope
+                  [imap_scope, "#{provider}'s"]
+                else
+                  [present(client['scope']), 'from the client file']
+                end
+stop "#{base}.yml and #{base}_client.yml hold no scope for #{host}" unless scope
 
 credentials = {
   'token_url' => token_url,
@@ -107,7 +121,10 @@ if present(client['authorize_url'])
   credentials['authorize_url'] = absolute_url(client['authorize_url'], client['site'], 'authorize_url')
 end
 credentials['redirect_uri'] = present(client['redirect_uri']) if present(client['redirect_uri'])
-credentials['authorize_params'] = client['auth_params'] if client['auth_params'].is_a?(Hash)
+authorize_params = client['auth_params'].is_a?(Hash) ? client['auth_params'].to_h { |key, value| [key.to_s, value] } : {}
+# Google returns a refresh token on the first consent only: a new consent (oauth2_authorize) needs prompt=consent too
+authorize_params = { 'access_type' => 'offline', 'prompt' => 'consent' }.merge(authorize_params) if provider == 'Google'
+credentials['authorize_params'] = authorize_params unless authorize_params.empty?
 
 # Written beside its final name, then linked: a reader never sees half a file, and an existing file stays.
 temporary = "#{target}.#{Process.pid}.tmp"
@@ -122,5 +139,9 @@ ensure
 end
 
 puts "#{target}: #{credentials.keys.join(', ')} (mode 600)"
-puts "provider: #{provider}; scope: #{scope}"
+puts "provider: #{provider}; scope: #{scope} (#{source})"
 puts "granted by the mailbox owner: #{granted.empty? ? '(not recorded in the token file)' : granted.join(' ')}"
+if provider == 'Google'
+  puts 'Google: an app whose OAuth consent screen is External and left in Testing gets refresh tokens that expire ' \
+       'after 7 days; publish it (or use Internal for a Workspace domain)'
+end
