@@ -127,9 +127,12 @@ authorize_params = client['auth_params'].is_a?(Hash) ? client['auth_params'].to_
 authorize_params = { 'access_type' => 'offline', 'prompt' => 'consent' }.merge(authorize_params) if provider == 'Google'
 credentials['authorize_params'] = authorize_params unless authorize_params.empty?
 
+# 7.0 rewrites the refresh_token line when the provider rotates the token (core 3a71d578b, store_refresh_token), and
+# only a single top-level line: never folded, whatever the token's length.
+yaml = credentials.to_yaml(line_width: -1)
 # Written beside its final name, then linked: a reader never sees half a file, and an existing file stays.
 temporary = "#{target}.#{SecureRandom.hex(8)}.tmp"
-File.open(temporary, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |file| file.write(credentials.to_yaml) }
+File.open(temporary, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |file| file.write(yaml) }
 begin
   File.chmod(0o600, temporary)
   File.link(temporary, target)

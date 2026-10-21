@@ -243,6 +243,34 @@ final class ImapOauth2CredentialsTest extends TestCase
         self::assertSame(0, $status, $errors);
     }
 
+    /**
+     * 7.0 (core 3a71d578b, store_refresh_token) replaces a rotated refresh token only on a single top-level
+     * "refresh_token: VALUE" line; YAML folds a long value at its spaces into several lines.
+     *
+     * @return array<string, array{string}>
+     */
+    public static function longTokens(): array
+    {
+        return [
+            'a long token' => [str_repeat('0.AXYZ-abc_DEF.ghi', 120)],
+            'a long token with spaces' => [trim(str_repeat('dummy rotated part ', 120))],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('longTokens')]
+    public function testTheRefreshTokenIsOneLineWhateverItsLength(string $token): void
+    {
+        $this->edit('email_oauth2_support.yml', ':refresh_token: dummy-refresh-token', ':refresh_token: ' . $token);
+
+        [$status, , $errors] = $this->convert();
+
+        self::assertSame(0, $status, $errors);
+        $lines = explode("\n", (string)file_get_contents($this->directory . '/etc/support.yml'));
+        self::assertSame(['refresh_token: ' . $token], array_values(preg_grep('/^refresh_token: /', $lines) ?: []));
+        self::assertSame([], preg_grep('/^\s/', $lines), 'no continuation line');
+        self::assertSame($token, $this->readAs70($this->directory . '/etc/support.yml')['refresh_token']);
+    }
+
     public function testATargetDirectoryThatDoesNotExistStops(): void
     {
         [$status, , $errors] = $this->convert($this->directory . '/missing/support.yml');
