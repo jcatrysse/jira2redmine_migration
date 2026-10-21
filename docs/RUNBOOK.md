@@ -22,7 +22,10 @@ database, which is removed after the migration (no PostgreSQL port of the stagin
    (json, ctype, openssl and pdo come with the CLI package). Check: `php -v`, `php -m`. Every script checks
    this first and stops with `[ERROR] This PHP cannot run the migration scripts:` and what is missing. The
    CLI's default `memory_limit` (-1 on Debian) is what the test runs used. Tested on PHP 8.2.34 and 8.3.6.
-   In the repository checkout: `composer install --no-dev`. For `tools/qa.sh` (developers only) also
+   In the repository checkout: `composer install --no-dev`. It installs the versions in `composer.lock`, the set the
+   tests and proofs ran on (B93); it must not warn "The lock file is not up to date with the latest changes in
+   composer.json" (stop and report if it does), and never run `composer update` for a migration. For `tools/qa.sh`
+   (developers only) also
    pdo_sqlite (`php8.2-sqlite3`), the dev dependencies and Ruby 3.0 or newer on `PATH` (the test of
    `tools/imap_oauth2_credentials.rb`, B92, runs it).
 2. **A temporary MySQL 8 or MariaDB** on the same server (or one it reaches), with the staging database and

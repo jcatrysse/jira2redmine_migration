@@ -534,7 +534,8 @@ SOIL, SSPT, ROV, GSPP, FPS).
 ### B3. Configuration
 
 A checkout of the repository (rehearsal: branch `redmine70-migration`; production: `main`), then
-`composer install --no-dev`. `config/config.local.php` is not in git; this version reads every secret from the
+`composer install --no-dev`: it installs `composer.lock`, the tested set (B93). It must not warn that the lock file is
+not up to date with `composer.json`; if it does, stop and report. Never `composer update`. `config/config.local.php` is not in git; this version reads every secret from the
 environment, so none is written to a file:
 
 ```php

@@ -1,7 +1,6 @@
 composer.phar
 /vendor/
 /.idea/
-/composer.lock
 /config/config.local.php
 .phpunit.result.cache
 /tools/bin/

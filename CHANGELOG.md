@@ -6,6 +6,8 @@ All notable changes to this project. Steps to take before and after a migration 
 ## [Unreleased] (branch redmine70-migration)
 
 ### Added
+- `composer.lock` in git (B93): `composer install` installs the set the tests and proofs ran on (league/html-to-markdown
+  5.1.4, guzzle 7.15.5), not whatever is newest; `tests/DependencyLockTest.php` keeps it in step with `composer.json`.
 - `tools/imap_oauth2_credentials.rb` (B92): turns the two OAuth files of a mailbox of 5.1's
   `redmine:email:receive_imap_oauth2` into the one credentials file of 7.0's `redmine:email:receive_imap
   oauth2_credentials=FILE`, for Microsoft 365 and Gmail; prints no secret, writes mode 600, never replaces a file. docs/PRODUCTION.md part A: the
