@@ -61,6 +61,14 @@ Placeholders are written `<like-this>`.
   `rails runner 'puts User.anonymous.id'` in `J2R_DEFAULT_AUTHOR_ID`). Dat geldt voor issues, commentaren,
   geschiedenis, `jira-history.json` en bijlagen. Zonder die waarde stoppen de scripts in plaats van als het
   migratie-account te schrijven.
+- **Mail ophalen met OAuth (B92):** 5.1 haalt de Microsoft 365-mailboxen op met `receive_imap_oauth2` en twee
+  bestanden per mailbox in `config/`; 7.0 heeft die taak niet, wel `receive_imap` met één credentials-bestand. A.4 stap
+  4b zet per mailbox de twee bestanden om met `tools/imap_oauth2_credentials.rb` (toont geen geheim) naar
+  `/etc/redmine/imap_oauth2/`, buiten de Redmine-boom; de oude bestanden verlaten de boom (7.0's `.gitignore` negeert
+  ze niet meer). A.6 geeft de nieuwe cronregel. Op de kloon draait `receive_imap` nooit, ook niet met de hand: alleen
+  een statische controle (A.5 rij 23). In productie na de go één handmatige run per mailbox met een testmail.
+  **Open:** de core krijgt nog een commit die het nieuwe refresh token van Microsoft terugschrijft; zonder die commit
+  stopt het ophalen zodra Microsoft het omgezette token niet meer aanvaardt. De definitieve bestandsregels volgen.
 - **Deel C** is de prompt voor de lokale Claude-sessie op de server: Jira alleen lezen, standaard rechten, Jans go
   voor elke schrijfstap in productie, rapport in het Nederlands.
 
@@ -121,7 +129,7 @@ A clone of the production VM carries production's configuration. Before its Redm
 
 | what | why | how |
 |---|---|---|
-| incoming mail (helpdesk mailboxes, `redmine:email:receive_*`) | the clone would fetch, and delete or mark read, production's real mail | disable the clone's crontab before boot (`crontab -r` for the Redmine user, after saving it with `crontab -l`) |
+| incoming mail (helpdesk mailboxes, `redmine:email:receive_*`) | the clone would fetch, and delete or mark read, production's real mail | disable the clone's crontab before boot (`crontab -r` for the Redmine user, after saving it with `crontab -l`); and never run `receive_imap` by hand (below) |
 | outgoing mail | users would get mails from the clone | `config/configuration.yml`: `delivery_method: :file` (mails land in `tmp/mails`) |
 | webhooks | 5.1's webhooks are carried over to 7.0 and fire to real endpoints | after the upgrade, before the start: `UPDATE webhooks SET active = false;` |
 | AI calls (redmine_ai_triage, redmine_ai_summary) | they send issue text to the provider and change issues | leave their cron off; do not open AI actions on the clone |
@@ -129,6 +137,13 @@ A clone of the production VM carries production's configuration. Before its Redm
 | LDAP sync | reads the AD, writes only to the clone: allowed | run it by hand only (A.5) |
 | SSO | the identity provider redirects to production's address | test SSO on production after the go, or with a test redirect URI at the IdP |
 | host name | links and mails must not point at production | Administration > Settings > General > Host name: the clone's name |
+
+**Never on the clone, beyond the crontab being off:** `rake redmine:email:receive_imap`, `receive_imap_oauth2`,
+`receive_pop3` or any other `redmine:email:receive_*` task, not by hand, not once, not "to test the new line". The
+clone holds production's mail credentials (B92): a run would sign in to the real Microsoft 365 mailbox with them, fetch
+production's mail into the clone and mark it read or move it, so production would never see it. Also not
+`redmine:email:oauth2_authorize` and no other call to Microsoft's token endpoint. On the clone the mail fetching is
+checked statically only (A.4 step 4b, A.5 row 23); the first real run is in production, after the go.
 
 ### A.2 Prerequisites on the server
 
@@ -234,11 +249,19 @@ and its locale file (the GEOxyz relation types), and the themes you keep (A.4 st
 `config/initializers/99_pdf_export_marshal_fix.rb`, the hotfix Jan may put on 5.1 for the PDF export of a table: core
 `f592381` has the fix (on 7.0 the file would be harmless, the same hook, but it does not belong there).
 
+Not kept, converted (B92): `config/email_oauth2*.yml`, the OAuth files of 5.1's mail fetching (per mailbox
+`email_oauth2_<name>.yml`, the token with the refresh token, and `email_oauth2_<name>_client.yml`, the application
+with its client secret). 7.0 cannot read them; A.4 step 4b turns each pair into one credentials file outside the
+Redmine tree and moves the old files out. Never copy them into the 7.0 tree: 7.0's `.gitignore` no longer ignores
+`config/email_oauth2*.yml` (5.1's did), so a copy left in `config/` is one `git add -A` away from a public
+repository.
+
 ### A.4 The upgrade, step by step
 
 Before (on 5.1, read-only; save every output outside the repositories, it holds production data):
 
-1. Inventory: `ls plugins` (compare with A.3), `crontab -l` of the Redmine user, `ls public/themes`, the themes
+1. Inventory: `ls plugins` (compare with A.3), `crontab -l` of the Redmine user (its `receive_imap_oauth2` lines are
+   the mailboxes of step 4b), `ls config/email_oauth2*` (names only, never the contents), `ls public/themes`, the themes
    users chose (`SELECT u.login, p.others FROM user_preferences p JOIN users u ON u.id = p.user_id WHERE
    p.others LIKE '%ui_theme%';`) and the global one (`SELECT value FROM settings WHERE name = 'ui_theme';`),
    the webhooks (`SELECT id, url, active FROM webhooks;`).
@@ -256,6 +279,52 @@ The upgrade (rehearsal and production alike):
 4. Put the new tree in place (A.3), with the kept files. Move every theme you keep from `public/themes/<id>` to
    `themes/<id>` before the first boot, same directory name; Opale from its 1.7.2 release zip into
    `themes/opale`; PurpleMine2 is not copied (its users go to Opale in step 9).
+
+   4b. **Mail fetching credentials (B92).** 5.1 fetches each Microsoft 365 mailbox with a crontab line
+   `rake redmine:email:receive_imap_oauth2 token_file=<f> host=... username=...` and two files: `<f>.yml`, the token,
+   which 5.1 rewrites on every refresh, and `<f>_client.yml`, the application (client id and secret, tenant
+   endpoints); when the name of `<f>` does not start with `email_oauth2`, 5.1 puts `email_oauth2_` in front of it.
+   7.0 has no such task: `rake redmine:email:receive_imap ... oauth2_credentials=<file>` reads one YAML file with
+   token_url, client_id, client_secret, refresh_token and scope (core `lib/redmine/oauth2_client.rb`,
+   `doc/IMAP_OAUTH2.md`). Per mailbox, one conversion turns the pair into that file.
+
+   Only once 5.1's crontab is stopped (production: step 3; the clone: A.1, before boot): the token file must be the one
+   5.1 wrote last, never an earlier copy, because 5.1 keeps replacing the refresh token in it. Run it as the Redmine
+   user with the Ruby of A.2 (`-i`: its login shell, so rbenv is on `PATH`); `<f>` is the `token_file` value of the
+   mailbox's 5.1 line, made absolute against the 5.1 root, `<name>` a short name of the mailbox (if the Redmine user
+   cannot read the checkout, feed it the script: `... -i ruby - <5.1-root>/<f> <target> < <checkout>/tools/...`):
+
+   ```bash
+   sudo install -d -m 700 -o <redmine-user> -g <redmine-group> /etc/redmine/imap_oauth2   # once
+   sudo -u <redmine-user> -i ruby <checkout>/tools/imap_oauth2_credentials.rb <5.1-root>/<f> /etc/redmine/imap_oauth2/<name>.yml
+   ```
+
+   It prints the keys it wrote, the provider with the scope it asks for, and the scopes the mailbox owner granted:
+   never a value. For Microsoft 365 the scope is `https://outlook.office.com/IMAP.AccessAsUser.All offline_access`,
+   whatever broader scope 5.1 asked for; the token and authorize URLs become absolute
+   (`https://login.microsoftonline.com/<tenant>/oauth2/v2.0/...`). It writes the file with mode 600, owned by whoever
+   runs it, and never replaces an existing one. It stops with exit 1 and writes nothing when:
+   - `<f>_client.yml` has no client secret: a public client, which 5.1's Microsoft 365 guide allowed. 7.0 sends a
+     client secret with every token request, so that mailbox cannot be converted: the application needs a secret and
+     the mailbox owner consents again with `redmine:email:oauth2_authorize` (core `doc/IMAP_OAUTH2.md`), in
+     production after the go. Report it; Jan decides.
+   - the token holds no refresh token, or the mailbox owner's consent does not include IMAP: consent again the same
+     way.
+   - the target exists: it is never replaced, so a second run for the same mailbox changes nothing.
+
+   Then the old files leave the Redmine tree, both trees: `sudo install -d -m 700 <outside>/email_oauth2-5.1` and
+   `sudo mv <5.1-root>/config/email_oauth2* <outside>/email_oauth2-5.1/` (`<outside>` is the place of the step 1 and
+   step 3 outputs; the rollback of A.7 puts them back). Check: one file in `/etc/redmine/imap_oauth2` per
+   `receive_imap_oauth2` line of the saved crontab, and `ls <5.1-root>/config/email_oauth2* config/email_oauth2*`
+   finds nothing.
+
+   **Pending (core):** core `f592381` does not keep the refresh token Microsoft returns with every access token
+   (RFC 6749 section 6: the client keeps the new one), so the file keeps the token of the conversion and mail
+   fetching stops once Microsoft no longer accepts it. A core session is changing `receive_imap` to write the rotated
+   token back into the file, which makes the file, and probably its directory (an atomic rename), writable by the
+   Redmine user: the layout above (directory 700 and file 600, both the Redmine user's) is already that. The final
+   file rules and the new core commit (A.3) come from that session; production's mail fetching waits for them.
+
 5. `bundle config set without 'development test'`, then `bundle install`.
 6. `RAILS_ENV=production bundle exec rake db:migrate`. On a 5.1-stable-GEOxyz database this also sets the 5.1
    webhook tables aside and copies their rows into 7.0's (`8dc5e73`) and carries and then removes the renamed
@@ -310,6 +379,7 @@ else is a finding.
 | 20 | the whole site | open the issue list, an issue, the agile board, the calendar, the gantt, My page, a wiki page, a helpdesk ticket, a contact, the people page, as admin and as a normal user; on the clone Claude can crawl every menu link and report any 500 | no error page |
 | 21 | GEOxyz relation types | open an issue with a GEOxyz relation (for example "create RMA" or "Wiki"), section Related issues; the labels come from `redmine_issue_view_columns.local.rb` and its locale file, kept from 5.1 (A.3) | the relation's own label, no "Translation missing" (the sign of a forgotten locale file) |
 | 22 | PDF export of a table (core `f592381`) | export an issue whose description has a Markdown table to PDF (the issue, "Also available in: PDF") | a PDF, no 500 |
+| 23 | mail fetching credentials (B92, A.4 step 4b) | **Clone: static only, no network call with production's credentials** (A.1): `stat -c '%n %U %a' /etc/redmine/imap_oauth2 /etc/redmine/imap_oauth2/*.yml`; `bundle exec rails runner 'Dir["/etc/redmine/imap_oauth2/*.yml"].sort.each { \|f\| Redmine::Oauth2Client.send(:read_credentials, f, %w(token_url client_id client_secret refresh_token scope)); puts "#{File.basename(f)}: keys ok" }'` (reads the file as `receive_imap` does, prints no value); `ls config/email_oauth2* <5.1-root>/config/email_oauth2*`. **Production, after the go:** per mailbox, send a test mail to it, then run its A.6 line once by hand (`cd <redmine-root> && bundle exec rake redmine:email:receive_imap ...`); only then its cron line | clone: the directory `<redmine-user> 700`, one file per 5.1 mailbox, each `<redmine-user> 600` and `keys ok`, `ls` finds nothing. Production: exit 0, no error line, the test mail is an issue in the line's project (or a ticket of its helpdesk), then the cron line |
 
 ### A.6 Cron entries
 
@@ -318,14 +388,40 @@ Re-create every entry of the saved 5.1 crontab for the new path, with `bundle ex
 (`redmine:issue_recurring:renew_all`, daily), mail_digest (`redmine:issue_digest:send` every 5 to 15 minutes,
 `redmine:issue_digest:cleanup` daily), ldap_sync (`redmine:plugins:ldap_sync:sync_all`), reporter_dashboards
 (`reporter_dashboards:schedules:run`), more_previews (`redmine_more_previews:cache:clean DAYS=30`, daily, new),
-and the mail fetching and AI triage entries production already has. On the clone the crontab stays off.
+and the AI triage entries production already has. On the clone the crontab stays off.
+
+The mail fetching lines do not carry over as they are: 7.0 has no `receive_imap_oauth2`, so a copied line fails on
+every run (B92). Each 5.1 line becomes a `receive_imap` line with the same schedule, host, username, folders, project
+and MailHandler options, translated like this:
+
+| 5.1 `redmine:email:receive_imap_oauth2` | 7.0 `redmine:email:receive_imap` |
+|---|---|
+| `token_file=<f>` | `oauth2_credentials=/etc/redmine/imap_oauth2/<name>.yml` (A.4 step 4b) |
+| `host`, `username`, `folder`, `move_on_success`, `move_on_failure` | the same |
+| no `port` (5.1 means 993) | `port=993` (7.0 means 143 without it) |
+| no `ssl`, or `ssl=1`/`true`/`yes` (5.1: SSL on) | `ssl=1` (7.0: SSL off without it). Never `ssl=force`: that switches certificate checking off |
+| `ssl=0`, or a `port` other than 993 | stop and report: Microsoft 365 IMAP is port 993 with SSL |
+| `starttls=...` | leave it out: 7.0 switches STARTTLS on for any value, `0` included; 5.1 ignored it with SSL on |
+| `imap_debug=...` | leave it out (5.1 only) |
+| `project`, `status`, `tracker`, `category`, `priority`, `assigned_to`, `fixed_version`, `allow_override`, `unknown_user`, `no_permission_check`, `no_account_notice`, `no_notification`, `default_group`, `project_from_subaddress`, `private` | the same, unchanged (both pass them to `MailHandler`) |
+
+For example, with `<f>` = `config/support`:
+
+```text
+5.1: */5 * * * * cd <5.1-root> && bundle exec rake redmine:email:receive_imap_oauth2 RAILS_ENV=production token_file=config/support host=outlook.office365.com username=<mailbox> project=<project> unknown_user=accept no_permission_check=1
+7.0: */5 * * * * cd <redmine-root> && bundle exec rake redmine:email:receive_imap RAILS_ENV=production host=outlook.office365.com port=993 ssl=1 username=<mailbox> oauth2_credentials=/etc/redmine/imap_oauth2/support.yml project=<project> unknown_user=accept no_permission_check=1
+```
+
+In production a mail line goes into the crontab only after its manual run of A.5 row 23 passed, and after the core
+commit that keeps the rotated refresh token (A.4 step 4b, pending).
 
 ### A.7 Rollback
 
 The rollback is the snapshot of step 3, not the migrations (the core steps that take over the 5.1 webhook tables
 and settings are one way): stop Redmine, restore the VM snapshot (or the database dump, `files/` and the 5.1
-tree), restart 5.1 and its crontab. Decide go or rollback before users work in 7.0: after that, a rollback loses
-their changes.
+tree), restart 5.1 and its crontab. Without the VM snapshot, put the 5.1 mail files back first:
+`sudo mv <outside>/email_oauth2-5.1/email_oauth2* <5.1-root>/config/` and give them to the Redmine user (A.4 step 4b).
+Decide go or rollback before users work in 7.0: after that, a rollback loses their changes.
 
 ### A.8 Time
 
@@ -1103,7 +1199,9 @@ Rules, without exception:
    copy or write any secret, and never show one in a command (use the variables). Before your first Jira call
    in this session run the write probe of B4; continue only on HTTP 401 "scope does not match". Send nothing
    but GET requests to Jira. The passphrase of the staging dump (B9 step 6) is typed by Jan: never ask for it in
-   the chat.
+   the chat. The mail credentials are secrets too (5.1's config/email_oauth2*.yml, 7.0's /etc/redmine/imap_oauth2):
+   never open, cat, copy or print them; convert them only with tools/imap_oauth2_credentials.rb (A.4 step 4b), which
+   prints no value.
 2. Stay in the default permission mode.
 3. Follow part A, then part B, in order, one step at a time: part B is one run of all 14 projects (B7); the
    batches of B11 only when Jan says so. On the clone, check A.1 before Redmine or cron starts. Before a step say
@@ -1128,6 +1226,9 @@ Rules, without exception:
 8. The repository is public: no commit, no push, no pull request from this server. Logs, verify reports and
    anything holding Jira data stay in <log-dir>.
 9. Never run rake redmine:watchers:prune, never clear Redmine's tmp directory before restore, never send mail.
+   Never run rake redmine:email:receive_imap, receive_imap_oauth2, oauth2_authorize or any other
+   redmine:email:receive_* task on the clone, not even by hand: the crontab being off is not enough (A.1). In
+   production only the manual run per mailbox of A.5 row 23, after Jan's go.
 10. Report in Dutch, short, after part A (A.5 row by row, the duration for A.8), at S1, S2 and S3 and at the end:
    per step the result and its duration, each snapshot's duration, the counts of B7 step 12, verify, every
    failure with its reason, what Jan reviewed and decided, and everything unexpected, above all matches against

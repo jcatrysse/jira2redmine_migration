@@ -1,0 +1,11 @@
+---
+:token_type: Bearer
+:scope: https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/POP.AccessAsUser.All
+  https://outlook.office.com/SMTP.Send https://outlook.office.com/User.Read
+:ext_expires_in: 3599
+:access_token: dummy-access-token
+:refresh_token: dummy-refresh-token
+:expires_at: 1792575944
+:mode: :header
+:header_format: Bearer %s
+:param_name: access_token

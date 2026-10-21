@@ -7,3 +7,6 @@ composer.phar
 /tools/bin/
 # Jira automation rules exported by hand (runbook section 0): never in this public repository
 automation-rules*.json
+# OAuth files of a mailbox (B92): never in this public repository; the dummies of the tests are the exception
+email_oauth2*.yml
+!/tests/fixtures/imap_oauth2/email_oauth2*.yml
