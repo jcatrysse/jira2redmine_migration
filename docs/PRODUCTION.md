@@ -67,8 +67,9 @@ Placeholders are written `<like-this>`.
   `/etc/redmine/imap_oauth2/`, buiten de Redmine-boom; de oude bestanden verlaten de boom (7.0's `.gitignore` negeert
   ze niet meer). A.6 geeft de nieuwe cronregel. Op de kloon draait `receive_imap` nooit, ook niet met de hand: alleen
   een statische controle (A.5 rij 23). In productie na de go één handmatige run per mailbox met een testmail. Een
-  Google-app die in "Testing" staat geeft refresh tokens die na 7 dagen vervallen: publiceer ze. Core `3a71d578b`
-  bewaart het nieuwe refresh token dat Microsoft bij elke run geeft in dat bestand; daarom moeten bestand (600) en map
+  Google-app die in "Testing" staat geeft refresh tokens die na 7 dagen vervallen: publiceer ze. Core `578730ad3`
+  bewaart het nieuwe refresh token dat Microsoft bij elke run geeft in dat bestand, en `oauth2_authorize` (een nieuwe
+  toestemming, door Jan als de Redmine-gebruiker) schrijft het token er zelf in; daarom moeten bestand (600) en map
   (700) van de cron-gebruiker zijn. De cronregel draait onder `flock` en `MAILTO` moet iemand bereiken: een token dat
   niet bewaard kan worden geeft alleen een waarschuwing.
 - **Deel C** is de prompt voor de lokale Claude-sessie op de server: Jira alleen lezen, standaard rechten, Jans go
@@ -108,7 +109,11 @@ migrations, no gem changes; core suite 6,270 runs, 0 failures) plus one fix, the
 migrations, gems or settings; core suite 6,354 runs, 0 failures). Since 2026-10-21 it is `3a71d578b`: `f592381` plus
 the refresh token a provider rotates kept in `receive_imap`'s credentials file (#43023: `lib/redmine/oauth2_client.rb`,
 `doc/IMAP_OAUTH2.md`, the task description, `oauth2_client_test.rb`; no migrations, gems or settings); checked by the
-coordinator: its 4 new tests fail on `f592381`, `oauth2_client_test.rb` 38 of 38 pass. The 44 plugins together on
+coordinator: its 4 new tests fail on `f592381`, `oauth2_client_test.rb` 38 of 38 pass. Since later that day it is
+`578730ad3`: `3a71d578b` plus `redmine:email:oauth2_authorize` writing the refresh token into the credentials file
+itself instead of printing it (Jan, K-26 option B; `lib/redmine/oauth2_client.rb`, `lib/tasks/email.rake`,
+`doc/IMAP_OAUTH2.md`, `oauth2_client_test.rb`; no migrations, gems or settings); checked by the coordinator: its 6 new
+tests fail on `3a71d578b`, `oauth2_client_test.rb` and `imap_test.rb` 44 of 44 pass. The 44 plugins together on
 `7310d11` (PostgreSQL 16, Ruby 3.3.6, Rails 8.1.4, each on its `redmine70-migration` head, more_previews with its
 sandbox required): 8,289 minitest runs and 7,244 rspec examples, 0 failures (the issue_templates drag-and-drop
 timing spec passed on one retry).
@@ -195,9 +200,9 @@ checked statically only (A.4 step 4b, A.5 row 23); the first real run is in prod
 
 ### A.3 What to deploy
 
-Core: `jcatrysse/redmine`, branch `7.0-stable-GEOxyz`, tested at `3a71d578b` (`f592381` with the PDF fix, plus the
-rotated refresh token of the mail fetching, B92; rehearsal: the commit named in the report; production: the same
-commit). Plugins: one directory per row; **the directory name matters** (it is the plugin id stored in
+Core: `jcatrysse/redmine`, branch `7.0-stable-GEOxyz`, tested at `578730ad3` (`f592381` with the PDF fix, `3a71d578b`
+with the rotated refresh token of the mail fetching, and `oauth2_authorize` writing the refresh token itself, B92;
+rehearsal: the commit named in the report; production: the same commit). Plugins: one directory per row; **the directory name matters** (it is the plugin id stored in
 the database). Rehearsal: branch `redmine70-migration`; production: `main`/`master` after Jan's merge
 (decision of 2026-10-15), whose tree the coordinator checks is identical to the tested one.
 
@@ -258,7 +263,7 @@ Keep from the 5.1 installation: `config/database.yml`, `config/configuration.yml
 `files/` (or its configured path), `plugins/redmine_issue_view_columns/config/redmine_issue_view_columns.local.rb`
 and its locale file (the GEOxyz relation types), and the themes you keep (A.4 step 4). Do **not** carry over
 `config/initializers/99_pdf_export_marshal_fix.rb`, the hotfix Jan may put on 5.1 for the PDF export of a table: core
-`3a71d578b` has the fix, from `f592381` (on 7.0 the file would be harmless, the same hook, but it does not belong
+`578730ad3` has the fix, from `f592381` (on 7.0 the file would be harmless, the same hook, but it does not belong
 there).
 
 Not kept, converted (B92): `config/email_oauth2*.yml`, the OAuth files of 5.1's mail fetching (per mailbox
@@ -338,10 +343,9 @@ The upgrade (rehearsal and production alike):
    replaces an existing one. It stops with exit 1 and writes nothing when:
    - `<f>_client.yml` has no client secret. 5.1's init tasks require one (its Microsoft 365 guide says a public app
      may omit it); 7.0 sends a client secret with every token request, so that mailbox cannot be converted: the
-     application needs a secret and the mailbox owner consents again with `redmine:email:oauth2_authorize` (core
-     `doc/IMAP_OAUTH2.md`), in production after the go. Report it; Jan decides.
+     application needs a secret, then a new consent (below), in production after the go. Report it; Jan decides.
    - the token holds no refresh token, or the mailbox owner's consent does not include IMAP
-     (`IMAP.AccessAsUser.All`, `https://mail.google.com/`): consent again the same way.
+     (`IMAP.AccessAsUser.All`, `https://mail.google.com/`): a new consent (below).
    - the target exists: it is never replaced, so a second run for the same mailbox changes nothing.
 
    Then the old files leave the Redmine tree, both trees (`<outside>` is the place of the step 1 and step 3 outputs;
@@ -356,21 +360,50 @@ The upgrade (rehearsal and production alike):
    `sudo sh -c 'ls <5.1-root>/config/email_oauth2* <redmine-root>/config/email_oauth2*'` finds nothing. The rollback
    of A.7 puts the old files back.
 
-   **The file's rules** (core `3a71d578b`, `store_refresh_token` in `lib/redmine/oauth2_client.rb`, and
-   `doc/IMAP_OAUTH2.md`, "Afterwards"). Microsoft issues a new refresh token with every access token, and RFC 6749
-   section 6 says the old one is then discarded; `receive_imap` replaces the file's `refresh_token:` line with the new
-   one, through a temporary file in the same directory that it renames over the original, mode kept. So:
+   **The file's rules** (core `578730ad3`: `store_refresh_token` and `save_refresh_token` in
+   `lib/redmine/oauth2_client.rb`, `doc/IMAP_OAUTH2.md`, "Afterwards"). Microsoft issues a new refresh token with every
+   access token, and RFC 6749 section 6 says the old one is then discarded; `receive_imap` replaces the file's
+   `refresh_token:` line with the new one, and `oauth2_authorize` writes it there after a new consent, both through a
+   temporary file in the same directory that they rename over the original, mode kept. So:
    - the file: owned by the user whose crontab runs `receive_imap` (the Redmine user, A.6), mode 600;
    - its directory: owned by that user, writable, mode 700, as `/etc/redmine/imap_oauth2` above. A directory of root's
      is not enough: the new token is not stored, the old one stays, and every run warns until it expires;
    - `refresh_token: VALUE` on one top-level line: no block scalar, no folding, no second `refresh_token` line,
-     otherwise Redmine warns and does not store the new token. The tool writes it so for any length; do not edit
-     the file by hand;
+     otherwise Redmine warns and does not store the new token. The tool and Redmine write it so for any length; do
+     not edit the file by hand, except in the fallback of a new consent (below);
    - the keys: `receive_imap` reads token_url, client_id, client_secret, refresh_token and scope; authorize_url,
      redirect_uri and authorize_params are for `redmine:email:oauth2_authorize` only.
 
    When the file cannot be updated, `receive_imap` still fetches the mail and only warns on stderr, so the warning
    reaches someone only through cron's mail (A.6, `MAILTO`).
+
+   **A new consent** (core `578730ad3`, `redmine:email:oauth2_authorize`; production only, after the go, never on the
+   clone, A.1). For a mailbox the tool stopped on, and for one whose token is no longer accepted (`invalid_grant` in
+   cron's mail). Jan runs it, in his own terminal, with the mailbox owner at hand:
+   1. The credentials file exists with everything except refresh_token, owned by the Redmine user, mode 600, in
+      `/etc/redmine/imap_oauth2` (700, that user's). A converted mailbox keeps its file: the task replaces the line.
+      For a mailbox the tool stopped on, Jan writes the file as the Redmine user after core `doc/IMAP_OAUTH2.md`'s
+      example: token_url and authorize_url (Microsoft 365: `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token`
+      and `.../authorize`), client_id, client_secret, scope (`https://outlook.office.com/IMAP.AccessAsUser.All
+      offline_access`, or `https://mail.google.com/` with `authorize_params` `access_type: offline` and
+      `prompt: consent`), redirect_uri as registered with the application.
+   2. Run it as the Redmine user that runs the cron, never as root (as root the writability check always passes and
+      the file can end up root's, which breaks the later rotation writes):
+
+      ```bash
+      sudo -u <redmine-user> -H bash -lc 'cd <redmine-root> && bundle exec rake redmine:email:oauth2_authorize RAILS_ENV=production oauth2_credentials=/etc/redmine/imap_oauth2/<name>.yml'
+      ```
+
+      It checks that it can write the file and its directory before it prints the consent URL; a refusal there costs
+      nothing: fix the owner and mode and run it again.
+   3. The mailbox owner opens the URL and consents; paste the address the browser lands on back. The task writes one
+      top-level `refresh_token: VALUE` line into the file, or replaces it, and prints only "The refresh token was
+      written to FILE".
+   4. Only if it still cannot write after the exchange does it print the `refresh_token:` line and exit 1, because the
+      code can be redeemed once only. Then add that line to the file by hand as the Redmine user, fix the owner and
+      mode as above, and clear the scrollback and the shell history of that session.
+
+   Then the mailbox's manual run of A.5 row 23 and its cron line (A.6).
 
 5. `bundle config set without 'development test'`, then `bundle install`.
 6. `RAILS_ENV=production bundle exec rake db:migrate`. On a 5.1-stable-GEOxyz database this also sets the 5.1
@@ -425,7 +458,7 @@ else is a finding.
 | 19 | SSO | `bundle exec rake redmine:bless_this_sso:status`; the entry point is now `/oauth/sso/authorize` (callback unchanged) | production: login, SSO-only, sign out |
 | 20 | the whole site | open the issue list, an issue, the agile board, the calendar, the gantt, My page, a wiki page, a helpdesk ticket, a contact, the people page, as admin and as a normal user; on the clone Claude can crawl every menu link and report any 500 | no error page |
 | 21 | GEOxyz relation types | open an issue with a GEOxyz relation (for example "create RMA" or "Wiki"), section Related issues; the labels come from `redmine_issue_view_columns.local.rb` and its locale file, kept from 5.1 (A.3) | the relation's own label, no "Translation missing" (the sign of a forgotten locale file) |
-| 22 | PDF export of a table (core `f592381`, in `3a71d578b`) | export an issue whose description has a Markdown table to PDF (the issue, "Also available in: PDF") | a PDF, no 500 |
+| 22 | PDF export of a table (core `f592381`, in `578730ad3`) | export an issue whose description has a Markdown table to PDF (the issue, "Also available in: PDF") | a PDF, no 500 |
 | 23 | mail fetching credentials (B92, A.4 step 4b) | **Clone: static only, no network call with production's credentials** (A.1): `stat -c '%n %U %a' /etc/redmine/imap_oauth2 /etc/redmine/imap_oauth2/*.yml`; `bundle exec rails runner 'Dir["/etc/redmine/imap_oauth2/*.yml"].sort.each { \|f\| Redmine::Oauth2Client.send(:read_credentials, f, %w(token_url client_id client_secret refresh_token scope)); puts "#{File.basename(f)}: keys ok" }'` (reads the file as `receive_imap` does, prints no value); `grep -c '^refresh_token: ' /etc/redmine/imap_oauth2/*.yml` (a count per file, no value); `ls config/email_oauth2* <5.1-root>/config/email_oauth2*`. **Production, after the go:** per mailbox, send a test mail to it, then run its A.6 line once by hand (`cd <redmine-root> && bundle exec rake redmine:email:receive_imap ...`); only then its cron line | clone: the directory `<redmine-user> 700`, one file per distinct 5.1 `token_file`, each `<redmine-user> 600`, `keys ok` and a count of 1, `ls` finds nothing. Production: exit 0, no warning that a refresh token was not stored, the test mail is an issue in the line's project (or a ticket of its helpdesk), the file still `<redmine-user> 600`; then the cron line |
 
 ### A.6 Cron entries
@@ -460,8 +493,7 @@ still holds the lock, silently; when mail stops arriving, `pgrep -af receive_ima
 `MAILTO=<address>` at the top of the Redmine user's crontab must reach someone who reads it (keep 5.1's if it does), and
 the server must be able to send that mail. A refresh token that cannot be stored (A.4 step 4b, the file's rules) is
 only a warning on stderr while the mail keeps arriving, so cron's mail is the only sign that the token is going stale;
-`invalid_grant` there means the token is no longer accepted and the mailbox owner consents again
-(`redmine:email:oauth2_authorize`, core `doc/IMAP_OAUTH2.md`).
+`invalid_grant` there means the token is no longer accepted: a new consent (A.4 step 4b).
 
 For example, a Microsoft 365 mailbox with `<f>` = `config/support` and a Gmail mailbox with `<f>` =
 `config/email_oauth2_gmail`:
@@ -1292,7 +1324,8 @@ Rules, without exception:
    Never fetch mail on the clone, not even by hand: no rake redmine:email:receive_imap, receive_imap_oauth2,
    oauth2_authorize or other redmine:email:receive_* task, no redmine:email:helpdesk:* task, not the helpdesk's
    "Get mail" button or its get_mail URLs; the crontab being off is not enough (A.1). In production only the manual
-   run per mailbox of A.5 row 23, after Jan's go.
+   run per mailbox of A.5 row 23, after Jan's go. A new consent (oauth2_authorize, A.4 step 4b) is Jan's to run in
+   his own terminal, not yours: if it cannot write the file it prints a refresh token.
 10. Report in Dutch, short, after part A (A.5 row by row, the duration for A.8), at S1, S2 and S3 and at the end:
    per step the result and its duration, each snapshot's duration, the counts of B7 step 12, verify, every
    failure with its reason, what Jan reviewed and decided, and everything unexpected, above all matches against

@@ -12,8 +12,9 @@ All notable changes to this project. Steps to take before and after a migration 
   `redmine:email:receive_imap_oauth2` into the one credentials file of 7.0's `redmine:email:receive_imap
   oauth2_credentials=FILE`, for Microsoft 365 and Gmail; prints no secret, writes mode 600, never replaces a file. docs/PRODUCTION.md part A: the
   conversion (A.4 step 4b), the new cron line (A.6), the checks (A.5 row 23) and `receive_imap` never on the clone.
-  On core `3a71d578b`, which stores a rotated refresh token: the token on one line for any length, the file and
-  directory rules, the mail lines under `flock -n` with `MAILTO`.
+  On core `578730ad3`, which stores a rotated refresh token and has `oauth2_authorize` write the token itself: the
+  token on one line for any length, the file and directory rules, the new-consent procedure, the mail lines under
+  `flock -n` with `MAILTO`.
 - `migration.custom_fields.names` (decision 44): a custom field's Redmine name by Jira field id; the default
   configuration names "Remotely Operated Towed Vehicle" (`customfield_10067`) "ROTV".
 - `J2R_JIRA_TAPE` (test runs): records every Jira answer of a run or plays one back without Jira, so the runs before
