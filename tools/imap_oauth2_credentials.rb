@@ -12,14 +12,16 @@
 #
 #   ruby tools/imap_oauth2_credentials.rb /path/to/5.1/config/email_oauth2_NAME /etc/redmine/imap_oauth2/NAME.yml
 #
-# The first argument is the token_file value of the mailbox's 5.1 cron line, made absolute against the 5.1 root; as in
-# 5.1, a name without the email_oauth2 prefix gets it (token_file=config/support reads config/email_oauth2_support.yml).
+# The first argument is the token_file value of the mailbox's 5.1 cron line, made absolute against the 5.1 root, read
+# as 5.1 reads it: a name without the email_oauth2 prefix gets it (token_file=config/support reads
+# config/email_oauth2_support.yml and config/email_oauth2_support_client.yml).
 # Run it as the Redmine user, after 5.1's crontab is stopped: BASE.yml must be the token as 5.1 last wrote it. It
 # prints no secret (the keys it wrote, the provider and the scopes), writes the new file with mode 0600 and never
 # replaces an existing one.
 
-require 'yaml'
+require 'securerandom'
 require 'uri'
+require 'yaml'
 
 MICROSOFT_IMAP = 'https://outlook.office.com/IMAP.AccessAsUser.All'
 GOOGLE_IMAP = 'https://mail.google.com/'
@@ -45,9 +47,8 @@ rescue Psych::Exception => e
   stop "#{path} cannot be read as YAML (#{e.class})"
 end
 
-# 5.1's normalize_token_file.
+# 5.1's normalize_token_file, exactly: token_file=config/x.yml reads config/email_oauth2_x.yml.yml there too.
 def token_file_base(path)
-  path = path.delete_suffix('.yml')
   name = File.basename(path)
   name.start_with?('email_oauth2') ? path : File.join(File.dirname(path), "email_oauth2_#{name}")
 end
@@ -93,7 +94,7 @@ provider, imap_scope = PROVIDERS.fetch(host, [host, nil])
 
 # What the mailbox owner consented to, as the token response named it; the refresh request asks for a subset only.
 granted = present(token['scope'])&.split || []
-if imap_scope && granted.any? && !granted.include?(imap_scope)
+if imap_scope && granted.any? && granted.none? { |granted_scope| granted_scope.casecmp?(imap_scope) }
   stop "the consent of #{base}.yml does not include #{imap_scope}: authorize the mailbox again"
 end
 
@@ -127,15 +128,15 @@ authorize_params = { 'access_type' => 'offline', 'prompt' => 'consent' }.merge(a
 credentials['authorize_params'] = authorize_params unless authorize_params.empty?
 
 # Written beside its final name, then linked: a reader never sees half a file, and an existing file stays.
-temporary = "#{target}.#{Process.pid}.tmp"
+temporary = "#{target}.#{SecureRandom.hex(8)}.tmp"
+File.open(temporary, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |file| file.write(credentials.to_yaml) }
 begin
-  File.open(temporary, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |file| file.write(credentials.to_yaml) }
   File.chmod(0o600, temporary)
   File.link(temporary, target)
 rescue Errno::EEXIST
   stop "#{target} exists; it is never replaced"
 ensure
-  File.unlink(temporary) if File.exist?(temporary)
+  File.unlink(temporary)
 end
 
 puts "#{target}: #{credentials.keys.join(', ')} (mode 600)"

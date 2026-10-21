@@ -197,6 +197,52 @@ final class ImapOauth2CredentialsTest extends TestCase
         self::assertFileDoesNotExist($this->directory . '/etc/support.yml');
     }
 
+    public function testATokenFileValueWithYmlIsReadAs51ReadsIt(): void
+    {
+        // 5.1's normalize_token_file keeps ".yml": token_file=config/x.yml means config/email_oauth2_x.yml.yml
+        [$status, , $errors] = $this->convert(null, $this->directory . '/config/email_oauth2_support.yml');
+
+        self::assertSame(1, $status);
+        self::assertStringContainsString('email_oauth2_support.yml.yml not found', $errors);
+        self::assertFileDoesNotExist($this->directory . '/etc/support.yml');
+    }
+
+    public function testAnHttpTokenUrlStops(): void
+    {
+        $this->edit('email_oauth2_support_client.yml', 'site: https://login', 'site: http://login');
+
+        [$status, , $errors] = $this->convert();
+
+        self::assertSame(1, $status);
+        self::assertStringContainsString('token_url is not an https URL', $errors);
+        self::assertFileDoesNotExist($this->directory . '/etc/support.yml');
+    }
+
+    public function testAYamlErrorNamesNoContent(): void
+    {
+        // Psych's message for an unknown alias repeats the text of the file
+        $this->edit('email_oauth2_support_client.yml', 'client_secret: dummy-client-secret', 'client_secret: *dummy-secret-in-error');
+
+        [$status, $output, $errors] = $this->convert();
+
+        self::assertSame(1, $status);
+        self::assertStringContainsString('cannot be read as YAML (Psych::AnchorNotDefined)', $errors);
+        self::assertStringNotContainsString('dummy-secret-in-error', $output . $errors);
+    }
+
+    public function testTheConsentIsReadWithoutRegardToCase(): void
+    {
+        $this->edit(
+            'email_oauth2_support.yml',
+            'https://outlook.office.com/IMAP.AccessAsUser.All ',
+            'https://outlook.office.com/imap.accessasuser.all '
+        );
+
+        [$status, , $errors] = $this->convert();
+
+        self::assertSame(0, $status, $errors);
+    }
+
     public function testATargetDirectoryThatDoesNotExistStops(): void
     {
         [$status, , $errors] = $this->convert($this->directory . '/missing/support.yml');

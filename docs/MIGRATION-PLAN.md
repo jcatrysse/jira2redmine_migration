@@ -2,7 +2,7 @@
 
 ## Samenvatting voor Jan (2026-10-21, B2)
 
-**Stand.** Alles staat op `redmine70-migration`, QA groen (1.191 tests). Jira bleef read-only: alleen GET-calls.
+**Stand.** Alles staat op `redmine70-migration`, QA groen (1.195 tests). Jira bleef read-only: alleen GET-calls.
 
 **Vandaag: het ophalen van mail met OAuth van 5.1 naar 7.0 (B92)**
 - **Het probleem:** 5.1 haalt de Microsoft 365- en Gmail-mailboxen op met `receive_imap_oauth2` en twee bestanden per mailbox in
@@ -2236,7 +2236,17 @@ and 7.0-stable-GEOxyz `f592381` (`lib/tasks/email.rake`, `lib/redmine/oauth2_cli
 | the result read by 7.0's own `Redmine::Oauth2Client` (`f592381`, loaded from the core) | `read_credentials` with the five keys: ok; `authorize_url`: `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/authorize`; `access_token` with `Net::HTTP` stubbed: one POST to `login.microsoftonline.com:443`, SSL, path `/<tenant>/oauth2/v2.0/token`, fields client_id, client_secret, grant_type, refresh_token, scope, `grant_type=refresh_token`, scope `https://outlook.office.com/IMAP.AccessAsUser.All offline_access` |
 | A.5 row 23's check on a good and a broken file | `support.yml: keys ok`; `... broken.yml is missing client_secret`, no value printed |
 | the Gmail pair (dummies as 5.1's `google_oauth2_init` writes them) | exit 0, mode 600; scope `https://mail.google.com/` from the token file; 7.0's `authorize_url`: `https://accounts.google.com/o/oauth2/v2/auth` with `access_type=offline`, `prompt=consent`; `access_token`: one POST to `oauth2.googleapis.com:443`, SSL, path `/token`, `grant_type=refresh_token`, scope `https://mail.google.com/`; the 7-day Testing reminder printed |
-| `tests/ImapOauth2CredentialsTest.php` | 12 tests; without the tool 6 of the first 8 fail (another shows 7.0 refusing the 5.1 file); without 5.1's `token_file` naming 1 fails; the first tool (`4ac94ff`) fails 4 of the 12 (Gmail, Microsoft's scope source, the secret message) |
+| `tests/ImapOauth2CredentialsTest.php` | 16 tests; without the tool 6 of the first 8 fail (another shows 7.0 refusing the 5.1 file); without 5.1's `token_file` naming 1 fails; the first tool (`4ac94ff`) fails 4 of the first 12 (Gmail, Microsoft's scope source, the secret message); the review's four (a `.yml` value read as 5.1 reads it, consent case, an http token URL, a YAML error that would repeat a secret) each fail on their mutation |
+
+An independent review (a fresh subagent) found no blocker; its should-fix items are in: the rollback's `mv` ran its
+wildcard in the operator's shell against a root-only directory (now inside `sudo sh -c`), the helpdesk's own mail
+fetching (`redmine:email:helpdesk:*`, the "Get mail" button and its URLs) is now named among what never runs on the
+clone, A.0 no longer says the clone checks real mail, the placeholders `<5.1-root>` and `<redmine-group>` are defined,
+and the four untested guards have tests. Its nits too: 5.1's file naming mirrored exactly (`.yml` kept), the consent
+compared without case, a random temp name, A.6's `ssl` and empty `folder` rows, one file per distinct `token_file`, a
+`pgrep` check for a 5.1 run still going, `bash -lc` for a nologin account, and the pending paragraph says what
+happens until the core commit. Ruby is now needed for `tools/qa.sh` (RUNBOOK section 1). Reported, not changed: 5.1
+with `imap_debug=1` prints the access token into the cron output.
 
 What the conversion cannot do: a mailbox whose 5.1 application has no client secret (5.1's init tasks require one,
 its Microsoft 365 guide says a public app may omit it). 7.0's `Oauth2Client` sends `client_secret` in every token request, so the tool stops there and the mailbox
