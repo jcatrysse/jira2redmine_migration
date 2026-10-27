@@ -113,10 +113,21 @@ coordinator: its 4 new tests fail on `f592381`, `oauth2_client_test.rb` 38 of 38
 `578730ad3`: `3a71d578b` plus `redmine:email:oauth2_authorize` writing the refresh token into the credentials file
 itself instead of printing it (Jan, K-26 option B; `lib/redmine/oauth2_client.rb`, `lib/tasks/email.rake`,
 `doc/IMAP_OAUTH2.md`, `oauth2_client_test.rb`; no migrations, gems or settings); checked by the coordinator: its 6 new
-tests fail on `3a71d578b`, `oauth2_client_test.rb` and `imap_test.rb` 44 of 44 pass. The 44 plugins together on
-`7310d11` (PostgreSQL 16, Ruby 3.3.6, Rails 8.1.4, each on its `redmine70-migration` head, more_previews with its
-sandbox required): 8,289 minitest runs and 7,244 rspec examples, 0 failures (the issue_templates drag-and-drop
-timing spec passed on one retry).
+tests fail on `3a71d578b`, `oauth2_client_test.rb` and `imap_test.rb` 44 of 44 pass. The coordinator's final combined
+run of 2026-10-27: core `578730ad3`, PostgreSQL 16, Ruby 3.3.6, Rails 8.1.4, all 44 plugins on their
+`redmine70-migration` heads of that day: 8,432 minitest runs and 7,248 rspec examples, 0 failures; bundler-audit on
+that bundle (advisory database of 2026-10-26): 0 vulnerable gems. Since the earlier combined run (on `7310d11`) the
+plugin branches changed:
+
+- six review fixes, in paste_as_wiki_tables, extended_api (XML), more_previews, mermaid_macro, description_macros and
+  subtask;
+- the helpdesk mail rules take only valid assignees and groups, and gained custom field and fixed-field actions;
+- the helpdesk's OAuth token refresh is bounded;
+- security fixes: the people avatar size, the helpdesk merge redirect, the contacts CRM query allowlist;
+- the workflows of 36 repositories pass their inputs through the environment;
+- issue_templates moved to Vue 3 (npm audit: 0);
+- issue_recurring keeps spent time per recurring issue.
+
 On `f592381` the plugins that touch the PDF or the issue view ran again, all 0 failures: drawio 75 + 2 runs,
 more_previews 331, issue_field_visibility 62, view_issue_description 91 + 124, core `pdf_test` 7, and a reproduction of
 Jan's error. On the way redmine_view_issue_description `ad36481` fixed a per-request memo that broke 4 of
@@ -424,7 +435,8 @@ The upgrade (rehearsal and production alike):
    (use the theme id exactly as stored, e.g. `PurpleMine2:opale`; read the `skipped:` lines), the same without
    `DRY_RUN`, and a third time (only `unchanged`). Then remove `plugins/redmine_user_specific_theme`. If the
    global theme was PurpleMine2: Administration > Settings > Display > Theme = Opale.
-10. Assets and caches: `rm -rf public/assets`, `RAILS_ENV=production bundle exec rake assets:precompile`,
+10. Assets and caches: `rm -rf public/assets`, `RAILS_ENV=production bundle exec rake assets:precompile` (this also
+    builds issue_templates' new Vue 3 bundle),
     `RAILS_ENV=production bundle exec rake redmine_more_previews:cache:clean DAYS=0 CONFIRM_PURGE_ALL=1` (the cache
     identity changed; upstream's opt-in purge of every preview cache, skipping previews in use; the daily `DAYS=30`
     cron of A.6 stays), `rm -rf public/plugin_assets/calendar_events_daily`.
