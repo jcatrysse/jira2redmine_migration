@@ -115,7 +115,9 @@ itself instead of printing it (Jan, K-26 option B; `lib/redmine/oauth2_client.rb
 `doc/IMAP_OAUTH2.md`, `oauth2_client_test.rb`; no migrations, gems or settings); checked by the coordinator: its 6 new
 tests fail on `3a71d578b`, `oauth2_client_test.rb` and `imap_test.rb` 44 of 44 pass. The coordinator's final combined
 run of 2026-10-27: core `578730ad3`, PostgreSQL 16, Ruby 3.3.6, Rails 8.1.4, all 44 plugins on their
-`redmine70-migration` heads of that day: 8,432 minitest runs and 7,248 rspec examples, 0 failures; bundler-audit on
+`redmine70-migration` heads of that day, more_previews with its sandbox required (bubblewrap installed,
+`RMP_LIBRE_REQUIRE_SANDBOX=1`: 336 runs, the five Libre sandbox tests among them, 0 failures, its usual 2 skips): 8,432
+minitest runs and 7,248 rspec examples, 0 failures; bundler-audit on
 that bundle (advisory database of 2026-10-26): 0 vulnerable gems. Since the earlier combined run (on `7310d11`) the
 plugin branches changed:
 
